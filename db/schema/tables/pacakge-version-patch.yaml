@@ -1,0 +1,27 @@
+database: securebuild
+name: package_version_patch
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: package_version_id
+        type: text
+        constraints:
+          notNull: true
+      - name: patch
+        type: text
+        constraints:
+          notNull: true
+      - name: filename
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true

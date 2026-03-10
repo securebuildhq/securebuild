@@ -1,0 +1,20 @@
+database: securebuild
+name: image
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-image-oci"
+        - column: name
+          value:
+            str: "test-image"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: is_public
+          value:
+            str: "false"

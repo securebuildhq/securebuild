@@ -1,0 +1,65 @@
+database: securebuild
+name: oci_artifact_manifest
+schema:
+  postgres:
+    primaryKey:
+      - id
+    indexes:
+      - name: idx_oci_artifact_manifest_subject_digest
+        columns:
+          - subject_digest
+        isUnique: false
+      - name: idx_oci_artifact_manifest_image_catalog_id
+        columns:
+          - image_catalog_id
+        isUnique: false
+      - name: idx_oci_artifact_manifest_attest_id
+        columns:
+          - attest_id
+        isUnique: true
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+        comment: "Manifest digest (sha256:...) of the artifact manifest"
+      - name: image_catalog_id
+        type: text
+        constraints:
+          notNull: true
+        comment: "FK to image_catalog table (specific image version)"
+      - name: subject_digest
+        type: text
+        constraints:
+          notNull: true
+        comment: "Digest of the image/artifact this manifest refers to"
+      - name: media_type
+        type: text
+        constraints:
+          notNull: true
+        comment: "Media type of the manifest (e.g., application/vnd.oci.artifact.manifest.v1+json)"
+      - name: artifact_type
+        type: text
+        constraints:
+          notNull: true
+        comment: "Type of artifact (e.g., application/vnd.in-toto+json for attestations)"
+      - name: manifest_size
+        type: bigint
+        comment: "Size of the manifest in bytes"
+      - name: annotations
+        type: jsonb
+        comment: "Key-value metadata from the manifest"
+      - name: attest_id
+        type: text
+        comment: "UUID generated at attestation time for traceability; NULL for signatures and non-attestation artifacts"
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+        default: now()
+        comment: "Creation timestamp"
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+        comment: "Last update timestamp"

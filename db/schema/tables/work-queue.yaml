@@ -1,0 +1,44 @@
+database: securebuild
+name: work_queue
+schema:
+  postgres:
+    primaryKey:
+    - id
+    indexes:
+    - name: work_queue_channel_idx
+      columns:
+      - channel
+      - created_at
+      isUnique: true
+    - name: work_queue_processing_idx
+      columns:
+      - channel
+      - completed_at
+      - processing_started_at
+      - created_at
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: channel
+      type: text
+      constraints:
+        notNull: true
+    - name: payload
+      type: jsonb
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: completed_at
+      type: timestamp with time zone
+    - name: processing_started_at
+      type: timestamp with time zone
+    - name: attempt_count
+      type: integer
+    - name: last_error
+      type: text
+    - name: priority
+      type: integer
+      default: "0"

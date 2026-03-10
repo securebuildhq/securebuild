@@ -1,0 +1,40 @@
+database: securebuild
+name: securebuild_team
+schema:
+  postgres:
+    primaryKey:
+    - id
+    indexes:
+    - name: idx_securebuild_team_registry_username
+      columns:
+      - registry_username
+      isUnique: false
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: name
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: stripe_customer_id
+      type: text
+    - name: payment_email
+      type: text
+    - name: registry_username
+      type: text
+    - name: full_catalog_access
+      type: boolean
+      constraints:
+        notNull: true
+      default: "false"
+    - name: feature_flags
+      type: text[]
+      constraints:
+        notNull: true
+      default: "{}"

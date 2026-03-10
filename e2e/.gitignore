@@ -1,0 +1,17 @@
+# Playwright artifacts
+/playwright-report/
+/test-results/
+/playwright/.cache/
+
+# Node modules
+node_modules/
+
+# Logs
+*.log
+
+# Environment files (if any)
+.env.local
+.env.test
+
+# Server process tracking (legacy, no longer used)
+.next-server.pid

@@ -1,0 +1,28 @@
+database: securebuild
+name: rebuild_chain
+# this table is used to track the rebuild chain for a package - this could be caused by a new version being released, or from a manual rebuild
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: package_id
+      type: text
+      constraints:
+        notNull: true
+    - name: package_version_id
+      type: text
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: completed_at
+      type: timestamp with time zone
+    - name: error
+      type: text
+    - name: chain_name
+      type: text

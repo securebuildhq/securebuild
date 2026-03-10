@@ -1,0 +1,23 @@
+database: securebuild
+name: securebuild_session
+requires:
+  - securebuild_user
+  - securebuild_team
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "e2e-test-session-id"
+        - column: user_id
+          value:
+            str: "e2e-test-user-id"
+        - column: expires_at
+          value:
+            str: "2099-12-31T23:59:59Z"
+        - column: selected_team_id
+          value:
+            str: "e2e-test-team-id"
+        - column: god_mode_teams
+          value:
+            str: "[]"

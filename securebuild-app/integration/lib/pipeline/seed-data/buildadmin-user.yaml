@@ -1,0 +1,29 @@
+database: securebuild
+name: buildadmin_user
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-pipeline-user-1"
+        - column: email
+          value:
+            str: "pipeline-test@example.com"
+        - column: name
+          value:
+            str: "Pipeline Test User"
+        - column: image_url
+          value:
+            str: "https://example.com/avatar.png"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: last_login_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: last_active_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: is_admin
+          value:
+            str: "true"

@@ -1,0 +1,41 @@
+database: securebuild
+name: package_version_dependency_runtime
+schema:
+  postgres:
+    primaryKey:
+      - package_version_id
+      - depends_on_package_id
+    columns:
+      - name: package_version_id
+        type: text
+        constraints:
+          notNull: true
+      - name: package_name
+        type: text
+        constraints:
+          notNull: true
+      - name: package_version
+        type: text
+        constraints:
+          notNull: true
+      - name: package_apk_release
+        type: integer
+        constraints:
+          notNull: true
+      - name: depends_on_package_id
+        type: text
+        constraints:
+          notNull: true
+      - name: depends_on_package_name
+        type: text
+        constraints:
+          notNull: true
+      - name: depends_on_package_version_id
+        type: text
+        constraints:
+          notNull: false
+      - name: depends_on_package_is_external
+        type: boolean
+        constraints:
+          notNull: true
+        default: false

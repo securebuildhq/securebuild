@@ -1,0 +1,20 @@
+database: securebuild
+name: rebuild_chain_link
+# this table tracks each link in a rebuild chain. When all of a link's dependencies are built, the link will itself be queued for execution.
+schema:
+  postgres:
+    primaryKey:
+    - link_id
+    columns:
+    - name: link_id
+      type: text
+      constraints:
+        notNull: true
+    - name: rebuild_chain_id
+      type: text
+      constraints:
+        notNull: true
+    - name: package_id
+      type: text
+      constraints:
+        notNull: true

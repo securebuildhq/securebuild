@@ -1,0 +1,30 @@
+database: securebuild
+name: image_apko_version
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: image_apko_id
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: apko_yaml
+        type: text
+        constraints:
+          notNull: true
+      - name: custom_build_request_id
+        type: text
+

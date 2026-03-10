@@ -1,0 +1,58 @@
+database: securebuild
+name: image
+requires: []
+seedData:
+  rows:
+    # Redis image
+    - columns:
+        - column: id
+          value:
+            str: "e2e-image-redis"
+        - column: name
+          value:
+            str: "redis"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: is_public
+          value:
+            str: "true"
+
+    # Nginx image
+    - columns:
+        - column: id
+          value:
+            str: "e2e-image-nginx"
+        - column: name
+          value:
+            str: "nginx"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: is_public
+          value:
+            str: "true"
+
+    # Ruby image
+    - columns:
+        - column: id
+          value:
+            str: "e2e-image-ruby"
+        - column: name
+          value:
+            str: "ruby"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: is_public
+          value:
+            str: "true"

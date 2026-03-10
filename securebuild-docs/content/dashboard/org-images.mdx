@@ -1,0 +1,52 @@
+# Org Images
+
+The **Organization Images** section provides a comprehensive view of all images your organization has access to. This table displays detailed information about each image.
+
+## Image Information
+
+- **Image Name & Icon**: Each image shows a distinctive icon and full name
+- **Description**: Brief description of what the image does
+- **Tags Count**: Number of available tags for each image (e.g., postgres has 14 tags, kubectl has 2 tags)
+
+## Security Status
+
+- **Advisories**: Shows the number of vulnerabilities that have been fixed
+  - Format: "▲ X fixed" (e.g., "▲ 95 fixed" for postgres, "▲ 0 fixed" for gradle)
+  - Higher numbers indicate more vulnerabilities were patched during the rebuild process
+  - "0 fixed" means the upstream version had no known vulnerabilities
+
+## Build Information
+
+- **Last Built**: Timestamp of when the image was last rebuilt from source
+- **Last Scanned**: When the image was last scanned for vulnerabilities
+- **Build Frequency**: Images are rebuilt regularly to incorporate latest security patches
+
+## Management Features
+
+- **Notifications**: Shows notification count for each image (currently 0 for all shown)
+- **Actions**: Eye icon (👁️) to view detailed information about each image
+- **Filtering**: Table can be sorted and filtered by various criteria
+
+## Example Images
+
+The interface displays popular open source projects including:
+
+- **Databases**: postgres, etcd
+- **Development Tools**: gradle, code-server
+- **Kubernetes**: kubectl, ingress-nginx-controller, external-secrets
+- **Monitoring**: opencost, opencost-ui
+- **Specialized Services**: topaz, schemahero, weaviate, replicated
+
+## Understanding CVE Counts
+
+The vulnerability count displayed (e.g., "95 fixed", "151 fixed") represents the number of known CVEs that SecureBuild has eliminated through our rebuild process. This count reflects:
+
+- **Proactive Security**: We identify and patch vulnerabilities before they reach your infrastructure
+- **Transparency**: You can see exactly how many security issues we've addressed
+- **Continuous Monitoring**: These counts update as new vulnerabilities are discovered and fixed
+
+This section helps you track which images your organization is using and their current security status.
+
+---
+
+**Next Steps**: Learn more about [Image Tagging](/image-tagging) or explore the [Image Catalog](/image-catalog) for additional images.

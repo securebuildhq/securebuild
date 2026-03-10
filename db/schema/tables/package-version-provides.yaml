@@ -1,0 +1,38 @@
+database: securebuild
+name: package_version_provides
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: package_version_id
+        type: text
+        constraints:
+          notNull: true
+      - name: package_name
+        type: text
+        constraints:
+          notNull: true
+      - name: provides_name
+        type: text
+        constraints:
+          notNull: true
+      - name: is_subpackage
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"
+    indexes:
+      - name: idx_pkg_ver_provides_pkg_ver_id
+        columns:
+          - package_version_id
+      - name: idx_pkg_ver_provides_pkg_ver_pkg_provides
+        columns:
+          - package_version_id
+          - package_name
+          - provides_name
+        isUnique: true

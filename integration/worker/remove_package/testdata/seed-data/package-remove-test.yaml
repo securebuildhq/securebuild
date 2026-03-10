@@ -1,0 +1,41 @@
+database: securebuild
+name: package
+seedData:
+  rows:
+    # Parent package
+    - columns:
+        - column: id
+          value:
+            str: "pkg-remove-test-1"
+        - column: name
+          value:
+            str: "remove-test-parent"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: is_delete_protection_enabled
+          value:
+            str: "false"
+    # Subpackage
+    - columns:
+        - column: id
+          value:
+            str: "pkg-remove-test-sub-1"
+        - column: parent_id
+          value:
+            str: "pkg-remove-test-1"
+        - column: name
+          value:
+            str: "remove-test-subpackage"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: is_delete_protection_enabled
+          value:
+            str: "false"

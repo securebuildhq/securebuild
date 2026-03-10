@@ -1,0 +1,25 @@
+database: securebuild
+name: apk_catalog
+schema:
+  postgres:
+    primaryKey:
+    - filename
+    - arch
+    columns:
+    - name: filename
+      type: text
+      constraints:
+        notNull: true
+    - name: arch
+      type: text
+      constraints:
+        notNull: true
+    - name: index_content
+      type: text
+      constraints:
+        notNull: true
+    - name: is_withdrawn
+      type: boolean
+      constraints:
+        notNull: true
+      default: "false"

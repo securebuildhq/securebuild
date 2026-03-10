@@ -1,0 +1,196 @@
+# Build release assets on semver tag (vX.Y.Z).
+# Produces worker binaries (amd64/arm64), app, www, and docs bundles.
+# Does not build or push images; downstream process consumes these assets.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  build-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Build worker (linux/amd64 and linux/arm64)
+        run: make build-worker-release
+
+      - name: Stage worker binaries
+        run: |
+          mkdir -p worker-assets
+          cp bin/securebuild-worker-linux-amd64 bin/securebuild-worker-linux-arm64 worker-assets/
+
+      - name: Upload worker binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker
+          path: worker-assets
+
+  build-app:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: securebuild-app/package-lock.json
+
+      - name: Install dependencies
+        run: cd securebuild-app && npm ci
+
+      - name: Build
+        run: cd securebuild-app && npm run build
+        env:
+          CI: true
+
+      - name: Package app bundle
+        run: |
+          cd securebuild-app
+          mkdir -p release
+          cp -r .next/standalone release/
+          mkdir -p release/.next
+          cp -r .next/static release/.next/
+          cp -r public release/
+          tar -czvf securebuild-app.tar.gz -C release .
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: securebuild-app
+          path: securebuild-app/securebuild-app.tar.gz
+
+  build-www:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: securebuild-www/package-lock.json
+
+      - name: Install dependencies
+        run: cd securebuild-www && npm ci
+
+      - name: Build
+        run: cd securebuild-www && npm run build
+        env:
+          CI: true
+
+      - name: Package www bundle
+        run: |
+          cd securebuild-www
+          mkdir -p release
+          cp -r .next/standalone release/
+          mkdir -p release/.next
+          cp -r .next/static release/.next/
+          cp -r public release/
+          tar -czvf securebuild-www.tar.gz -C release .
+
+      - name: Upload www bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: securebuild-www
+          path: securebuild-www/securebuild-www.tar.gz
+
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: securebuild-docs/package-lock.json
+
+      - name: Install dependencies
+        run: cd securebuild-docs && npm install --legacy-peer-deps
+
+      - name: Build
+        run: cd securebuild-docs && npm run build
+        env:
+          CI: true
+
+      - name: Package docs bundle
+        run: |
+          cd securebuild-docs
+          mkdir -p release
+          cp -r .next/standalone release/
+          mkdir -p release/.next
+          cp -r .next/static release/.next/
+          cp -r public release/
+          tar -czvf securebuild-docs.tar.gz -C release .
+
+      - name: Upload docs bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: securebuild-docs
+          path: securebuild-docs/securebuild-docs.tar.gz
+
+  release:
+    needs: [build-worker, build-app, build-www, build-docs]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download worker artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: worker
+
+      - name: Download app artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: securebuild-app
+
+      - name: Download www artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: securebuild-www
+
+      - name: Download docs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: securebuild-docs
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          # download-artifact merges all artifacts into workspace root (no worker/ or app/ subdirs)
+          mv securebuild-worker-linux-amd64 release-assets/
+          mv securebuild-worker-linux-arm64 release-assets/
+          mv securebuild-app.tar.gz release-assets/
+          mv securebuild-www.tar.gz release-assets/
+          mv securebuild-docs.tar.gz release-assets/
+          ls -la release-assets/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          generate_release_notes: true
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

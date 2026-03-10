@@ -1,0 +1,30 @@
+database: securebuild
+name: image
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: name
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+      - name: alternate_image
+        type: text
+      - name: readme
+        type: text
+      - name: is_public
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"

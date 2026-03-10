@@ -1,0 +1,130 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  # Determine which test suites need to run based on changed files
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run-app: ${{ steps.check.outputs.run-app }}
+      run-www: ${{ steps.check.outputs.run-www }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check for changes
+        id: check
+        uses: ./.github/actions/check-changes
+
+  # Matrix strategy: Run all 4 E2E tests in parallel
+  e2e-tests:
+    needs: check-changes
+    # Run if either service changed
+    if: needs.check-changes.outputs.run-www == 'true' || needs.check-changes.outputs.run-app == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # Don't cancel other tests if one fails
+      matrix:
+        include:
+          # securebuild-www: home test
+          - project: www-home
+            service: securebuild-www
+            needs_stripe: false
+            should_run: ${{ needs.check-changes.outputs.run-www == 'true' }}
+
+          # securebuild-www: login test
+          - project: www-login
+            service: securebuild-www
+            needs_stripe: false
+            should_run: ${{ needs.check-changes.outputs.run-www == 'true' }}
+
+          # # securebuild-www: purchase test (includes Stripe checkout)
+          # - project: www-purchase
+          #   service: securebuild-www
+          #   needs_stripe: true
+          #   should_run: ${{ needs.check-changes.outputs.run-www == 'true' }}
+
+          # securebuild-app: admin-login test
+          - project: app-admin-login
+            service: securebuild-app
+            needs_stripe: false
+            should_run: ${{ needs.check-changes.outputs.run-app == 'true' }}
+
+    name: E2E - ${{ matrix.project }}
+
+    steps:
+    - name: Checkout code
+      if: matrix.should_run
+      uses: actions/checkout@v6
+
+    - name: Set up Node.js
+      if: matrix.should_run
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+
+    - name: Cache Node.js modules
+      if: matrix.should_run
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.npm
+          ${{ matrix.service }}/node_modules
+          e2e/node_modules
+        key: ${{ runner.os }}-node-${{ matrix.service }}-e2e-${{ hashFiles(format('{0}/package-lock.json', matrix.service), 'e2e/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-${{ matrix.service }}-e2e-
+
+    - name: Install SchemaHero
+      if: matrix.should_run
+      uses: ./.github/actions/install-schemahero
+
+    - name: Install ${{ matrix.service }} dependencies
+      if: matrix.should_run
+      uses: ./.github/actions/install-npm-dependencies
+      with:
+        working-directory: ${{ matrix.service }}
+
+    - name: Install E2E test dependencies
+      if: matrix.should_run
+      uses: ./.github/actions/install-npm-dependencies
+      with:
+        working-directory: e2e
+
+    - name: Install Playwright browsers and dependencies
+      if: matrix.should_run
+      run: |
+        cd e2e
+        npx playwright install --with-deps chromium
+
+    - name: Run E2E test - ${{ matrix.project }}
+      if: matrix.should_run
+      run: |
+        cd e2e
+        npm test -- --project=${{ matrix.project }}
+      env:
+        CI: true
+        # Only set Stripe secrets for tests that need them
+        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ matrix.needs_stripe && secrets.STRIPE_PUBLISHABLE_KEY || '' }}
+        STRIPE_SECRET_KEY: ${{ matrix.needs_stripe && secrets.STRIPE_SECRET_KEY || '' }}
+
+    - name: Upload Playwright report
+      uses: actions/upload-artifact@v6
+      if: matrix.should_run && always()
+      with:
+        name: playwright-report-${{ matrix.project }}
+        path: e2e/playwright-report/
+        retention-days: 7
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v6
+      if: matrix.should_run && always()
+      with:
+        name: test-results-${{ matrix.project }}
+        path: e2e/test-results/
+        retention-days: 7

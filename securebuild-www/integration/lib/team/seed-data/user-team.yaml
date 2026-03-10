@@ -1,0 +1,14 @@
+database: securebuild
+name: user_team
+requires:
+  - securebuild-user
+  - securebuild-team
+seedData:
+  rows:
+    - columns:
+        - column: user_id
+          value:
+            str: "test-user-123"
+        - column: team_id
+          value:
+            str: "test-team-beta"

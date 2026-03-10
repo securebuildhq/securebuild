@@ -1,0 +1,35 @@
+database: securebuild
+name: image_apko
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: image_id
+        type: text
+        constraints:
+          notNull: true
+      - name: name
+        type: text
+        constraints:
+          notNull: true
+      - name: tags
+        type: text[]
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: readme
+        type: text
+      - name: last_built_at
+        type: timestamp with time zone

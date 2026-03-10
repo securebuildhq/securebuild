@@ -1,0 +1,63 @@
+database: securebuild
+name: package_version
+seedData:
+  rows:
+    # Parent package versions
+    - columns:
+        - column: id
+          value:
+            str: "pkgver-remove-test-1"
+        - column: package_id
+          value:
+            str: "pkg-remove-test-1"
+        - column: version
+          value:
+            str: "1.0.0"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: apk_release
+          value:
+            str: "0"
+    - columns:
+        - column: id
+          value:
+            str: "pkgver-remove-test-2"
+        - column: package_id
+          value:
+            str: "pkg-remove-test-1"
+        - column: version
+          value:
+            str: "1.1.0"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: apk_release
+          value:
+            str: "0"
+    # Subpackage version
+    - columns:
+        - column: id
+          value:
+            str: "pkgver-remove-test-sub-1"
+        - column: package_id
+          value:
+            str: "pkg-remove-test-sub-1"
+        - column: version
+          value:
+            str: "1.0.0"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: apk_release
+          value:
+            str: "0"

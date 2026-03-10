@@ -1,0 +1,18 @@
+{
+  "vulns": [
+    {
+      "id": "CVE-2024-7777",
+      "package_name": "redis",
+      "ecosystem": "Alpine",
+      "severity": "CRITICAL",
+      "description": "Redis command injection vulnerability in Lua scripting",
+      "fixed_version": "8.0.4-r0",
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-7777",
+        "https://redis.io/security/CVE-2024-7777"
+      ],
+      "published_at": "2024-04-01T00:00:00Z",
+      "modified_at": "2024-04-02T00:00:00Z"
+    }
+  ]
+}

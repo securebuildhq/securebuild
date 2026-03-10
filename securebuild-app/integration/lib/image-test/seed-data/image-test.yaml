@@ -1,0 +1,36 @@
+database: securebuild
+name: image_test
+requires:
+  - image_apko_version
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "it01234567890abcdef1234567890ab"
+        - column: apko_id
+          value:
+            str: "apko01234567890abcdef123456"
+        - column: apko_version_id
+          value:
+            str: "apkov01234567890abcdef12345"
+        - column: yaml_content
+          value:
+            str: |
+              referenceImage: bitnami/kubectl:1.33.4
+              test:
+                pipeline:
+                  - name: inspect-images
+                    runs: |
+                      docker inspect ${{ourImage}}
+                      docker inspect ${{refImage}}
+                      echo "Architecture: ${{arch}}"
+        - column: description
+          value:
+            str: "Test pipeline for kubectl image"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"

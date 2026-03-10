@@ -1,0 +1,23 @@
+database: securebuild
+name: external_image_signature
+schema:
+  postgres:
+    primaryKey:
+    - digest
+    columns:
+    - name: digest
+      type: text
+      constraints:
+        notNull: true
+    - name: signature
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: source
+      type: text
+      constraints:
+        notNull: true

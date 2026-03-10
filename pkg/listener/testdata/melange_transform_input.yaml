@@ -1,0 +1,82 @@
+package:
+  name: git-2.50
+  version: "2.50.0"
+  epoch: 1
+  description: "Git ${{vars.major-minor-version}} distributed version control system"
+  dependencies:
+    provides:
+      - git=${{package.full-version}}
+
+var-transforms:
+  - from: ${{package.version}}
+    match: ^(\d+\.\d+)\.\d+$
+    replace: "$1"
+    to: major-minor-version
+  - from: ${{package.version}}
+    match: ^(\d+).*
+    replace: $1
+    to: major-version
+
+environment:
+  contents:
+    repositories:
+      - https://apk.cve0.io
+    keyring:
+      - https://apk.cve0.io/key/cve0-signing.rsa.pub
+    packages:
+      # List of dependencies
+
+pipeline:
+  - uses: git-checkout
+    with:
+      repository: https://github.com/git/git
+      tag: v${{package.version}}
+      expected-commit: abc123456789012345678901234567890abcdef0
+
+  - uses: fetch
+    with:
+      uri: https://www.kernel.org/pub/software/scm/git/git-${{package.version}}.tar.gz
+      expected-sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+# Optinal subpackages
+subpackages:
+  - name: git-dev
+    description: "git development headers and libraries"
+    dependencies:
+      provides:
+        - git-dev=${{package.full-version}}
+      runtime:
+        - ${{package.name}}
+    pipeline:
+      - uses: split/dev
+
+# Optional tests
+test:
+  environment:
+    contents:
+      repositories:
+        - https://apk.cve0.io
+      keyring:
+        - https://apk.cve0.io/key/cve0-signing.rsa.pub
+      packages:
+        - busybox
+        - git-${{package.full-version}}
+  pipeline:
+    - runs: |
+        git --version
+        git config --global user.email "test@example.com"
+        git config --global user.name "Test User"
+        git init test-repo
+        cd test-repo
+        echo "test" > test.txt
+        git add test.txt
+        git commit -m "test commit"
+        git log --oneline
+
+# Optionsl
+update:
+  enabled: true
+  github:
+    identifier: git/git
+    use-tag: true
+    tag-filter: v2.50.

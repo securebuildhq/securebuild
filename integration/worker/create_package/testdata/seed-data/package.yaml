@@ -1,0 +1,20 @@
+database: securebuild
+name: package
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "pkg-test-123"
+        - column: name
+          value:
+            str: "test-package"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: is_delete_protection_enabled
+          value:
+            str: "false"

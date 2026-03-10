@@ -1,0 +1,209 @@
+name: Integration
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  # Determine which test suites need to run based on changed files
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run-www: ${{ steps.check.outputs.run-www }}
+      run-app: ${{ steps.check.outputs.run-app }}
+      run-go: ${{ steps.check.outputs.run-go }}
+      run-all: ${{ steps.check.outputs.run-all }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check for changes
+        id: check
+        uses: ./.github/actions/check-changes
+
+  securebuild-www-integration:
+    needs: check-changes
+    if: needs.check-changes.outputs.run-www == 'true' || needs.check-changes.outputs.run-all == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+
+    - name: Cache Node.js modules
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.npm
+          securebuild-www/node_modules
+          securebuild-www/.next/cache
+        key: ${{ runner.os }}-node-www-${{ hashFiles('securebuild-www/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-www-
+
+    - name: Install SchemaHero
+      uses: ./.github/actions/install-schemahero
+
+    - name: Install Node.js dependencies
+      uses: ./.github/actions/install-npm-dependencies
+      with:
+        working-directory: securebuild-www
+
+    - name: Run securebuild-www integration tests
+      run: |
+        cd securebuild-www
+        npm run test:integration
+      env:
+        CI: true
+        NODE_OPTIONS: --enable-source-maps
+
+  securebuild-app-integration:
+    needs: check-changes
+    if: needs.check-changes.outputs.run-app == 'true' || needs.check-changes.outputs.run-all == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+
+    - name: Cache Node.js modules
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.npm
+          securebuild-app/node_modules
+          securebuild-app/.next/cache
+        key: ${{ runner.os }}-node-app-${{ hashFiles('securebuild-app/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-app-
+
+    - name: Install SchemaHero
+      uses: ./.github/actions/install-schemahero
+
+    - name: Install Node.js dependencies
+      uses: ./.github/actions/install-npm-dependencies
+      with:
+        working-directory: securebuild-app
+
+    - name: Run securebuild-app integration tests
+      run: |
+        cd securebuild-app
+        npm run test:integration
+      env:
+        CI: true
+        NODE_OPTIONS: --enable-source-maps
+
+  ociproxy-integration:
+    needs: check-changes
+    if: needs.check-changes.outputs.run-go == 'true' || needs.check-changes.outputs.run-all == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+        cache: false
+
+    - name: Restore Go cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Install SchemaHero
+      uses: ./.github/actions/install-schemahero
+
+    - name: Run OCI proxy integration tests
+      run: |
+        make test-integration-oci-proxy
+      env:
+        CI: true
+
+  apkproxy-integration:
+    needs: check-changes
+    if: needs.check-changes.outputs.run-go == 'true' || needs.check-changes.outputs.run-all == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+        cache: false
+
+    - name: Restore Go cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Install SchemaHero
+      uses: ./.github/actions/install-schemahero
+
+    - name: Run APK proxy integration tests
+      run: |
+        make test-integration-apk-proxy
+      env:
+        CI: true
+
+  worker-integration:
+    needs: check-changes
+    if: needs.check-changes.outputs.run-go == 'true' || needs.check-changes.outputs.run-all == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+        cache: false
+
+    - name: Restore Go cache
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Install SchemaHero
+      uses: ./.github/actions/install-schemahero
+
+    - name: Run worker integration tests
+      run: |
+        make test-integration-worker
+      env:
+        CI: true
+

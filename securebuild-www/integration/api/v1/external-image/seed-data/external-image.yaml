@@ -1,0 +1,15 @@
+database: securebuild
+name: external_image
+requires: []
+seedData:
+  rows:
+    - columns:
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"

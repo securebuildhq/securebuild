@@ -1,0 +1,31 @@
+database: securebuild
+name: package_pipeline
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: path
+        type: varchar(255)
+        constraints:
+          notNull: true
+      - name: yaml_content
+        type: text
+        constraints:
+          notNull: true
+      - name: description
+        type: text
+      - name: created_at
+        type: timestamp with time zone
+        default: now()
+      - name: updated_at
+        type: timestamp with time zone
+        default: now()
+    indexes:
+      - name: package_pipeline_path_idx
+        columns: [path]
+        isUnique: true

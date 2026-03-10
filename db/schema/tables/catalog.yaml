@@ -1,0 +1,53 @@
+database: securebuild
+name: catalog
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: name
+      type: text
+    - name: description
+      type: text
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: is_active
+      type: boolean
+      constraints:
+        notNull: true
+    - name: category
+      type: text
+      constraints:
+        notNull: true
+    - name: slug
+      type: text
+      constraints:
+        notNull: true
+    - name: image_url
+      type: text
+      constraints:
+        notNull: true
+    - name: price_monthly
+      type: integer
+    - name: price_yearly
+      type: integer
+    - name: is_partner
+      type: boolean
+    - name: is_alternative_build
+      type: boolean
+    - name: stripe_product_id
+      type: text
+    - name: stripe_monthly_price_id
+      type: text
+    - name: stripe_yearly_price_id
+      type: text
+    - name: featured_order
+      type: integer
+    - name: blog_post_url
+      type: text

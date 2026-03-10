@@ -1,0 +1,29 @@
+database: securebuild
+name: god_mode_nonce
+schema:
+  postgres:
+    primaryKey:
+    - nonce
+    columns:
+    - name: nonce
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: expires_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: used_at
+      type: timestamp with time zone
+    - name: requested_by_user_id
+      type: text
+      constraints:
+        notNull: true
+    - name: subject_team_id
+      type: text
+      constraints:
+        notNull: true

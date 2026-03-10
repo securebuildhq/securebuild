@@ -1,0 +1,48 @@
+database: securebuild
+name: team_subscription
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: subscription_id
+        type: text
+        constraints:
+          notNull: true
+      - name: team_id
+        type: text
+        constraints:
+          notNull: true
+      - name: catalog_item_id
+        type: text
+        constraints:
+          notNull: true
+      - name: status
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: recurring_interval
+        type: text
+      - name: recurring_interval_count
+        type: integer
+      - name: current_period_start
+        type: timestamp with time zone
+      - name: current_period_end
+        type: timestamp with time zone
+      - name: price
+        type: integer
+        constraints:
+          notNull: true
+      - name: is_canceled
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"

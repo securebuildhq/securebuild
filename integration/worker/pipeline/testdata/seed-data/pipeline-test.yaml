@@ -1,0 +1,65 @@
+database: securebuild
+name: pipeline
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "abcdef1234567890abcdef1234567890"
+        - column: pipeline_type
+          value:
+            str: "package"
+        - column: path
+          value:
+            str: "test/smoke-binary"
+        - column: yaml_content
+          value:
+            str: |
+              name: smoke-binary
+
+              pipeline:
+                - runs: |
+                    pkg=$(basename ${{targets.contextdir}})
+                    apk info "$pkg" | grep -q "installed"
+                    echo "Package $pkg is installed"
+        - column: description
+          value:
+            str: "Test pipeline for smoke testing binary packages"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+    - columns:
+        - column: id
+          value:
+            str: "1234567890abcdef1234567890abcdef"
+        - column: pipeline_type
+          value:
+            str: "package"
+        - column: path
+          value:
+            str: "test/hello"
+        - column: yaml_content
+          value:
+            str: |
+              name: test-hello
+              inputs:
+                message:
+                  description: Message to print
+                  type: string
+                  default: "hello world from test pipeline"
+              pipeline:
+                - runs: |
+                    echo "${{inputs.message}}"
+                    echo "This is a test pipeline for SecureBuild tests"
+        - column: description
+          value:
+            str: "Simple test pipeline for unit and integration tests"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"

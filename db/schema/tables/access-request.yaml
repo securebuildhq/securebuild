@@ -1,0 +1,5 @@
+database: securebuild
+name: access_request
+schema:
+  postgres:
+    isDeleted: true

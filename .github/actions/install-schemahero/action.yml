@@ -1,0 +1,41 @@
+name: 'Install SchemaHero'
+description: 'Install SchemaHero CLI and postgres plugin'
+inputs:
+  version:
+    description: 'SchemaHero version to install'
+    required: false
+    default: 'v0.23.0-alpha.10'
+  oras-version:
+    description: 'ORAS version to install'
+    required: false
+    default: '1.3.0'
+runs:
+  using: "composite"
+  steps:
+    - name: Install schemahero
+      shell: bash
+      run: |
+        curl -L https://github.com/schemahero/schemahero/releases/download/${{ inputs.version }}/schemahero_linux_amd64.tar.gz | tar xzv
+        sudo mv schemahero /usr/local/bin/schemahero
+        schemahero version
+
+    - name: Install oras CLI
+      shell: bash
+      run: |
+        VERSION="${{ inputs.oras-version }}"
+        curl -LO "https://github.com/oras-project/oras/releases/download/v${VERSION}/oras_${VERSION}_linux_amd64.tar.gz"
+        mkdir -p oras-install/
+        tar -zxf oras_${VERSION}_*.tar.gz -C oras-install/
+        sudo mv oras-install/oras /usr/local/bin/
+        rm -rf oras_${VERSION}_*.tar.gz oras-install/
+
+    - name: Pre-download SchemaHero postgres plugin
+      shell: bash
+      run: |
+        mkdir -p ~/.schemahero/plugins
+        cd ~/.schemahero/plugins
+        oras pull docker.io/schemahero/plugin-postgres:latest
+        tar -xzf schemahero-postgres-linux-amd64.tar.gz
+        mv schemahero-postgres-linux-amd64 schemahero-postgres
+        chmod +x schemahero-postgres
+        rm -f *.tar.gz *.sha256 *.json

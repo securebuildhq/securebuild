@@ -1,0 +1,24 @@
+database: securebuild
+name: securebuild_team
+requires: []
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-oci-team"
+        - column: name
+          value:
+            str: "OCI Proxy Test Team"
+        - column: registry_username
+          value:
+            str: "testociteam"
+        - column: full_catalog_access
+          value:
+            str: "true"
+        - column: feature_flags
+          value:
+            str: "{}"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"

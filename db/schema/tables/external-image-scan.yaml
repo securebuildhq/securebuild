@@ -1,0 +1,41 @@
+database: securebuild
+name: external_image_scan
+schema:
+  postgres:
+    primaryKey:
+    - digest
+    - arch
+    columns:
+    - name: digest
+      type: text
+      constraints:
+        notNull: true
+    - name: parsed_results
+      type: text
+    - name: parsed_results_details
+      type: text
+    - name: raw_result
+      type: text
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: arch
+      type: text
+      constraints:
+        notNull: true
+    - name: status
+      type: text
+      default: "queued"
+      constraints:
+        notNull: true
+    - name: scan_status_message
+      type: text
+    - name: updated_at
+      type: timestamp with time zone
+    - name: scan_attempted_at
+      type: timestamp with time zone
+    - name: scan_completed_at
+      type: timestamp with time zone
+    - name: scan_status_updated_at
+      type: timestamp with time zone

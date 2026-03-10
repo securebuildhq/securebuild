@@ -1,0 +1,31 @@
+database: postgres
+name: proxy_token
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: token
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: expires_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: upstream_token
+        type: text
+        constraints:
+          notNull: true
+      - name: image_name
+        type: text
+        constraints:
+          notNull: true

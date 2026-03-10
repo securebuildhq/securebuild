@@ -1,0 +1,82 @@
+database: securebuild
+name: notification_event
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: notification_id
+        type: text
+        constraints:
+          notNull: true
+      - name: event_type
+        type: text
+        constraints:
+          notNull: true
+      - name: image_name
+        type: text
+        constraints:
+          notNull: true
+      - name: image_tag
+        type: text
+        constraints:
+          notNull: true
+      - name: image_digest
+        type: text
+        constraints:
+          notNull: true
+      - name: previous_digest
+        type: text
+      - name: payload
+        type: text
+        constraints:
+          notNull: true
+      - name: status
+        type: text
+        constraints:
+          notNull: true
+        default: "pending"
+      - name: attempts
+        type: integer
+        constraints:
+          notNull: true
+        default: "0"
+      - name: max_attempts
+        type: integer
+        constraints:
+          notNull: true
+        default: "8"
+      - name: next_retry_at
+        type: timestamp with time zone
+      - name: last_error
+        type: text
+      - name: response_code
+        type: integer
+      - name: response_body
+        type: text
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+    indexes:
+      - name: idx_notification_event_status_retry
+        columns:
+          - status
+          - next_retry_at
+      - name: idx_notification_event_notification_id
+        columns:
+          - notification_id
+      - name: idx_notification_event_created_at
+        columns:
+          - created_at
+      - name: idx_notification_event_status
+        columns:
+          - status

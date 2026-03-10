@@ -1,0 +1,26 @@
+database: securebuild
+name: securebuild_session
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: user_id
+      type: text
+      constraints:
+        notNull: true
+    - name: expires_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: selected_team_id
+      type: text
+    - name: god_mode_teams
+      type: jsonb
+      constraints:
+        notNull: true
+      default: '[]'

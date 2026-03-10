@@ -1,0 +1,14 @@
+database: securebuild
+name: buildadmin_session
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-session-fixed-id-123"
+        - column: user_id
+          value:
+            str: "test-buildadmin-user-1"
+        - column: expires_at
+          value:
+            str: "2099-12-31T23:59:59Z"

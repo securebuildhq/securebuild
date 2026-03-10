@@ -1,0 +1,43 @@
+database: securebuild
+name: custom_build_request
+schema:
+  postgres:
+    primaryKey:
+      - id
+    indexes:
+      - name: idx_custom_build_request_team_id
+        columns:
+          - team_id
+        isUnique: false
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: team_id
+        type: text
+        constraints:
+          notNull: true
+      - name: image_name
+        type: text
+        constraints:
+          notNull: true
+      - name: image_tag
+        type: text
+        constraints:
+          notNull: true
+      - name: commit_sha
+        type: text
+        constraints:
+          notNull: true
+      - name: status
+        type: text
+        constraints:
+          notNull: true
+        default: "pending"
+      - name: error
+        type: text
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true

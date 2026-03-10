@@ -1,0 +1,58 @@
+database: securebuild
+name: package_version
+requires:
+  - package-go-1.24
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "pkgv-go-1.24-9-test"
+        - column: package_id
+          value:
+            str: "pkg-go-1.24-test"
+        - column: version
+          value:
+            str: "1.24.9"
+        - column: melange_yaml
+          value:
+            str: |
+              package:
+                name: go-1.24
+                version: "1.24.9"
+                epoch: 0
+                description: "The Go programming language"
+                copyright:
+                  - license: BSD-3-Clause
+                dependencies:
+                  provides:
+                    - go=${{package.full-version}}
+
+              environment:
+                contents:
+                  packages:
+                    - busybox
+                    - bash
+
+              pipeline:
+                - runs: echo "Building Go"
+
+              update:
+                enabled: true
+                release-monitor:
+                  identifier: 1227
+        - column: apk_release
+          value:
+            str: "0"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: use_root
+          value:
+            str: "false"
+        - column: bootstrap_enabled
+          value:
+            str: "false"
+        - column: has_securebuild_edits
+          value:
+            str: "false"

@@ -1,0 +1,15 @@
+database: securebuild
+name: build_filesystem
+schema:
+  postgres:
+    primaryKey:
+      - filename
+    columns:
+      - name: filename
+        type: text
+        constraints:
+          notNull: true
+      - name: content
+        type: text
+        constraints:
+          notNull: true

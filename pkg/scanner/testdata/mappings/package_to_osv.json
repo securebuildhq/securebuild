@@ -1,0 +1,32 @@
+[
+  {
+    "package_name": "openssl",
+    "osv_ecosystem": "Alpine",
+    "osv_package_name": "openssl"
+  },
+  {
+    "package_name": "glibc",
+    "osv_ecosystem": "Alpine",
+    "osv_package_name": "glibc"
+  },
+  {
+    "package_name": "redis",
+    "osv_ecosystem": "Alpine",
+    "osv_package_name": "redis"
+  },
+  {
+    "package_name": "curl",
+    "osv_ecosystem": "Alpine",
+    "osv_package_name": "curl"
+  },
+  {
+    "package_name": "nodejs",
+    "osv_ecosystem": "Alpine",
+    "osv_package_name": "nodejs"
+  },
+  {
+    "package_name": "python3",
+    "osv_ecosystem": "Alpine",
+    "osv_package_name": "python3"
+  }
+]

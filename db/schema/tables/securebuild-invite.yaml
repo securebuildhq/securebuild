@@ -1,0 +1,33 @@
+database: securebuild
+name: securebuild_invite
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: token
+      type: text
+      constraints:
+        notNull: true
+    - name: team_id
+      type: text
+      constraints:
+        notNull: true
+    - name: email
+      type: text
+      constraints:
+        notNull: true
+    - name: role
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: last_sent_at
+      type: timestamp with time zone

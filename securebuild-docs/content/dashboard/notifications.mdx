@@ -1,0 +1,74 @@
+# Notifications
+
+The **Notifications** section allows you to configure notification preferences for your subscribed images. This is where you set up alerts for security updates, new releases, and system events.
+
+## Notification Configuration
+
+- **Add Notification Button**: Click "+ Add Notification" to create new notification rules
+- **Email Notifications**: Configure email alerts for specific images and events
+- **Event Types**: Choose from "Tag Updated", "New Tag", and "CVE Found" notifications
+
+## Example Notification Rules
+
+The interface shows configured notification rules:
+
+**Rule 1 - Nginx Image:**
+- **Recipient**: admin@company.com
+- **Image**: nginx
+- **Events**: Tag Updated, New Tag, CVE Found
+- **Status**: Active (toggle enabled)
+
+**Rule 2 - Postgres Image:**
+- **Recipient**: devops@company.com
+- **Image**: postgres
+- **Events**: Tag Updated
+- **Status**: Active (toggle enabled)
+
+## Notification Management
+
+- **Toggle On/Off**: Enable or disable individual notification rules
+- **Delete Rules**: Remove notification rules using the 'x' button
+- **Event Filtering**: Select specific event types for each image
+- **Email Targeting**: Send notifications to different team members
+
+## Event Types
+
+### Tag Updated
+
+- **Trigger**: When an existing tag is repushed due to vulnerability fixes
+- **Use Case**: Stay informed when security patches are applied
+- **Example**: "postgres:17 updated to patch CVE-2024-1234"
+
+### New Tag Available
+
+- **Trigger**: When a completely new tag is published for an image you're subscribed to
+- **Use Case**: Track new version releases
+- **Example**: "postgres:18.0 released (you're subscribed to postgres and 17.x is the latest)"
+
+### CVE Found
+
+- **Trigger**: When a new CVE is discovered in your SecureBuild image
+- **Use Case**: Early warning before patches are available
+- **Example**: "CVE-2024-5678 affects postgres:17 you're using"
+
+## Best Practices
+
+- **Enable "Tag Updated"**: Essential for production images to stay secure
+- **Use "New Tag Available"**: Track version releases and plan upgrades
+- **"CVE Found" Alerts**: Provide early warning before patches are available
+- **Team Distribution**: Send different events to different team members
+- **Regular Review**: Periodically review and update notification rules
+
+## Getting Started
+
+1. **Click "+ Add Notification"**: Start creating your first notification rule
+2. **Select Images**: Choose which images to monitor
+3. **Choose Events**: Select the event types you want to be notified about
+4. **Set Recipients**: Add email addresses for team members
+5. **Test Notifications**: Verify that notifications are working correctly
+
+This section helps you stay informed about security updates and new releases for your subscribed images.
+
+---
+
+**Next Steps**: Check [Notification History](/dashboard/notification-history) to track delivery status or learn more about [notification configuration](/notifications).

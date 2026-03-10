@@ -1,0 +1,25 @@
+database: securebuild
+name: image_apko
+requires:
+  - image
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "apko01234567890abcdef123456"
+        - column: image_id
+          value:
+            str: "img001234567890abcdef12345678"
+        - column: name
+          value:
+            str: "kubectl"
+        - column: tags
+          value:
+            str: "{1.33.4,latest}"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"

@@ -1,0 +1,16 @@
+database: securebuild
+name: buildadmin_session
+requires:
+  - buildadmin_user
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-session-pipeline-123"
+        - column: user_id
+          value:
+            str: "test-pipeline-user-1"
+        - column: expires_at
+          value:
+            str: "2099-12-31T23:59:59Z"

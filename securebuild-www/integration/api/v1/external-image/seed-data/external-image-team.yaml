@@ -1,0 +1,124 @@
+database: securebuild
+name: external_image_team
+requires:
+  - securebuild-team
+  - external-image-tag
+seedData:
+  rows:
+    - columns:
+        - column: team_id
+          value:
+            str: "test-team-alpha"
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "latest"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+    - columns:
+        - column: team_id
+          value:
+            str: "test-team-alpha"
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "unscanned"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+    # Queued scan team access
+    - columns:
+        - column: team_id
+          value:
+            str: "test-team-alpha"
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "queued"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+    # Running scan team access
+    - columns:
+        - column: team_id
+          value:
+            str: "test-team-alpha"
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "running"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+    # Failed scan team access
+    - columns:
+        - column: team_id
+          value:
+            str: "test-team-alpha"
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "failed"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+    # Pending SBOM scan team access
+    - columns:
+        - column: team_id
+          value:
+            str: "test-team-alpha"
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "pending_sbom"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+    # Generating SBOM scan team access
+    - columns:
+        - column: team_id
+          value:
+            str: "test-team-alpha"
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "generating_sbom"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"

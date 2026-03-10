@@ -1,0 +1,40 @@
+database: securebuild
+name: package
+schema:
+  postgres:
+    primaryKey:
+      - id
+    indexes:
+      - name: name
+        columns:
+          - name
+        isUnique: true
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: parent_id
+        type: text
+      - name: name
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+      - name: check_for_updates_at
+        type: timestamp with time zone
+      - name: is_delete_protection_enabled
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"
+      - name: is_deleted # HACK: This is used to mark subpackages as deleted because melange YAML can change, but these records cannot be versioned with the spec.
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"

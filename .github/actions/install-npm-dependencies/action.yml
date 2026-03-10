@@ -1,0 +1,37 @@
+name: Install NPM Dependencies
+description: Install npm dependencies and verify package-lock.json is in sync
+
+inputs:
+  working-directory:
+    description: 'Directory containing package.json and package-lock.json'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install npm dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm install
+
+    - name: Verify lockfile is in sync
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if ! git diff --exit-code package-lock.json; then
+          echo "❌ package-lock.json was modified during install"
+          echo "This means package-lock.json is out of sync with package.json"
+          echo ""
+          echo "To fix this:"
+          echo "  cd ${{ inputs.working-directory }}"
+          echo "  npm install"
+          echo "  git add package-lock.json"
+          echo "  git commit -m 'Update package-lock.json'"
+          echo ""
+          echo "Changes detected:"
+          git diff package-lock.json
+          exit 1
+        else
+          echo "✅ package-lock.json is in sync with package.json"
+        fi
+

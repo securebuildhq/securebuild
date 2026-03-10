@@ -1,0 +1,20 @@
+database: securebuild
+name: catalog_image
+schema:
+  postgres:
+    primaryKey:
+    - catalog_id
+    - image_id
+    columns:
+    - name: catalog_id
+      type: text
+      constraints:
+        notNull: true
+    - name: image_id
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true

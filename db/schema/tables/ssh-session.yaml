@@ -1,0 +1,25 @@
+id, database: securebuild
+name: ssh_session
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: builder_id
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: user_session_id
+      type: text
+      constraints:
+        notNull: true
+    - name: ssh_pid
+      type: integer

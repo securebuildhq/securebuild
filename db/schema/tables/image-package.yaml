@@ -1,0 +1,22 @@
+database: securebuild
+name: image_package
+schema:
+  postgres:
+    primaryKey:
+      - apko_id
+      - package_id
+    columns:
+      - name: image_id
+        type: text
+        constraints:
+          notNull: true
+      - name: apko_id
+        type: text
+        constraints:
+          notNull: true
+      - name: package_id
+        type: text
+        constraints:
+          notNull: true
+      - name: pinned_version
+        type: text

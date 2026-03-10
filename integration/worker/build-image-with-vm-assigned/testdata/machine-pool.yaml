@@ -1,0 +1,37 @@
+database: securebuild
+name: machine_pool
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "vm001234567890abcdef12345678"
+        - column: machine_id
+          value:
+            str: "fly-machine-test-123"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: private_key
+          value:
+            # Base64 encoded ed25519 test private key (generated for testing only)
+            str: "LS0tLS1CRUdJTiBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0KYjNCbGJuTnphQzFyWlhrdGRqRUFBQUFBQkc1dmJtVUFBQUFFYm05dVpRQUFBQUFBQUFBQkFBQUFNd0FBQUF0emMyZ3RaVwpReU5UVXhPUUFBQUNDSTcyYzE2N0lQSUJIRlYrQjRKdXl4NVpuTW1BNW5VZHlTQVlabjFFNThnZ0FBQUpBRzlTSTFCdlVpCk5RQUFBQXR6YzJndFpXUXlOVFV4T1FBQUFDQ0k3MmMxNjdJUElCSEZWK0I0SnV5eDVabk1tQTVuVWR5U0FZWm4xRTU4Z2cKQUFBRUJwZEJzYUIrdUVCdWJGTEhqTTRwSENkcERBcXRDOHhPMzF4WXFiZnZOS3g0anZaelhyc2c4Z0VjVlg0SGdtN0xIbAptY3lZRG1kUjNKSUJobWZVVG55Q0FBQUFDWFJsYzNSQWRHVnpkQUVDQXdRPQotLS0tLUVORCBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0K"
+        - column: username
+          value:
+            str: "builder"
+        - column: status
+          value:
+            str: "ready"
+        - column: ip_address
+          value:
+            str: "127.0.0.1"
+        - column: port
+          value:
+            # Must match testSSHPort in build-image-with-vm-assigned_test.go
+            int: 51722
+        - column: architecture
+          value:
+            str: "x86_64"
+        - column: is_on_demand
+          value:
+            str: "false"

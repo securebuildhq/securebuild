@@ -1,0 +1,74 @@
+database: securebuild
+name: notification
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: team_id
+        type: text
+        constraints:
+          notNull: true
+      - name: image_id
+        type: text
+        constraints:
+          notNull: true
+      - name: notification_type
+        type: text
+        constraints:
+          notNull: true
+      - name: target
+        type: text
+        constraints:
+          notNull: true
+      - name: webhook_secret
+        type: text
+      - name: events
+        type: text
+        constraints:
+          notNull: true
+      - name: tag_filter_mode
+        type: text
+        constraints:
+          notNull: true
+        default: "all"
+      - name: tag_filters
+        type: text
+      - name: enabled
+        type: boolean
+        constraints:
+          notNull: true
+        default: "true"
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: last_triggered_at
+        type: timestamp with time zone
+      - name: trigger_count
+        type: integer
+        constraints:
+          notNull: true
+        default: "0"
+    indexes:
+      - name: idx_notification_team_id
+        columns:
+          - team_id
+      - name: idx_notification_image_id
+        columns:
+          - image_id
+      - name: idx_notification_enabled
+        columns:
+          - enabled
+      - name: idx_notification_team_image
+        columns:
+          - team_id
+          - image_id

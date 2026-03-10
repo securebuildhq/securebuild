@@ -1,0 +1,66 @@
+database: securebuild
+name: package_family
+schema:
+  postgres:
+    primaryKey:
+      - id
+    indexes:
+      - name: package_family_name_unique
+        columns:
+          - name
+        isUnique: true
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: name
+        type: text
+        constraints:
+          notNull: true
+      - name: monitoring_enabled
+        type: boolean
+        default: "false"
+      - name: check_frequency_minutes
+        type: integer
+        default: "360"
+      - name: version_pattern
+        type: text
+        default: "^(\\\\d+)\\\\.(\\\\d+)(?:\\\\.(\\\\d+))?$"
+      - name: major_version_filter
+        type: text
+      - name: package_name_template
+        type: text
+        default: "{name}-{major}.{minor}"
+      - name: dry_run_mode
+        type: boolean
+        default: "false"
+      - name: min_version
+        type: text
+      - name: notify_on_detection
+        type: boolean
+        default: "false"
+      - name: notify_on_build_failure
+        type: boolean
+        default: "true"
+      - name: check_for_updates_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: last_check_at
+        type: timestamp with time zone
+      - name: last_error
+        type: text
+      - name: consecutive_errors
+        type: integer
+        default: "0"
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: image_tag_template
+        type: text

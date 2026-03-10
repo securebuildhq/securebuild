@@ -1,0 +1,34 @@
+database: securebuild
+name: ai_agent_token
+schema:
+  postgres:
+    primaryKey:
+    - token_prefix
+    indexes:
+    - name: idx_ai_agent_token_expires
+      columns:
+      - expires_at
+      isUnique: false
+    columns:
+    - name: token_prefix
+      type: text
+      constraints:
+        notNull: true
+    - name: buildadmin_user_id
+      type: text
+      constraints:
+        notNull: true
+    - name: token_hash
+      type: text
+      constraints:
+        notNull: true
+    - name: expires_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: last_used_at
+      type: timestamp with time zone
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
