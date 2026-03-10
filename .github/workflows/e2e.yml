@@ -114,7 +114,7 @@ jobs:
         STRIPE_SECRET_KEY: ${{ matrix.needs_stripe && secrets.STRIPE_SECRET_KEY || '' }}
 
     - name: Upload Playwright report
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: matrix.should_run && always()
       with:
         name: playwright-report-${{ matrix.project }}
@@ -122,7 +122,7 @@ jobs:
         retention-days: 7
 
     - name: Upload test results
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: matrix.should_run && always()
       with:
         name: test-results-${{ matrix.project }}
