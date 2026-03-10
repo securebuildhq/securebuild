@@ -2,6 +2,7 @@
   "name": "securebuild-www",
   "version": "0.1.0",
   "private": true,
+  "description": "SecureBuild public site",
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build --turbo",

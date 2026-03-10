@@ -11,7 +11,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "SecureBuild documentation site",
   "dependencies": {
     "@tailwindcss/postcss": "^4.2.1",
     "@theguild/remark-mermaid": "^0.3.0",

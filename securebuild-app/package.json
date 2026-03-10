@@ -2,6 +2,7 @@
   "name": "securebuild-admin",
   "version": "0.1.0",
   "private": true,
+  "description": "SecureBuild admin app",
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --turbo",

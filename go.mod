@@ -1,3 +1,4 @@
+// SecureBuild worker, builder, and tooling.
 module github.com/securebuildhq/securebuild
 
 go 1.25.6
