@@ -1,0 +1,38 @@
+database: securebuild
+name: image_sbom
+schema:
+  postgres:
+    primaryKey:
+      - id
+    indexes:
+      - name: idx_image_sbom_image_apko_id
+        columns:
+          - image_apko_id
+        isUnique: true
+      - name: idx_image_sbom_last_scanned_for_cves
+        columns:
+          - last_scanned_for_cves
+        isUnique: false
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: image_apko_id
+        type: text
+        constraints:
+          notNull: true
+      - name: syft_sbom_x86
+        type: text
+      - name: syft_sbom_aarch64
+        type: text
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: last_scanned_for_cves
+        type: timestamp with time zone

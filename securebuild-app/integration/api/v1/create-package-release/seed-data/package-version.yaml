@@ -1,0 +1,46 @@
+database: securebuild
+name: package_version
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-version-1-id-123"
+        - column: package_id
+          value:
+            str: "test-package-release-id-123"
+        - column: version
+          value:
+            str: "1.0.0"
+        - column: melange_yaml
+          value:
+            str: |
+              package:
+                name: test-package-release
+                version: 1.0.0
+                epoch: 0
+                description: Test package for releases
+
+              environment:
+                contents:
+                  packages:
+                    - busybox
+
+              pipeline:
+                - runs: |
+                    echo "version 1.0.0"
+        - column: apk_release
+          value:
+            str: "1"
+        - column: use_root
+          value:
+            str: "false"
+        - column: bootstrap_enabled
+          value:
+            str: "false"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2024-01-01T00:00:00Z"

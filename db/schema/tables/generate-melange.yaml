@@ -1,0 +1,25 @@
+database: securebuild
+name: generate_melange
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: updated_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: completed_at
+      type: timestamp with time zone
+    - name: user_id
+      type: text
+      constraints:
+        notNull: true

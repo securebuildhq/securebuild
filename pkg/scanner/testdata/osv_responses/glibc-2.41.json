@@ -1,0 +1,31 @@
+{
+  "vulns": [
+    {
+      "id": "CVE-2024-9999",
+      "package_name": "glibc",
+      "ecosystem": "Alpine",
+      "severity": "HIGH",
+      "description": "Buffer overflow in glibc's DNS resolver",
+      "fixed_version": "2.42-r0",
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-9999",
+        "https://sourceware.org/bugzilla/show_bug.cgi?id=12345"
+      ],
+      "published_at": "2024-03-01T00:00:00Z",
+      "modified_at": "2024-03-05T00:00:00Z"
+    },
+    {
+      "id": "CVE-2024-8888",
+      "package_name": "glibc",
+      "ecosystem": "Alpine",
+      "severity": "MEDIUM",
+      "description": "Integer overflow in printf family functions",
+      "fixed_version": "",
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-8888"
+      ],
+      "published_at": "2024-03-10T00:00:00Z",
+      "modified_at": "2024-03-10T00:00:00Z"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+contents:
+  repositories:
+    - https://apk.cve0.io
+  keyring:
+    - https://apk.cve0.io/key/cve0-signing.rsa.pub
+  packages:
+    - bash-5.2~5.2.37
+    - bash-entrypoint-5.2
+    - bash-entrypoint2
+    - bash-entrypoint3~5.2.37
+    - git-5.2~5.2.15
+    - ca-certificates-bundle
+    - linux-headers
+
+environment:
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  _BASH_VERSION: "5.2.37"
+  _BASH_BASELINE: "5.2.37"
+
+entrypoint:
+  command: docker-entrypoint.sh
+
+cmd: bash
+
+work-dir: /
+
+archs:
+  - x86_64
+  - aarch64
+
+annotations:
+  org.opencontainers.image.description: "Bourne Again Shell"
+  org.opencontainers.image.licenses: "GPL-3.0-or-later"
+  org.opencontainers.image.source: "https://www.gnu.org/software/bash/"
+  org.opencontainers.image.title: "Bash"
+  org.opencontainers.image.version: "5.2.37"

@@ -1,0 +1,39 @@
+database: securebuild
+name: oci_artifact_blob
+schema:
+  postgres:
+    primaryKey:
+      - digest
+    columns:
+      - name: digest
+        type: text
+        constraints:
+          notNull: true
+        comment: "Digest (sha256:...) of the artifact manifest (primary key)"
+      - name: media_type
+        type: text
+        constraints:
+          notNull: true
+        comment: "Media type (should be application/vnd.oci.artifact.manifest.v1+json)"
+      - name: content
+        type: jsonb
+        constraints:
+          notNull: true
+        comment: "Full manifest JSON (the artifact manifest itself, validated and queryable)"
+      - name: raw_content
+        type: bytea
+        constraints:
+          notNull: true
+        comment: "Raw manifest bytes as originally pushed (for digest and byte-exact serving)"
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+        default: now()
+        comment: "Creation timestamp"
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+        default: now()
+        comment: "Last update timestamp"

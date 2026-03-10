@@ -1,0 +1,199 @@
+# Dependency Mapping & Automatic Rebuilds
+
+SecureBuild automatically tracks all dependencies between packages and rebuilds them in the correct order when updates are available. When a security vulnerability is discovered in a base package like OpenSSL, we don't just fix OpenSSL—we automatically rebuild every package that depends on it, ensuring your entire software stack gets the security fix.
+
+## The Dependency Problem
+
+Traditional container security approaches fail because they don't understand how software components connect to each other. When a vulnerability is discovered in a foundational package, the impact ripples through the entire software ecosystem:
+
+**Without Dependency Tracking:**
+- CVE discovered in OpenSSL → Manual identification of affected packages → Days or weeks of manual rebuilds → Inconsistent updates across your stack
+
+**With SecureBuild:**
+- CVE discovered in OpenSSL → Automatic dependency analysis → Coordinated rebuilds in correct order → Complete fix deployment in hours
+
+## How We Track Dependencies
+
+### Understanding Package Relationships
+
+SecureBuild automatically analyzes two types of dependencies for every package:
+
+**Build-Time Dependencies** - Packages needed during compilation:
+- Compilers (gcc, clang)
+- Development headers (openssl-dev, zlib-dev)
+- Build tools (make, cmake, autotools)
+
+**Runtime Dependencies** - Packages needed when software runs:
+- Shared libraries (openssl, zlib, pcre)
+- Certificate stores (ca-certificates)
+- System utilities required at runtime
+
+
+## Smart Rebuild Ordering
+
+When a package needs to be updated, SecureBuild calculates the optimal build order to ensure everything rebuilds correctly and efficiently.
+
+### Dependency Graph Analysis
+
+Consider this example dependency tree:
+```
+openssl
+├── nginx
+├── curl
+└── postgresql
+    └── tigerdata
+```
+
+When OpenSSL gets a security update, SecureBuild automatically determines that we need to rebuild:
+1. **OpenSSL first** (the root dependency)
+2. **nginx, curl, postgresql in parallel** (they all depend on OpenSSL but not each other)
+3. **tigerdata** (final layer applications)
+
+### Handling Complex Dependencies
+
+Real-world software often has circular dependencies. For example:
+- Package A depends on Package B
+- Package B depends on Package C
+- Package C depends on Package A
+
+SecureBuild handles this using a two-phase rebuild strategy:
+1. **Phase 1**: Build all packages with their current dependencies
+2. **Phase 2**: Rebuild all packages with the updated dependencies
+
+This ensures consistency while breaking circular dependency chains.
+
+## Package Versioning with R-Numbers
+
+SecureBuild uses a sophisticated versioning system that tracks both upstream versions and our rebuild iterations.
+
+### Version Format: `[upstream-version]-r[rebuild-number]`
+
+**Examples:**
+- `nginx-1.24.0-r0` - Original build of nginx 1.24.0
+- `nginx-1.24.0-r1` - First rebuild (usually due to dependency update)
+- `nginx-1.24.0-r2` - Second rebuild
+- `nginx-1.24.0-r3` - Third rebuild
+
+### When R-Numbers Increment
+
+The rebuild number (r-number) increments automatically when:
+
+**Security Updates in Dependencies:**
+```
+openssl: 3.1.4-r0 → 3.1.5-r0 (upstream security fix)
+nginx: 1.24.0-r2 → 1.24.0-r3 (rebuilt with new OpenSSL)
+```
+
+**Build System Improvements:**
+```
+nginx: 1.24.0-r1 → 1.24.0-r2 (rebuilt with compiler optimizations)
+```
+
+**Configuration Changes:**
+```
+nginx: 1.24.0-r0 → 1.24.0-r1 (rebuilt with updated compile flags)
+```
+
+### Why R-Numbers Matter
+
+1. **Precise Tracking** - You know exactly which build of each package you're using
+2. **Security Clarity** - Higher r-numbers often mean more recent security fixes
+3. **Rollback Capability** - You can pin to specific r-numbers if needed
+4. **Audit Trails** - Complete history of why each rebuild happened
+
+## Rebuild Chains in Action
+
+When SecureBuild detects a package update, it creates a "rebuild chain"—a coordinated plan for updating all affected packages.
+
+### Real-World Example: OpenSSL Security Update
+
+**Timeline of an Actual CVE Response:**
+
+**9:00 AM - CVE Disclosed**
+- Security researchers publish CVE-2023-XXXXX affecting OpenSSL 3.1.4
+- Vulnerability allows remote code execution
+
+**9:15 AM - Upstream Fix Released**
+- OpenSSL maintainers release version 3.1.5 with security fix
+- SecureBuild's monitoring system detects the new release
+
+**9:20 AM - Rebuild Chain Created**
+SecureBuild automatically creates a rebuild plan:
+```
+Rebuild Chain: "openssl-3.1.5-security-update"
+
+Build Order:
+1. openssl 3.1.4-r8 → 3.1.5-r0
+2. [nginx 1.24.0-r2 → 1.24.0-r3] + [curl 8.0.1-r1 → 8.0.1-r2] + [postgresql 15.4-r3 → 15.4-r4]
+3. [my-web-app latest → new build] + [my-api-service latest → new build] + [my-database-app latest → new build]
+```
+
+**9:25 AM - Automated Rebuilds Begin**
+- OpenSSL 3.1.5-r0 build starts automatically
+- No manual intervention required
+
+**9:45 AM - First Phase Complete**
+- OpenSSL 3.1.5-r0 build completes successfully
+- nginx, curl, and postgresql builds start immediately in parallel
+
+**10:15 AM - Second Phase Complete**
+- All dependency packages finish building
+- Application builds start automatically
+
+**10:45 AM - Full Chain Complete**
+- All packages rebuilt with OpenSSL 3.1.5
+- New container images automatically available
+- Complete vulnerability remediation in under 2 hours
+
+## Monitoring Your Dependencies
+
+### Dependency Visualization
+
+SecureBuild provides interactive dependency graphs showing:
+- **Package relationships** - Visual map of what depends on what
+- **Update status** - Which packages have newer versions available
+- **Security exposure** - Packages affected by known vulnerabilities
+- **Build progress** - Real-time status of ongoing rebuilds
+
+### Rebuild Notifications
+
+You receive automatic notifications for:
+- **Critical security updates** detected in your images
+- **Rebuild chains initiated** for your packages
+- **Build completion** with new secure versions available
+- **Build failures** requiring attention
+
+### Update Policies
+
+Configure how aggressively SecureBuild handles updates:
+
+- **Security Updates** - Automatic immediate rebuilds for CVE fixes
+- **Minor Updates** - Manual approval for feature updates
+- **Major Updates** - Hold for explicit approval
+- **Dependency Rebuilds** - Automatically rebuild when dependencies update
+
+## Benefits for Your Organization
+
+### 1. Proactive Security
+- **Automatic vulnerability response** - Fixes deployed in hours, not days
+- **Complete dependency coverage** - No hidden vulnerable components
+- **Zero manual tracking** - We handle the complexity for you
+
+### 2. Supply Chain Transparency
+- **Full visibility** into every component in your images
+- **Audit trails** showing exactly when and why packages were rebuilt
+- **Compliance reporting** with complete dependency manifests
+
+### 3. Operational Efficiency
+- **Hands-off maintenance** - Updates happen automatically
+- **Parallel processing** - Maximum speed with safe ordering
+- **Rollback safety** - Pin to specific versions if needed
+
+### 4. Quality Assurance
+- **Consistent rebuilds** ensure compatibility across updates
+- **Automated testing** validates each rebuild before release
+- **Coordinated updates** prevent version mismatches
+
+## Next Steps
+
+Ready to see dependency mapping in action? Learn how to [build images with SecureBuild](/building-with-base-images) or explore [monitoring and maintaining your packages](/notifications) as dependencies evolve.

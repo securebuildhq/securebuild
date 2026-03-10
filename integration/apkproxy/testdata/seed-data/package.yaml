@@ -1,0 +1,15 @@
+database: securebuild
+name: package
+requires: []
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-package-id"
+        - column: name
+          value:
+            str: "test-package"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"

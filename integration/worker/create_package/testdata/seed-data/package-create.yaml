@@ -1,0 +1,38 @@
+database: securebuild
+name: package_create
+requires:
+  - package
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-create-pkg-1"
+        - column: melange_yaml
+          value:
+            str: |
+              package:
+                name: test-package
+                version: 1.0.0
+                epoch: 0
+                description: Test package
+                copyright:
+                  - license: MIT
+
+              pipeline:
+                - runs: echo test
+        - column: use_root
+          value:
+            str: "false"
+        - column: package_id
+          value:
+            str: "pkg-test-123"
+        - column: created_by_user_id
+          value:
+            str: "user-test-1"
+        - column: created_by_user_name
+          value:
+            str: "Test User"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"

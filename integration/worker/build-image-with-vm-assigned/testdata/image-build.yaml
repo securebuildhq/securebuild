@@ -1,0 +1,22 @@
+database: securebuild
+name: image_build
+requires:
+  - image_apko_version
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "imgbuild01234567890abcdef1234"
+        - column: image_apko_version_id
+          value:
+            str: "apkov01234567890abcdef12345"
+        - column: status
+          value:
+            str: "pending"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: builder_id
+          value:
+            str: "vm001234567890abcdef12345678"

@@ -1,0 +1,150 @@
+database: securebuild
+name: cve_package_fix
+seedData:
+  rows:
+    # APK CVE with no fix - only need one row now due to unique constraint
+    - columns:
+        - column: id
+          value:
+            str: test-cve-1
+        - column: cve_id
+          value:
+            str: CVE-2019-25210
+        - column: package_name
+          value:
+            str: helm-3.19
+        - column: artifact_name
+          value:
+            str: helm-3.19
+        - column: artifact_type
+          value:
+            str: apk
+        - column: artifact_fixed_version
+          value:
+            str: '{}'
+        - column: severity
+          value:
+            str: High
+        - column: namespace
+          value:
+            str: secureos
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+
+    # Go module CVE with fix
+    - columns:
+        - column: id
+          value:
+            str: test-cve-3
+        - column: cve_id
+          value:
+            str: CVE-2025-58181
+        - column: package_name
+          value:
+            str: helm-3.19
+        - column: artifact_name
+          value:
+            str: golang.org/x/crypto
+        - column: artifact_type
+          value:
+            str: go-module
+        - column: artifact_language
+          value:
+            str: go
+        - column: artifact_fixed_version
+          value:
+            str: '{"0.45.0"}'
+        - column: package_fixed_version
+          value:
+            str: '{"3.19.0-r3"}'
+        - column: severity
+          value:
+            str: Critical
+        - column: namespace
+          value:
+            str: nvd:cpe
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+
+    # Another Go module CVE with fix
+    - columns:
+        - column: id
+          value:
+            str: test-cve-4
+        - column: cve_id
+          value:
+            str: CVE-2025-47914
+        - column: package_name
+          value:
+            str: helm-3.19
+        - column: artifact_name
+          value:
+            str: golang.org/x/crypto
+        - column: artifact_type
+          value:
+            str: go-module
+        - column: artifact_language
+          value:
+            str: go
+        - column: artifact_fixed_version
+          value:
+            str: '{"0.45.0"}'
+        - column: package_fixed_version
+          value:
+            str: '{"3.19.0-r3"}'
+        - column: severity
+          value:
+            str: High
+        - column: namespace
+          value:
+            str: nvd:cpe
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+
+    # Go module CVE with artifact fix but no package fix (should appear under "none")
+    - columns:
+        - column: id
+          value:
+            str: test-cve-5
+        - column: cve_id
+          value:
+            str: CVE-2025-99999
+        - column: package_name
+          value:
+            str: helm-3.19
+        - column: artifact_name
+          value:
+            str: golang.org/x/net
+        - column: artifact_type
+          value:
+            str: go-module
+        - column: artifact_language
+          value:
+            str: go
+        - column: artifact_fixed_version
+          value:
+            str: '{"0.30.0"}'
+        - column: severity
+          value:
+            str: Medium
+        - column: namespace
+          value:
+            str: github:go
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"

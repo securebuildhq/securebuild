@@ -1,0 +1,37 @@
+database: securebuild
+name: enterprise_info_request
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: name
+      type: text
+      constraints:
+        notNull: true
+    - name: email
+      type: text
+      constraints:
+        notNull: true
+    - name: company_name
+      type: text
+      constraints:
+        notNull: true
+    - name: job_title
+      type: text
+      constraints:
+        notNull: true
+    - name: team_size
+      type: text
+      constraints:
+        notNull: true
+    - name: comments
+      type: text
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true 

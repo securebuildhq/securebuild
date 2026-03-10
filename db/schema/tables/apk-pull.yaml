@@ -1,0 +1,23 @@
+database: securebuild
+name: apk_pull
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: package_name
+        type: text
+        constraints:
+          notNull: true
+      - name: arch
+        type: text
+        constraints:
+          notNull: true
+      - name: pull_time
+        type: timestamp with time zone
+        constraints:
+          notNull: true

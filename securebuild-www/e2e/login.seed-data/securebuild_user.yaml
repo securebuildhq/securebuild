@@ -1,0 +1,33 @@
+database: securebuild
+name: securebuild_user
+requires: []
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "e2e-test-user-id"
+        - column: email
+          value:
+            str: "test@securebuild.io"
+        - column: first_name
+          value:
+            str: "E2E"
+        - column: last_name
+          value:
+            str: "Test User"
+        - column: picture
+          value:
+            str: "https://avatars.githubusercontent.com/u/0?v=4"
+        - column: role
+          value:
+            str: "admin"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: last_login_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: last_active_at
+          value:
+            str: "2025-01-01T00:00:00Z"

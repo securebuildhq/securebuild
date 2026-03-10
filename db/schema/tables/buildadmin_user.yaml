@@ -1,0 +1,36 @@
+database: securebuild
+name: buildadmin_user
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: email
+      type: text
+      constraints:
+        notNull: true
+    - name: name
+      type: text
+      constraints:
+        notNull: true
+    - name: image_url
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: last_login_at
+      type: timestamp with time zone
+    - name: last_active_at
+      type: timestamp with time zone
+    - name: is_admin
+      type: boolean
+      constraints:
+        notNull: true
+      default: "true" # support migrating existing envs

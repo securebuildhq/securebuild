@@ -1,0 +1,97 @@
+database: securebuild
+name: execution
+schema:
+  postgres:
+    primaryKey:
+      - id
+    indexes:
+      - columns:
+        - cause_id
+        name: execution_cause_id_idx
+        isUnique: false
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: package_id
+        type: text
+        constraints:
+          notNull: true
+      - name: package_version_id
+        type: text
+        constraints:
+          notNull: true
+      - name: version_label
+        type: text
+        constraints:
+          notNull: true
+      - name: status
+        type: text
+
+      - name: x86_64_build_stdout
+        type: text
+      - name: x86_64_build_stderr
+        type: text
+      - name: x86_64_build_exit_code
+        type: integer
+      - name: x86_64_build_command
+        type: text
+      - name: x86_64_build_started_at
+        type: timestamp with time zone
+      - name: x86_64_build_finished_at
+        type: timestamp with time zone
+      - name: x86_64_builder_id
+        type: text
+
+      - name: x86_64_publish_output
+        type: text
+
+      - name: aarch64_build_stdout
+        type: text
+      - name: aarch64_build_stderr
+        type: text
+      - name: aarch64_build_exit_code
+        type: integer
+      - name: aarch64_build_command
+        type: text
+      - name: aarch64_build_started_at
+        type: timestamp with time zone
+      - name: aarch64_build_finished_at
+        type: timestamp with time zone
+      - name: aarch64_builder_id
+        type: text
+
+      - name: aarch64_publish_output
+        type: text
+
+
+      - name: x86_64_status
+        type: text
+      - name: x86_64_status_updated_at
+        type: timestamp with time zone
+      - name: aarch64_status
+        type: text
+      - name: aarch64_status_updated_at
+        type: timestamp with time zone
+
+      - name: use_root
+        type: boolean
+
+      # this is used to track what triggered the execution - particularly rebuild chains
+      # there may be multiple executions for the same cause if something is retried
+      - name: cause
+        type: text
+      - name: cause_id
+        type: text
+
+      # flag to indicate if this execution is for a custom package
+      - name: is_custom_package
+        type: boolean
+        constraints:
+          notNull: true
+        default: false

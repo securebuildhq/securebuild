@@ -1,0 +1,33 @@
+database: securebuild
+name: package_create
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: melange_yaml
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: additional_files_data
+      type: text
+    - name: use_root
+      type: boolean
+    - name: custom_disk_size
+      type: integer
+    - name: package_id
+      type: text
+      constraints:
+        notNull: true
+    - name: created_by_user_id
+      type: text
+    - name: created_by_user_name
+      type: text

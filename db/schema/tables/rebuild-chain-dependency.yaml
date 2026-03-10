@@ -1,0 +1,18 @@
+database: securebuild
+name: rebuild_chain_dependency
+# this table tracks each dependency of a link in a rebuild chain.
+schema:
+  postgres:
+    primaryKey:
+    - link_id
+    - dependency_id
+    columns:
+    - name: link_id
+      type: text
+      constraints:
+        notNull: true
+    - name: dependency_id
+      type: text
+      constraints:
+        notNull: true
+    

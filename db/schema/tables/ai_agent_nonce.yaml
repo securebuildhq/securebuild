@@ -1,0 +1,23 @@
+database: securebuild
+name: ai_agent_nonce
+schema:
+  postgres:
+    primaryKey:
+    - nonce
+    columns:
+    - name: nonce
+      type: text
+      constraints:
+        notNull: true
+    - name: buildadmin_user_id
+      type: text
+      constraints:
+        notNull: true
+    - name: expires_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true

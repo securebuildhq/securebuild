@@ -1,0 +1,60 @@
+database: securebuild
+name: package_version
+schema:
+  postgres:
+    primaryKey:
+      - id
+    indexes:
+      - columns: [package_id, version, apk_release]
+        isUnique: true
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: package_id
+        type: text
+        constraints:
+          notNull: true
+      - name: version
+        type: text
+        constraints:
+          notNull: true
+      - name: melange_yaml
+        type: text
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+      - name: license
+        type: text
+      - name: apk_release
+        type: int
+        default: "0"
+      - name: has_securebuild_edits
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"
+      - name: use_root
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"
+      - name: bootstrap_enabled
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"
+      - name: bootstrap_apk_repository
+        type: text
+      - name: bootstrap_keyring_append
+        type: text
+      - name: custom_build_request_id
+        type: text
+      - name: custom_disk_size
+        type: integer
+      - name: last_scanned_for_cves
+        type: timestamp with time zone

@@ -1,0 +1,46 @@
+database: securebuild
+name: package_family_package
+schema:
+  postgres:
+    primaryKey:
+      - package_family_id
+      - package_id
+    indexes:
+      - name: package_family_version
+        columns:
+          - package_family_id
+          - version_major
+          - version_minor
+        isUnique: true
+    columns:
+      - name: package_family_id
+        type: text
+        constraints:
+          notNull: true
+          foreignKey:
+            references:
+              table: package_family
+              column: id
+      - name: package_id
+        type: text
+        constraints:
+          notNull: true
+          foreignKey:
+            references:
+              table: package
+              column: id
+      - name: version_major
+        type: integer
+        constraints:
+          notNull: true
+      - name: version_minor
+        type: integer
+        constraints:
+          notNull: true
+      - name: is_template
+        type: boolean
+        default: "false"
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true

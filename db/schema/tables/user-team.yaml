@@ -1,0 +1,16 @@
+database: securebuild
+name: user_team
+schema:
+  postgres:
+    primaryKey:
+    - user_id
+    - team_id
+    columns:
+    - name: user_id
+      type: text
+      constraints:
+        notNull: true
+    - name: team_id
+      type: text
+      constraints:
+        notNull: true

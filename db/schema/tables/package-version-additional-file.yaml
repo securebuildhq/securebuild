@@ -1,0 +1,40 @@
+database: securebuild
+name: package_version_additional_file
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: package_version_id
+        type: text
+        constraints:
+          notNull: true
+      - name: path
+        type: text
+        constraints:
+          notNull: true
+      - name: content
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+    indexes:
+      - name: idx_package_version_additional_file_package_version_id
+        columns:
+          - package_version_id
+      - name: idx_package_version_additional_file_package_version_id_path
+        columns:
+          - package_version_id
+          - path
+        isUnique: true

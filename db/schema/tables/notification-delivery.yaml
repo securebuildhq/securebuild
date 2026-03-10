@@ -1,0 +1,98 @@
+database: securebuild
+name: notification_delivery
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: notification_id
+        type: text
+        constraints:
+          notNull: true
+      - name: event_type
+        type: text
+        constraints:
+          notNull: true
+      - name: image_name
+        type: text
+        constraints:
+          notNull: true
+      - name: image_tag
+        type: text
+        constraints:
+          notNull: true
+      - name: image_digest
+        type: text
+        constraints:
+          notNull: true
+      - name: previous_digest
+        type: text
+      - name: payload
+        type: text
+        constraints:
+          notNull: true
+      - name: status
+        type: text
+        constraints:
+          notNull: true
+      - name: delivery_attempts
+        type: integer
+        constraints:
+          notNull: true
+        default: "0"
+      - name: max_retry_attempts
+        type: integer
+        constraints:
+          notNull: true
+        default: "3"
+      - name: last_attempt_at
+        type: timestamp with time zone
+      - name: next_retry_at
+        type: timestamp with time zone
+      - name: delivered_at
+        type: timestamp with time zone
+      - name: error_message
+        type: text
+      - name: response_code
+        type: integer
+      - name: response_body
+        type: text
+      - name: manual_retry_requested
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"
+      - name: manual_retry_requested_at
+        type: timestamp with time zone
+      - name: manual_retry_requested_by
+        type: text
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+    indexes:
+      - name: idx_notification_delivery_notification_id
+        columns:
+          - notification_id
+      - name: idx_notification_delivery_status
+        columns:
+          - status
+      - name: idx_notification_delivery_created_at
+        columns:
+          - created_at
+      - name: idx_notification_delivery_next_retry_at
+        columns:
+          - next_retry_at
+      - name: idx_notification_delivery_status_retry
+        columns:
+          - status
+          - next_retry_at
+      - name: idx_notification_delivery_manual_retry
+        columns:
+          - manual_retry_requested
+          - status
+

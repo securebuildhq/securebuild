@@ -1,0 +1,173 @@
+# Understanding the Problem
+
+Container security vulnerabilities are a fundamental challenge in modern software deployment. Understanding why they occur and when they surface is crucial to appreciating SecureBuild's approach.
+
+## The CVE Timeline Problem
+
+### CVEs Appear After Release
+
+The core security challenge with container images is that **vulnerabilities are discovered after images are already built and deployed**. This creates a dangerous gap between when an image is "secure" at build time and when it's actually secure in production.
+
+Consider this typical timeline:
+
+1. **Day 0**: Developer builds image using `FROM node:18-alpine`
+2. **Day 30**: Image passes security scans and deploys to production
+3. **Day 60**: New CVE discovered in OpenSSL library used by Node.js
+4. **Day 61**: Your "secure" production image now has a critical vulnerability
+
+The image hasn't changed, but the threat landscape has. This is the fundamental problem with traditional container security approaches.
+
+### Vulnerabilities Hide in Dependencies
+
+Most security vulnerabilities aren't in your application source code—they're in the dozens or hundreds of dependencies that get pulled in during the build process.
+
+#### Build Dependencies
+- **Compiler toolchains** (GCC, Clang, build tools)
+- **Package managers** (npm, pip, cargo, go modules)
+- **Build utilities** (make, cmake, autotools)
+- **System libraries** (glibc, openssl, zlib)
+
+#### Runtime Dependencies
+- **Base operating system** (Alpine, Ubuntu, Debian packages)
+- **Language runtimes** (Node.js, Python, Java)
+- **System libraries** shared by multiple components
+- **Transitive dependencies** of your application dependencies
+
+```dockerfile
+# This simple Dockerfile pulls in hundreds of packages
+FROM node:18-alpine
+COPY package.json .
+RUN npm install  # Downloads 200+ npm packages
+COPY . .
+RUN npm run build  # May download additional build tools
+
+# Each of these steps introduces potential vulnerabilities:
+# - node:18-alpine base image (50+ Alpine packages)
+# - npm packages (200+ JavaScript dependencies)
+# - Build tools and their dependencies
+# - Transitive dependencies of dependencies
+```
+
+## Traditional Approaches Fall Short
+
+### 1. Vulnerability Scanning After Build
+
+Most teams scan container images after they're built:
+
+```bash
+# Build first, scan second
+docker build -t myapp:latest .
+grype myapp:latest  # Finds vulnerabilities AFTER build
+```
+
+**Problems:**
+- If vulnerabilities are found, you need to rebuild everything
+- Scanning tools can only detect known vulnerabilities
+- No visibility into the build process itself
+- Can't fix vulnerabilities in base layers easily
+
+### 2. Base Image Updates
+
+Teams try to stay current with base image updates:
+
+```dockerfile
+# Hope the base image is secure
+FROM node:18-alpine-20231201  # Pinned to specific date
+```
+
+**Problems:**
+- Base images may still contain unpatched vulnerabilities
+- Updates can break application compatibility
+- No control over what gets included in base images
+- Dependency on upstream maintainers' security practices
+
+### 3. Distroless and Minimal Images
+
+Some teams use minimal images to reduce attack surface:
+
+```dockerfile
+FROM gcr.io/distroless/nodejs18-debian11
+```
+
+**Problems:**
+- Still contains pre-built binaries with potential vulnerabilities
+- Limited ability to patch or customize included components
+- May not include debugging tools when needed
+- Dependencies on upstream build processes
+
+## The Source of Truth Problem
+
+The fundamental issue is that **traditional container images are built from pre-compiled binaries**, not from source code. This creates several problems:
+
+### 1. Opaque Build Process
+You don't know exactly how the binaries in your base image were compiled:
+- What compiler was used?
+- What build flags were set?
+- What patches were applied?
+- When was it actually built?
+
+### 2. Supply Chain Opacity
+Multiple layers of pre-built components:
+- Base OS packages (built by distro maintainers)
+- Language runtimes (built by language teams)
+- Application dependencies (built by package maintainers)
+- Your application (built on top of all the above)
+
+### 3. Update Lag
+Security fixes follow a chain:
+1. Vulnerability discovered in library
+2. Library maintainer releases fix
+3. OS package maintainer updates package
+4. Base image maintainer rebuilds image
+5. You rebuild your application image
+
+Each step introduces delay. Critical vulnerabilities can remain unfixed for days or weeks.
+
+## Why "Patch Management" Isn't Enough
+
+Traditional enterprise patch management approaches don't work well for containers:
+
+### Immutable Infrastructure
+Containers are designed to be immutable—you don't patch running containers, you replace them. But replacement requires rebuilding, which brings us back to the dependency problem.
+
+### Scale and Velocity
+Modern applications may use hundreds of container images across microservices. Managing vulnerability patches across this scale, with the velocity of modern deployment, is practically impossible with traditional approaches.
+
+### Transitive Dependencies
+Your application may have dependencies that depend on vulnerable libraries. You can't easily patch these without rebuilding the entire dependency chain.
+
+## What's Needed: A Different Approach
+
+The problems above point to a fundamental need for a different approach to container security:
+
+1. **Build from source** instead of relying on pre-built binaries
+2. **Control the entire toolchain** to ensure reproducible, secure builds
+3. **Continuous rebuilding** to address vulnerabilities as they're discovered
+4. **Dependency mapping** to understand exactly what's in each image
+5. **Automated patching** without waiting for upstream maintainers
+
+This is exactly what SecureBuild provides. Instead of trying to patch or scan existing images, we rebuild everything from source using a controlled, secure build environment.
+
+## Real World Impact
+
+Consider these recent examples:
+
+### Log4Shell (CVE-2021-44228)
+- Discovered in December 2021
+- Affected millions of applications using Log4j
+- Many teams had no idea their images contained vulnerable Log4j versions
+- Traditional scanning found the vulnerability but couldn't easily fix it
+
+### OpenSSL Vulnerabilities
+- Regularly discovered in OpenSSL library
+- Affects virtually all container images
+- Base image updates can take days or weeks
+- Applications may break with OpenSSL updates
+
+With SecureBuild, these vulnerabilities are addressed by rebuilding affected images from source with patched dependencies, often within hours of vulnerability disclosure.
+
+## Next Steps
+
+Understanding these fundamental problems with traditional container security approaches helps explain why SecureBuild takes a radically different approach.
+
+Next, learn how we solve these problems by [Building from Source](/building-from-source).

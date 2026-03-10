@@ -1,0 +1,93 @@
+database: securebuild
+name: image_catalog
+schema:
+  postgres:
+    primaryKey:
+      - id
+    indexes:
+      - name: idx_image_catalog_name_tag
+        columns:
+          - name
+          - tag
+        isUnique: false
+      - name: idx_image_catalog_image_id
+        columns:
+          - image_id
+        isUnique: false
+      - name: idx_image_catalog_next_scan_at
+        columns:
+          - next_scan_at
+        isUnique: false
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: name
+        type: text
+      - name: tag
+        type: text
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: sbom_x86
+        type: text
+        constraints:
+          notNull: true
+      - name: sbom_aarch64
+        type: text
+        constraints:
+          notNull: true
+      - name: image_id
+        type: text
+        constraints:
+          notNull: true
+      - name: apko_id
+        type: text
+        constraints:
+          notNull: true
+      - name: apko_version_id
+        type: text
+        constraints:
+          notNull: true
+      - name: is_published
+        type: boolean
+        constraints:
+          notNull: true
+      - name: size_x86
+        type: bigint
+      - name: size_aarch64
+        type: bigint
+      - name: digest_x86
+        type: text
+      - name: digest_aarch64
+        type: text
+      - name: index_digest
+        type: text
+      - name: last_scanned_at
+        type: timestamp with time zone
+      - name: last_scan_result_x86
+        type: text
+      - name: last_scan_result_aarch64
+        type: text
+      - name: last_scan_result_custom_x86
+        type: text
+      - name: last_scan_result_custom_aarch64
+        type: text
+      - name: last_scan_result_alternate_x86
+        type: text
+      - name: last_scan_result_alternate_aarch64
+        type: text
+      - name: next_scan_at
+        type: timestamp with time zone
+      - name: fixed_cve_count_x86
+        type: integer
+      - name: fixed_cve_count_aarch64
+        type: integer
+      - name: readme
+        type: text

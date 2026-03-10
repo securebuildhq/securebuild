@@ -1,0 +1,54 @@
+database: securebuild
+name: last_image_scan
+schema:
+  postgres:
+    primaryKey:
+      - image_name
+      - image_tag
+      - image_arch
+    columns:
+      - name: image_name
+        type: text
+        constraints:
+          notNull: true
+      - name: image_tag
+        type: text
+        constraints:
+          notNull: true
+      - name: image_arch
+        type: text
+        constraints:
+          notNull: true
+      - name: result
+        type: jsonb
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: vuln_count_critical
+        type: integer
+        constraints:
+          notNull: true
+      - name: vuln_count_high
+        type: integer
+        constraints:
+          notNull: true
+      - name: vuln_count_medium
+        type: integer
+        constraints:
+          notNull: true
+      - name: vuln_count_low
+        type: integer
+        constraints:
+          notNull: true
+      - name: vuln_count_fixable
+        type: integer
+        constraints:
+          notNull: true
+        default: "0"

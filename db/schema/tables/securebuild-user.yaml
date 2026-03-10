@@ -1,0 +1,43 @@
+database: securebuild
+name: securebuild_user
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: email
+      type: text
+      constraints:
+        notNull: true
+    - name: first_name
+      type: text
+    - name: last_name
+      type: text
+    - name: picture
+      type: text
+      constraints:
+        notNull: true
+    - name: hosted_domain
+      type: text
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: last_login_at
+      type: timestamp with time zone
+    - name: last_active_at
+      type: timestamp with time zone
+    - name: role
+      type: text
+      constraints:
+        notNull: true
+      default: "admin"
+    - name: allow_god_mode
+      type: boolean
+      constraints:
+        notNull: true
+      default: false

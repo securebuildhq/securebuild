@@ -1,0 +1,37 @@
+database: securebuild
+name: package_test
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: user_id
+      type: text
+      constraints:
+        notNull: true
+    - name: session_id
+      type: text
+    - name: melange_yaml
+      type: text
+      constraints:
+        notNull: true
+    - name: status
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: build_stdout
+      type: text
+    - name: build_stderr
+      type: text
+    - name: arch
+      type: text
+
+

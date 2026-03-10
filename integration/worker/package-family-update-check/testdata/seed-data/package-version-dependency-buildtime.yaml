@@ -1,0 +1,29 @@
+database: securebuild
+name: package_version_dependency_buildtime
+requires:
+  - package-version-rqlite-9.0
+  - package-go-1.24
+seedData:
+  rows:
+    - columns:
+        - column: package_version_id
+          value:
+            str: "pkgv-rqlite-9.0.2-test"
+        - column: package_name
+          value:
+            str: "rqlite-9.0"
+        - column: package_version
+          value:
+            str: "9.0.2"
+        - column: package_apk_release
+          value:
+            str: "0"
+        - column: depends_on_package_id
+          value:
+            str: "pkg-go-1.24-test"
+        - column: depends_on_package_name
+          value:
+            str: "go-1.24"
+        - column: depends_on_package_is_external
+          value:
+            str: "false"

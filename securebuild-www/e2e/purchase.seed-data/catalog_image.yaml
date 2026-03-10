@@ -1,0 +1,42 @@
+database: securebuild
+name: catalog_image
+requires:
+  - catalog
+  - image
+seedData:
+  rows:
+    # Link Redis catalog to redis image
+    - columns:
+        - column: catalog_id
+          value:
+            str: "e2e-catalog-redis"
+        - column: image_id
+          value:
+            str: "e2e-image-redis"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+
+    # Link Nginx catalog to nginx image
+    - columns:
+        - column: catalog_id
+          value:
+            str: "e2e-catalog-nginx"
+        - column: image_id
+          value:
+            str: "e2e-image-nginx"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+
+    # Link Ruby catalog to ruby image
+    - columns:
+        - column: catalog_id
+          value:
+            str: "e2e-catalog-ruby"
+        - column: image_id
+          value:
+            str: "e2e-image-ruby"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"

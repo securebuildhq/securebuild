@@ -1,0 +1,34 @@
+database: securebuild
+name: partner_info_request
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: name
+      type: text
+      constraints:
+        notNull: true
+    - name: email
+      type: text
+      constraints:
+        notNull: true
+    - name: project_name
+      type: text
+      constraints:
+        notNull: true
+    - name: github_username
+      type: text
+    - name: company_name
+      type: text
+    - name: comments
+      type: text
+      constraints:
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true

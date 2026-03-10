@@ -1,0 +1,29 @@
+database: securebuild
+name: image_pull
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: image_catalog_id
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: image_name
+        type: text
+      - name: image_tag
+        type: text
+      - name: team_id
+        type: text
+        constraints:
+          notNull: true
+      - name: service_account_id
+        type: text

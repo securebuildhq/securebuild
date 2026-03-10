@@ -1,0 +1,22 @@
+database: securebuild
+name: package_version
+requires:
+  - package
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-package-version-id"
+        - column: package_id
+          value:
+            str: "test-package-id"
+        - column: version
+          value:
+            str: "1.0.0"
+        - column: apk_release
+          value:
+            str: "0"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"

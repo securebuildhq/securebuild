@@ -1,0 +1,62 @@
+# syntax=docker/dockerfile:1.4
+# Dockerfile for repldev - Next.js standalone build (linux/amd64)
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies with npm cache mount for faster rebuilds
+# On ARM64, delete package-lock.json to force fresh install with correct binaries
+RUN --mount=type=cache,target=/root/.npm \
+    if [ "$(uname -m)" = "aarch64" ]; then \
+      echo "ARM64 detected - removing package-lock.json for fresh install"; \
+      rm -f package-lock.json; \
+    fi && \
+    npm install
+
+# Copy source
+COPY . .
+
+# Build args from docker-compose
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ARG NEXT_PUBLIC_GOOGLE_REDIRECT_URI
+ARG NEXT_PUBLIC_GOOGLE_OAUTH_STATE
+ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_CVE0_OCI_HOST
+
+# Set as ENV so Next.js can use them during build
+ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ENV NEXT_PUBLIC_GOOGLE_REDIRECT_URI=$NEXT_PUBLIC_GOOGLE_REDIRECT_URI
+ENV NEXT_PUBLIC_GOOGLE_OAUTH_STATE=$NEXT_PUBLIC_GOOGLE_OAUTH_STATE
+ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_CVE0_OCI_HOST=$NEXT_PUBLIC_CVE0_OCI_HOST
+
+# Optimization: Disable telemetry, source maps, and increase Node memory
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_DISABLE_SOURCEMAPS=1
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+# Build with Turbopack and cache mounts for incremental builds (5-10x faster)
+RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,target=/app/.next/cache \
+    npm run build
+
+# Production image
+FROM node:20-slim
+
+WORKDIR /app
+
+# Copy standalone output
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+# Expose port
+EXPOSE 3001
+
+ENV NODE_ENV=production
+ENV PORT=3001
+
+CMD ["node", "server.js"]

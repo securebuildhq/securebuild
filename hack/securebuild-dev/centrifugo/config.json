@@ -1,0 +1,28 @@
+{
+  "client": {
+    "token": {
+      "hmac_secret_key": "your-secret-key-here"
+    },
+    "allowed_origins": ["http://localhost:3000"]
+  },
+  "http_server": {
+    "port": 8000
+  },
+  "admin": {
+    "password": "admin-password-here",
+    "secret": "admin-secret-here"
+  },
+  "http_api": {
+    "key": "api-key-here"
+  },
+  "channel": {
+    "namespaces": [
+      {
+        "name": "user",
+        "allow_user_limited_channels": true,
+        "allow_subscribe_for_client": true,
+        "allow_publish_for_subscriber": true
+      }
+    ]
+  }
+}

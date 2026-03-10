@@ -1,0 +1,33 @@
+database: securebuild
+name: team_pricing_override
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: team_id
+      type: text
+      constraints:
+        notNull: true
+    - name: catalog_item_id
+      type: text
+      constraints:
+        notNull: true
+    - name: price_monthly
+      type: integer
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: stripe_price_id
+      type: text
+      constraints:
+        notNull: true
+
+

@@ -1,0 +1,73 @@
+database: securebuild
+name: machine_pool_history
+schema:
+  postgres:
+    primaryKey:
+    - id
+    - deleted_at
+    indexes:
+    - name: idx_machine_pool_history_deleted_at
+      columns:
+      - deleted_at
+    - name: idx_machine_pool_history_termination_reason
+      columns:
+      - termination_reason
+    - name: idx_machine_pool_history_machine_id
+      columns:
+      - machine_id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: machine_id
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: expires_at
+      type: timestamp with time zone
+    - name: private_key
+      type: text
+      constraints:
+        notNull: true
+    - name: username
+      type: text
+    - name: status
+      type: text
+      constraints:
+        notNull: true
+    - name: ip_address
+      type: text
+    - name: port
+      type: integer
+    - name: assigned_task_type
+      type: text
+    - name: assigned_task_id
+      type: text
+    - name: architecture
+      type: text
+    - name: deleted_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: termination_reason
+      type: text
+      constraints:
+        notNull: true
+    - name: last_command
+      type: text
+    - name: last_stdout
+      type: text
+    - name: last_stderr
+      type: text
+    - name: failure_details
+      type: text
+    - name: is_on_demand
+      type: boolean
+      constraints:
+        notNull: true
+      default: "false"

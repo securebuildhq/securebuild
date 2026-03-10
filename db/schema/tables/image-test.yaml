@@ -1,0 +1,35 @@
+database: securebuild
+name: image_test
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: apko_id
+        type: text
+        constraints:
+          notNull: true
+      - name: apko_version_id
+        type: text
+        constraints:
+          notNull: true
+      - name: yaml_content
+        type: text
+        constraints:
+          notNull: true
+      - name: description
+        type: text
+      - name: created_at
+        type: timestamp with time zone
+        default: now()
+      - name: updated_at
+        type: timestamp with time zone
+        default: now()
+    indexes:
+      - name: idx_image_test_apko_id_version_id
+        columns: [apko_id, apko_version_id]
+        isUnique: true

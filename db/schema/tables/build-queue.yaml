@@ -1,0 +1,33 @@
+database: securebuild
+name: build_queue
+schema:
+  postgres:
+    primaryKey:
+    - package_id
+    - package_version_id
+    - run_id
+    columns:
+    - name: package_id
+      type: text
+      constraints:
+        notNull: true
+    - name: package_version_id
+      type: text
+    - name: run_id
+      type: text
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: completed_at
+      type: timestamp with time zone
+    - name: status
+      type: text
+      constraints:
+        notNull: true
+    - name: error
+      type: text
+    - name: depends_on
+      type: text[]
+      constraints:
+        notNull: true

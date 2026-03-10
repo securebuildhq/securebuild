@@ -1,0 +1,45 @@
+database: securebuild
+name: apk_catalog
+seedData:
+  rows:
+    # Test package with multiple architectures
+    - columns:
+        - column: filename
+          value:
+            str: "test-package-1.0.0-r0.apk"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: index_content
+          value:
+            str: '{"origin": "test-package", "version": "1.0.0-r0", "arch": "x86_64"}'
+        - column: is_withdrawn
+          value:
+            str: "false"
+    - columns:
+        - column: filename
+          value:
+            str: "test-package-1.0.0-r0.apk"
+        - column: arch
+          value:
+            str: "aarch64"
+        - column: index_content
+          value:
+            str: '{"origin": "test-package", "version": "1.0.0-r0", "arch": "aarch64"}'
+        - column: is_withdrawn
+          value:
+            str: "false"
+    # Another package for testing single architecture
+    - columns:
+        - column: filename
+          value:
+            str: "single-arch-package-2.0.0-r1.apk"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: index_content
+          value:
+            str: '{"origin": "single-arch-package", "version": "2.0.0-r1", "arch": "x86_64"}'
+        - column: is_withdrawn
+          value:
+            str: "false"

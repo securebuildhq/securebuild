@@ -1,0 +1,210 @@
+---
+version: 2
+
+# Dependabot configuration for SecureBuild Service
+# Manages dependencies across Go, NPM, GitHub Actions, and Docker
+# Schedules are staggered across weekdays to distribute review load
+
+updates:
+  # =============================================================================
+  # GO MODULES
+  # =============================================================================
+
+  # Root Go module - Core application (58 direct dependencies, 432 indirect)
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "go"
+      - "securebuild-worker"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      go-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Dagger Go module - Build pipeline (7 direct dependencies, 40 indirect)
+  - package-ecosystem: "gomod"
+    directory: "/dagger"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:30"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "go"
+      - "dagger"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      dagger-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # =============================================================================
+  # NPM / NODE.JS PROJECTS
+  # =============================================================================
+
+  # securebuild-www - Customer-facing Next.js app (60+ dependencies)
+  - package-ecosystem: "npm"
+    directory: "/securebuild-www"
+    versioning-strategy: increase
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "npm"
+      - "securebuild-www"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      www-production-minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@types/*"
+          - "eslint*"
+          - "jest*"
+          - "typescript"
+        update-types:
+          - "minor"
+          - "patch"
+      www-dev-dependencies:
+        patterns:
+          - "@types/*"
+          - "eslint*"
+          - "jest*"
+          - "typescript"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # securebuild-app - Admin interface Next.js app (65+ dependencies)
+  - package-ecosystem: "npm"
+    directory: "/securebuild-app"
+    versioning-strategy: increase
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:30"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "npm"
+      - "securebuild-app"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      app-production-minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@types/*"
+          - "eslint*"
+          - "jest*"
+          - "typescript"
+        update-types:
+          - "minor"
+          - "patch"
+      app-dev-dependencies:
+        patterns:
+          - "@types/*"
+          - "eslint*"
+          - "jest*"
+          - "typescript"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # securebuild-docs - Documentation site (8 dependencies)
+  - package-ecosystem: "npm"
+    directory: "/securebuild-docs"
+    versioning-strategy: increase
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "npm"
+      - "securebuild-docs"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      docs-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # e2e - End-to-end testing (3 dependencies)
+  - package-ecosystem: "npm"
+    directory: "/e2e"
+    versioning-strategy: increase
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "09:30"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "npm"
+      - "e2e"
+      - "testing"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      e2e-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # =============================================================================
+  # GITHUB ACTIONS
+  # =============================================================================
+
+  # GitHub Actions workflows - Security-critical (6+ actions)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

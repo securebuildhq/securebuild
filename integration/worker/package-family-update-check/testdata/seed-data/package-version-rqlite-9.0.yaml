@@ -1,0 +1,66 @@
+database: securebuild
+name: package_version
+requires:
+  - package-rqlite-9.0
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "pkgv-rqlite-9.0.2-test"
+        - column: package_id
+          value:
+            str: "pkg-rqlite-9.0-test"
+        - column: version
+          value:
+            str: "9.0.2"
+        - column: melange_yaml
+          value:
+            str: |
+              package:
+                name: rqlite-9.0
+                version: 9.0.2
+                epoch: 0
+                description: The lightweight, user-friendly, distributed relational database built on SQLite
+                copyright:
+                  - license: MIT
+                dependencies:
+                  provides:
+                    - rqlite=${{package.full-version}}
+
+              environment:
+                contents:
+                  packages:
+                    - busybox
+                    - build-base
+                    - ca-certificates-bundle
+                    - go-1.24
+                    - make-bootstrap-4.4
+                    - binutils
+                    - bash
+                    - git
+
+              pipeline:
+                - runs: echo "Building rqlite"
+
+              update:
+                enabled: true
+                github:
+                  identifier: rqlite/rqlite
+                  use-tag: false
+                  strip-prefix: v
+        - column: apk_release
+          value:
+            str: "0"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: use_root
+          value:
+            str: "false"
+        - column: bootstrap_enabled
+          value:
+            str: "false"
+        - column: has_securebuild_edits
+          value:
+            str: "false"

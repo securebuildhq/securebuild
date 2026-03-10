@@ -1,0 +1,6 @@
+# CODEOWNERS file
+# This file defines code owners for the repository
+# The @securebuildhq/core team must approve all changes
+
+# Global rule - applies to all files in the repository
+* @securebuildhq/core

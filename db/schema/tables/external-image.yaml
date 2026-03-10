@@ -1,0 +1,18 @@
+database: securebuild
+name: external_image
+schema:
+  postgres:
+    primaryKey:
+    - registry
+    - image_name
+    columns:
+    - name: registry
+      type: text
+    - name: image_name
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true

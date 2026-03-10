@@ -1,0 +1,41 @@
+package:
+  name: bash
+  version: 5.1.8-9.el9
+  epoch: 0
+  description: "bash library package"
+  copyright:
+    - license: Apache-2.0
+
+environment:
+  contents:
+    packages:
+      - build-base
+      - busybox
+      - ca-certificates-bundle
+
+pipeline:
+  - uses: fetch
+    with:
+      expected-sha256: ""
+      uri: https://example.com/source.tar.gz
+      strip-components: 1
+
+  - uses: autoconf/make
+
+  - uses: autoconf/make-install
+
+  - uses: strip
+
+subpackages:
+  - name: bash-dev
+    pipeline:
+      - uses: split/dev
+    dependencies:
+      runtime:
+        - bash
+    description: bash dev
+
+update:
+  enabled: true
+  release-monitor:
+    identifier: 0

@@ -1,0 +1,1615 @@
+{
+  "matches": [
+    {
+      "vulnerability": {
+        "id": "CVE-2025-46817",
+        "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-46817",
+        "namespace": "nvd:cpe",
+        "severity": "High",
+        "urls": [
+          "https://github.com/redis/redis/commit/fc9abc775e308374f667fdf3e723ef4b7eb0e3ca",
+          "https://github.com/redis/redis/releases/tag/8.2.2",
+          "https://github.com/redis/redis/security/advisories/GHSA-m8fj-85cg-7vhp"
+        ],
+        "description": "Redis is an open source, in-memory database that persists on disk. Versions 8.2.1 and below allow an authenticated user to use a specially crafted Lua script to cause an integer overflow and potentially lead to remote code execution The problem exists in all versions of Redis with Lua scripting. This issue is fixed in version 8.2.2.",
+        "cvss": [
+          {
+            "source": "nvd@nist.gov",
+            "type": "Primary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+            "metrics": {
+              "baseScore": 8.8,
+              "exploitabilityScore": 2.9,
+              "impactScore": 5.9
+            },
+            "vendorMetadata": {}
+          },
+          {
+            "source": "security-advisories@github.com",
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",
+            "metrics": {
+              "baseScore": 7,
+              "exploitabilityScore": 1.1,
+              "impactScore": 5.9
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2025-46817",
+            "epss": 0.21861,
+            "percentile": 0.95374,
+            "date": "2025-11-19"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "6.2.20",
+            "7.2.11",
+            "7.4.6",
+            "8.0.4",
+            "8.2.2"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 16.83297
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "cpe-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "namespace": "nvd:cpe",
+            "cpes": [
+              "cpe:2.3:a:redis:redis:8.0.3:*:*:*:*:*:*:*"
+            ],
+            "package": {
+              "name": "redis-8.0",
+              "version": "8.0.3-r4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2025-46817",
+            "versionConstraint": "< 6.2.20,>= 7, < 7.2.11,>= 7.3, < 7.4.6,>= 8, < 8.0.4,>= 8.1.0, < 8.2.2 (unknown)",
+            "cpes": [
+              "cpe:2.3:a:redis:redis:*:*:*:*:*:*:*:*"
+            ]
+          },
+          "fix": {
+            "suggestedVersion": "8.0.4"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "09d74e1fda7cd65b",
+        "name": "redis-8.0",
+        "version": "8.0.3-r4",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "BSD-3-Clause"
+        ],
+        "cpes": [
+          "cpe:2.3:a:redis-8.0:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis-8.0:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis-8.0:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis:8.0.3-r4:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/securebuild/redis-8.0@8.0.3-r4?arch=aarch64&distro=securebuild-2025.09.09",
+        "upstreams": [
+          {
+            "name": "redis-8.0"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/redis-benchmark"
+            },
+            {
+              "path": "/usr/bin/redis-check-aof"
+            },
+            {
+              "path": "/usr/bin/redis-check-rdb"
+            },
+            {
+              "path": "/usr/bin/redis-sentinel"
+            },
+            {
+              "path": "/usr/bin/redis-server"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/redis-8.0-8.0.3-r4.spdx.json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2025-49844",
+        "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-49844",
+        "namespace": "nvd:cpe",
+        "severity": "Critical",
+        "urls": [
+          "https://github.com/redis/redis/commit/d5728cb5795c966c5b5b1e0f0ac576a7e69af539",
+          "https://github.com/redis/redis/releases/tag/8.2.2",
+          "https://github.com/redis/redis/security/advisories/GHSA-4789-qfc9-5f9q",
+          "http://www.openwall.com/lists/oss-security/2025/10/07/2"
+        ],
+        "description": "Redis is an open source, in-memory database that persists on disk. Versions 8.2.1 and below allow an authenticated user to use a specially crafted Lua script to manipulate the garbage collector, trigger a use-after-free and potentially lead to remote code execution. The problem exists in all versions of Redis with Lua scripting. This issue is fixed in version 8.2.2. To workaround this issue without patching the redis-server executable is to prevent users from executing Lua scripts. This can be done using ACL to restrict EVAL and EVALSHA commands.",
+        "cvss": [
+          {
+            "source": "nvd@nist.gov",
+            "type": "Primary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H",
+            "metrics": {
+              "baseScore": 9.9,
+              "exploitabilityScore": 3.2,
+              "impactScore": 6.1
+            },
+            "vendorMetadata": {}
+          },
+          {
+            "source": "security-advisories@github.com",
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H",
+            "metrics": {
+              "baseScore": 9.9,
+              "exploitabilityScore": 3.2,
+              "impactScore": 6.1
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2025-49844",
+            "epss": 0.05497,
+            "percentile": 0.89253,
+            "date": "2025-11-19"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "6.2.20",
+            "7.2.11",
+            "7.4.6",
+            "8.0.4",
+            "8.2.2"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 5.1946650000000005
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "cpe-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "namespace": "nvd:cpe",
+            "cpes": [
+              "cpe:2.3:a:redis:redis:8.0.3:*:*:*:*:*:*:*"
+            ],
+            "package": {
+              "name": "redis-8.0",
+              "version": "8.0.3-r4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2025-49844",
+            "versionConstraint": "< 6.2.20,>= 7, < 7.2.11,>= 7.3, < 7.4.6,>= 8, < 8.0.4,>= 8.1.0, < 8.2.2 (unknown)",
+            "cpes": [
+              "cpe:2.3:a:redis:redis:*:*:*:*:*:*:*:*"
+            ]
+          },
+          "fix": {
+            "suggestedVersion": "8.0.4"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "09d74e1fda7cd65b",
+        "name": "redis-8.0",
+        "version": "8.0.3-r4",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "BSD-3-Clause"
+        ],
+        "cpes": [
+          "cpe:2.3:a:redis-8.0:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis-8.0:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis-8.0:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis:8.0.3-r4:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/securebuild/redis-8.0@8.0.3-r4?arch=aarch64&distro=securebuild-2025.09.09",
+        "upstreams": [
+          {
+            "name": "redis-8.0"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/redis-benchmark"
+            },
+            {
+              "path": "/usr/bin/redis-check-aof"
+            },
+            {
+              "path": "/usr/bin/redis-check-rdb"
+            },
+            {
+              "path": "/usr/bin/redis-sentinel"
+            },
+            {
+              "path": "/usr/bin/redis-server"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/redis-8.0-8.0.3-r4.spdx.json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2025-46819",
+        "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-46819",
+        "namespace": "nvd:cpe",
+        "severity": "High",
+        "urls": [
+          "https://github.com/redis/redis/commit/3a1624da2449ac3dbfc4bdaed43adf77a0b7bfba",
+          "https://github.com/redis/redis/releases/tag/8.2.2",
+          "https://github.com/redis/redis/security/advisories/GHSA-4c68-q8q8-3g4f",
+          "https://www.vicarius.io/vsociety/posts/cve-2025-46819-detect-redis-vulnerability",
+          "https://www.vicarius.io/vsociety/posts/cve-2025-46819-mitigate-redis-vulnerability"
+        ],
+        "description": "Redis is an open source, in-memory database that persists on disk. Versions 8.2.1 and below allow an authenticated user to use a specially crafted LUA script to read out-of-bound data or crash the server and subsequent denial of service. The problem exists in all versions of Redis with Lua scripting. This issue is fixed in version 8.2.2. To workaround this issue without patching the redis-server executable is to prevent users from executing Lua scripts. This can be done using ACL to block a script by restricting both the EVAL and FUNCTION command families.",
+        "cvss": [
+          {
+            "source": "nvd@nist.gov",
+            "type": "Primary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:H",
+            "metrics": {
+              "baseScore": 7.1,
+              "exploitabilityScore": 1.9,
+              "impactScore": 5.2
+            },
+            "vendorMetadata": {}
+          },
+          {
+            "source": "security-advisories@github.com",
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:N/A:H",
+            "metrics": {
+              "baseScore": 6.3,
+              "exploitabilityScore": 1.1,
+              "impactScore": 5.2
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2025-46819",
+            "epss": 0.07272,
+            "percentile": 0.90748,
+            "date": "2025-11-19"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "6.2.20",
+            "7.2.11",
+            "7.4.6",
+            "8.0.4",
+            "8.2.2"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 5.16312
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "cpe-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "namespace": "nvd:cpe",
+            "cpes": [
+              "cpe:2.3:a:redis:redis:8.0.3:*:*:*:*:*:*:*"
+            ],
+            "package": {
+              "name": "redis-8.0",
+              "version": "8.0.3-r4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2025-46819",
+            "versionConstraint": "< 6.2.20,>= 7, < 7.2.11,>= 7.3, < 7.4.6,>= 8, < 8.0.4,>= 8.1.0, < 8.2.2 (unknown)",
+            "cpes": [
+              "cpe:2.3:a:redis:redis:*:*:*:*:*:*:*:*"
+            ]
+          },
+          "fix": {
+            "suggestedVersion": "8.0.4"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "09d74e1fda7cd65b",
+        "name": "redis-8.0",
+        "version": "8.0.3-r4",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "BSD-3-Clause"
+        ],
+        "cpes": [
+          "cpe:2.3:a:redis-8.0:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis-8.0:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis-8.0:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis:8.0.3-r4:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/securebuild/redis-8.0@8.0.3-r4?arch=aarch64&distro=securebuild-2025.09.09",
+        "upstreams": [
+          {
+            "name": "redis-8.0"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/redis-benchmark"
+            },
+            {
+              "path": "/usr/bin/redis-check-aof"
+            },
+            {
+              "path": "/usr/bin/redis-check-rdb"
+            },
+            {
+              "path": "/usr/bin/redis-sentinel"
+            },
+            {
+              "path": "/usr/bin/redis-server"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/redis-8.0-8.0.3-r4.spdx.json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2025-46818",
+        "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-46818",
+        "namespace": "nvd:cpe",
+        "severity": "High",
+        "urls": [
+          "https://github.com/redis/redis/commit/45eac0262028c771b6f5307372814b75f49f7a9e",
+          "https://github.com/redis/redis/releases/tag/8.2.2",
+          "https://github.com/redis/redis/security/advisories/GHSA-qrv7-wcrx-q5jp"
+        ],
+        "description": "Redis is an open source, in-memory database that persists on disk. Versions 8.2.1 and below allow an authenticated user to use a specially crafted Lua script to manipulate different LUA objects and potentially run their own code in the context of another user. The problem exists in all versions of Redis with LUA scripting. This issue is fixed in version 8.2.2. A workaround to mitigate the problem without patching the redis-server executable is to prevent users from executing LUA scripts. This can be done using ACL to block a script by restricting both the EVAL and FUNCTION command families.",
+        "cvss": [
+          {
+            "source": "nvd@nist.gov",
+            "type": "Primary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:H/I:H/A:H",
+            "metrics": {
+              "baseScore": 7.3,
+              "exploitabilityScore": 1.4,
+              "impactScore": 5.9
+            },
+            "vendorMetadata": {}
+          },
+          {
+            "source": "security-advisories@github.com",
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:L/AC:H/PR:L/UI:R/S:U/C:H/I:H/A:N",
+            "metrics": {
+              "baseScore": 6,
+              "exploitabilityScore": 0.8,
+              "impactScore": 5.2
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2025-46818",
+            "epss": 0.04403,
+            "percentile": 0.87898,
+            "date": "2025-11-19"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "6.2.20",
+            "7.2.11",
+            "7.4.6",
+            "8.0.4",
+            "8.2.2"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 3.1151225
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "cpe-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "namespace": "nvd:cpe",
+            "cpes": [
+              "cpe:2.3:a:redis:redis:8.0.3:*:*:*:*:*:*:*"
+            ],
+            "package": {
+              "name": "redis-8.0",
+              "version": "8.0.3-r4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2025-46818",
+            "versionConstraint": "< 6.2.20,>= 7, < 7.2.11,>= 7.3, < 7.4.6,>= 8, < 8.0.4,>= 8.1.0, < 8.2.2 (unknown)",
+            "cpes": [
+              "cpe:2.3:a:redis:redis:*:*:*:*:*:*:*:*"
+            ]
+          },
+          "fix": {
+            "suggestedVersion": "8.0.4"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "09d74e1fda7cd65b",
+        "name": "redis-8.0",
+        "version": "8.0.3-r4",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "BSD-3-Clause"
+        ],
+        "cpes": [
+          "cpe:2.3:a:redis-8.0:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis-8.0:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis-8.0:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis_8.0:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:redis:redis:8.0.3-r4:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/securebuild/redis-8.0@8.0.3-r4?arch=aarch64&distro=securebuild-2025.09.09",
+        "upstreams": [
+          {
+            "name": "redis-8.0"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/redis-benchmark"
+            },
+            {
+              "path": "/usr/bin/redis-check-aof"
+            },
+            {
+              "path": "/usr/bin/redis-check-rdb"
+            },
+            {
+              "path": "/usr/bin/redis-sentinel"
+            },
+            {
+              "path": "/usr/bin/redis-server"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/redis-8.0-8.0.3-r4.spdx.json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-c2f4-jgmc-q2r5",
+        "dataSource": "https://github.com/advisories/GHSA-c2f4-jgmc-q2r5",
+        "namespace": "github:language:ruby",
+        "severity": "Low",
+        "urls": [],
+        "description": "REXML has DoS condition when parsing malformed XML file",
+        "cvss": [],
+        "epss": [
+          {
+            "cve": "CVE-2025-58767",
+            "epss": 0.00045,
+            "percentile": 0.09251,
+            "date": "2025-11-19"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.4.2"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0.0135
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2025-58767",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-58767",
+          "namespace": "nvd:cpe",
+          "severity": "Medium",
+          "urls": [
+            "https://github.com/ruby/rexml/commit/5859bdeac792687eaf93d8e8f0b7e3c1e2ed5c23",
+            "https://github.com/ruby/rexml/security/advisories/GHSA-c2f4-jgmc-q2r5"
+          ],
+          "description": "REXML is an XML toolkit for Ruby. The REXML gems from 3.3.3 to 3.4.1 has a DoS vulnerability when parsing XML containing multiple XML declarations. If you need to parse untrusted XMLs, you may be impacted to these vulnerabilities. The REXML gem 3.4.2 or later include the patches to fix these vulnerabilities.",
+          "cvss": [
+            {
+              "source": "nvd@nist.gov",
+              "type": "Primary",
+              "version": "3.1",
+              "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+              "metrics": {
+                "baseScore": 5.3,
+                "exploitabilityScore": 3.9,
+                "impactScore": 1.5
+              },
+              "vendorMetadata": {}
+            },
+            {
+              "source": "security-advisories@github.com",
+              "type": "Secondary",
+              "version": "4.0",
+              "vector": "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N/E:U/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+              "metrics": {
+                "baseScore": 1.2
+              },
+              "vendorMetadata": {}
+            }
+          ],
+          "epss": [
+            {
+              "cve": "CVE-2025-58767",
+              "epss": 0.00045,
+              "percentile": 0.09251,
+              "date": "2025-11-19"
+            }
+          ]
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "ruby-gem-matcher",
+          "searchedBy": {
+            "language": "ruby",
+            "namespace": "github:language:ruby",
+            "package": {
+              "name": "rexml",
+              "version": "3.3.9"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-c2f4-jgmc-q2r5",
+            "versionConstraint": ">=3.3.3,<=3.4.1 (gem)"
+          },
+          "fix": {
+            "suggestedVersion": "3.4.2"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "a3b30c6e7d5c4c32",
+        "name": "rexml",
+        "version": "3.3.9",
+        "type": "gem",
+        "locations": [
+          {
+            "path": "/usr/lib/ruby/gems/3.3/specifications/rexml-3.3.9.gemspec",
+            "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+            "accessPath": "/usr/lib/ruby/gems/3.3/specifications/rexml-3.3.9.gemspec",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "ruby",
+        "licenses": [
+          "BSD-2-Clause"
+        ],
+        "cpes": [
+          "cpe:2.3:a:ruby-lang:rexml:3.3.9:*:*:*:*:ruby:*:*"
+        ],
+        "purl": "pkg:gem/rexml@3.3.9",
+        "upstreams": []
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2025-6075",
+        "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-6075",
+        "namespace": "nvd:cpe",
+        "severity": "Low",
+        "urls": [
+          "https://github.com/python/cpython/commit/2e6150adccaaf5bd95d4c19dfd04a36e0b325d8c",
+          "https://github.com/python/cpython/commit/631ba3407e3348ccd56ce5160c4fb2c5dc5f4d84",
+          "https://github.com/python/cpython/commit/892747b4cf0f95ba8beb51c0d0658bfaa381ebca",
+          "https://github.com/python/cpython/commit/9ab89c026aa9611c4b0b67c288b8303a480fe742",
+          "https://github.com/python/cpython/commit/c8a5f3435c342964e0a432cc9fb448b7dbecd1ba",
+          "https://github.com/python/cpython/commit/f029e8db626ddc6e3a3beea4eff511a71aaceb5c",
+          "https://github.com/python/cpython/issues/136065",
+          "https://mail.python.org/archives/list/security-announce@python.org/thread/IUP5QJ6D4KK6ULHOMPC7DPNKRYQTQNLA/"
+        ],
+        "description": "If the value passed to os.path.expandvars() is user-controlled a \nperformance degradation is possible when expanding environment \nvariables.",
+        "cvss": [
+          {
+            "source": "cna@python.org",
+            "type": "Secondary",
+            "version": "4.0",
+            "vector": "CVSS:4.0/AV:L/AC:L/AT:P/PR:H/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N/E:X/CR:X/IR:X/AR:X/MAV:X/MAC:X/MAT:X/MPR:X/MUI:X/MVC:X/MVI:X/MVA:X/MSC:X/MSI:X/MSA:X/S:X/AU:X/R:X/V:X/RE:X/U:X",
+            "metrics": {
+              "baseScore": 1.8
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2025-6075",
+            "epss": 0.00017,
+            "percentile": 0.01952,
+            "date": "2025-11-19"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.15.0"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0.00408
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "cpe-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "namespace": "nvd:cpe",
+            "cpes": [
+              "cpe:2.3:a:python:python:3.12.12:*:*:*:*:*:*:*"
+            ],
+            "package": {
+              "name": "python-3.12",
+              "version": "3.12.12-r8"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2025-6075",
+            "versionConstraint": "< 3.15.0 (unknown)",
+            "cpes": [
+              "cpe:2.3:a:python:python:*:*:*:*:*:*:*:*"
+            ]
+          },
+          "fix": {
+            "suggestedVersion": "3.15.0"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "ee2369def3be18f3",
+        "name": "python-3.12",
+        "version": "3.12.12-r8",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "PSF-2.0"
+        ],
+        "cpes": [
+          "cpe:2.3:a:python-software-foundation:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python-software-foundation:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python_software_foundation:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python_software_foundation:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python-software-foundation:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python_software_foundation:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python-software:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python-software:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python_software:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python_software:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python-3.12:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python-3.12:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python_3.12:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python_3.12:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python-software:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python_software:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python-3.12:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python_3.12:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "cpe:2.3:a:python:python:3.12.12-r8:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/securebuild/python-3.12@3.12.12-r8?arch=aarch64&distro=securebuild-2025.09.09",
+        "upstreams": [
+          {
+            "name": "python-3.12"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/pydoc3"
+            },
+            {
+              "path": "/usr/bin/python"
+            },
+            {
+              "path": "/usr/bin/python3"
+            },
+            {
+              "path": "/usr/lib"
+            },
+            {
+              "path": "/usr/lib/python3.12"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/python-3.12-3.12.12-r8.spdx.json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-j5w8-q4qc-rx2x",
+        "dataSource": "https://github.com/advisories/GHSA-j5w8-q4qc-rx2x",
+        "namespace": "github:language:go",
+        "severity": "Medium",
+        "urls": [],
+        "description": "golang.org/x/crypto/ssh allows an attacker to cause unbounded memory consumption",
+        "cvss": [
+          {
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+            "metrics": {
+              "baseScore": 5.3,
+              "exploitabilityScore": 3.9,
+              "impactScore": 1.5
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "fix": {
+          "versions": [
+            "0.45.0"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2025-58181",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-58181",
+          "namespace": "nvd:cpe",
+          "severity": "Medium",
+          "urls": [
+            "https://go.dev/cl/721961",
+            "https://go.dev/issue/76363",
+            "https://groups.google.com/g/golang-announce/c/w-oX3UxNcZA",
+            "https://pkg.go.dev/vuln/GO-2025-4134"
+          ],
+          "description": "SSH servers parsing GSSAPI authentication requests do not validate the number of mechanisms specified in the request, allowing an attacker to cause unbounded memory consumption.",
+          "cvss": [
+            {
+              "source": "134c704f-9b21-4f2e-91b3-4a467353bcc0",
+              "type": "Secondary",
+              "version": "3.1",
+              "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+              "metrics": {
+                "baseScore": 5.3,
+                "exploitabilityScore": 3.9,
+                "impactScore": 1.5
+              },
+              "vendorMetadata": {}
+            }
+          ]
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "go-module-matcher",
+          "searchedBy": {
+            "language": "go",
+            "namespace": "github:language:go",
+            "package": {
+              "name": "golang.org/x/crypto",
+              "version": "v0.41.0"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-j5w8-q4qc-rx2x",
+            "versionConstraint": "<0.45.0 (go)"
+          },
+          "fix": {
+            "suggestedVersion": "0.45.0"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "a0120ebfd6070aa6",
+        "name": "golang.org/x/crypto",
+        "version": "v0.41.0",
+        "type": "go-module",
+        "locations": [
+          {
+            "path": "/usr/bin/helm",
+            "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+            "accessPath": "/usr/bin/helm",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "go",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:go:ssh:v0.41.0:*:*:*:*:go:*:*"
+        ],
+        "purl": "pkg:golang/golang.org/x/crypto@v0.41.0",
+        "upstreams": [],
+        "metadataType": "GolangBinMetadata",
+        "metadata": {
+          "goCompiledVersion": "go1.24.9",
+          "architecture": "arm64",
+          "h1Digest": "h1:WKYxWedPGCTVVl5+WHSSrOBT0O8lx32+zxmHxijgXp4=",
+          "mainModule": "helm.sh/helm/v3"
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-j5w8-q4qc-rx2x",
+        "dataSource": "https://github.com/advisories/GHSA-j5w8-q4qc-rx2x",
+        "namespace": "github:language:go",
+        "severity": "Medium",
+        "urls": [],
+        "description": "golang.org/x/crypto/ssh allows an attacker to cause unbounded memory consumption",
+        "cvss": [
+          {
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+            "metrics": {
+              "baseScore": 5.3,
+              "exploitabilityScore": 3.9,
+              "impactScore": 1.5
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "fix": {
+          "versions": [
+            "0.45.0"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2025-58181",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-58181",
+          "namespace": "nvd:cpe",
+          "severity": "Medium",
+          "urls": [
+            "https://go.dev/cl/721961",
+            "https://go.dev/issue/76363",
+            "https://groups.google.com/g/golang-announce/c/w-oX3UxNcZA",
+            "https://pkg.go.dev/vuln/GO-2025-4134"
+          ],
+          "description": "SSH servers parsing GSSAPI authentication requests do not validate the number of mechanisms specified in the request, allowing an attacker to cause unbounded memory consumption.",
+          "cvss": [
+            {
+              "source": "134c704f-9b21-4f2e-91b3-4a467353bcc0",
+              "type": "Secondary",
+              "version": "3.1",
+              "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+              "metrics": {
+                "baseScore": 5.3,
+                "exploitabilityScore": 3.9,
+                "impactScore": 1.5
+              },
+              "vendorMetadata": {}
+            }
+          ]
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "go-module-matcher",
+          "searchedBy": {
+            "language": "go",
+            "namespace": "github:language:go",
+            "package": {
+              "name": "golang.org/x/crypto",
+              "version": "v0.42.0"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-j5w8-q4qc-rx2x",
+            "versionConstraint": "<0.45.0 (go)"
+          },
+          "fix": {
+            "suggestedVersion": "0.45.0"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "1441e566fb42f1db",
+        "name": "golang.org/x/crypto",
+        "version": "v0.42.0",
+        "type": "go-module",
+        "locations": [
+          {
+            "path": "/kots",
+            "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+            "accessPath": "/kots",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "go",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:go:ssh:v0.42.0:*:*:*:*:go:*:*"
+        ],
+        "purl": "pkg:golang/golang.org/x/crypto@v0.42.0",
+        "upstreams": [],
+        "metadataType": "GolangBinMetadata",
+        "metadata": {
+          "goCompiledVersion": "go1.24.9",
+          "architecture": "arm64",
+          "h1Digest": "h1:chiH31gIWm57EkTXpwnqf8qeuMUi0yekh6mT2AvFlqI=",
+          "mainModule": "github.com/replicatedhq/kots"
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-j5w8-q4qc-rx2x",
+        "dataSource": "https://github.com/advisories/GHSA-j5w8-q4qc-rx2x",
+        "namespace": "github:language:go",
+        "severity": "Medium",
+        "urls": [],
+        "description": "golang.org/x/crypto/ssh allows an attacker to cause unbounded memory consumption",
+        "cvss": [
+          {
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+            "metrics": {
+              "baseScore": 5.3,
+              "exploitabilityScore": 3.9,
+              "impactScore": 1.5
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "fix": {
+          "versions": [
+            "0.45.0"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2025-58181",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-58181",
+          "namespace": "nvd:cpe",
+          "severity": "Medium",
+          "urls": [
+            "https://go.dev/cl/721961",
+            "https://go.dev/issue/76363",
+            "https://groups.google.com/g/golang-announce/c/w-oX3UxNcZA",
+            "https://pkg.go.dev/vuln/GO-2025-4134"
+          ],
+          "description": "SSH servers parsing GSSAPI authentication requests do not validate the number of mechanisms specified in the request, allowing an attacker to cause unbounded memory consumption.",
+          "cvss": [
+            {
+              "source": "134c704f-9b21-4f2e-91b3-4a467353bcc0",
+              "type": "Secondary",
+              "version": "3.1",
+              "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+              "metrics": {
+                "baseScore": 5.3,
+                "exploitabilityScore": 3.9,
+                "impactScore": 1.5
+              },
+              "vendorMetadata": {}
+            }
+          ]
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "go-module-matcher",
+          "searchedBy": {
+            "language": "go",
+            "namespace": "github:language:go",
+            "package": {
+              "name": "golang.org/x/crypto",
+              "version": "v0.42.0"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-j5w8-q4qc-rx2x",
+            "versionConstraint": "<0.45.0 (go)"
+          },
+          "fix": {
+            "suggestedVersion": "0.45.0"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "e1a9907c84b7c724",
+        "name": "golang.org/x/crypto",
+        "version": "v0.42.0",
+        "type": "go-module",
+        "locations": [
+          {
+            "path": "/kotsadm",
+            "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+            "accessPath": "/kotsadm",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "go",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:go:ssh:v0.42.0:*:*:*:*:go:*:*"
+        ],
+        "purl": "pkg:golang/golang.org/x/crypto@v0.42.0",
+        "upstreams": [],
+        "metadataType": "GolangBinMetadata",
+        "metadata": {
+          "goCompiledVersion": "go1.24.9",
+          "architecture": "arm64",
+          "h1Digest": "h1:chiH31gIWm57EkTXpwnqf8qeuMUi0yekh6mT2AvFlqI=",
+          "mainModule": "github.com/replicatedhq/kots"
+        }
+      }
+    }
+  ],
+  "source": {
+    "type": "image",
+    "target": {
+      "userInput": "registry.staging.replicated.com/vxlan-staging/the-everything-imags:1.0.0",
+      "imageID": "sha256:d39cd64869f482f6158566501fed6fc4231f68bbdc2333f5302feb454a071f54",
+      "manifestDigest": "sha256:b8f87342b1fa4ba7fb9f2a42e7a828ad9b02d56cdf2509bcd6f5997c512bb9a8",
+      "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+      "tags": [
+        "registry.staging.replicated.com/vxlan-staging/the-everything-imags:1.0.0"
+      ],
+      "imageSize": 776243444,
+      "layers": [
+        {
+          "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+          "digest": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "size": 776243444
+        }
+      ],
+      "manifest": "eyJzY2hlbWFWZXJzaW9uIjoyLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQuZG9ja2VyLmRpc3RyaWJ1dGlvbi5tYW5pZmVzdC52Mitqc29uIiwiY29uZmlnIjp7Im1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5kb2NrZXIuY29udGFpbmVyLmltYWdlLnYxK2pzb24iLCJzaXplIjo1NzgsImRpZ2VzdCI6InNoYTI1NjpkMzljZDY0ODY5ZjQ4MmY2MTU4NTY2NTAxZmVkNmZjNDIzMWY2OGJiZGMyMzMzZjUzMDJmZWI0NTRhMDcxZjU0In0sImxheWVycyI6W3sibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLmRvY2tlci5pbWFnZS5yb290ZnMuZGlmZi50YXIuZ3ppcCIsInNpemUiOjc4NzM5MDQ2NCwiZGlnZXN0Ijoic2hhMjU2OjdhNDViOWRkOWU3N2IzYWQyOWQxYmM4NzRiNGUzMTRmNjQ1M2ZiNjNjMjZkYzM4OTc0OTU1N2E0NjNjNDdhNjYifV19",
+      "config": "eyJhcmNoaXRlY3R1cmUiOiJhcm02NCIsImF1dGhvciI6ImdpdGh1Yi5jb20vY2hhaW5ndWFyZC1kZXYvYXBrbyIsImNyZWF0ZWQiOiIyMDI1LTExLTIwVDE3OjMyOjQ0LTA4OjAwIiwiaGlzdG9yeSI6W3siYXV0aG9yIjoiYXBrbyIsImNyZWF0ZWQiOiIyMDI1LTExLTIwVDE3OjMyOjQ0LTA4OjAwIiwiY3JlYXRlZF9ieSI6ImFwa28iLCJjb21tZW50IjoiVGhpcyBpcyBhbiBhcGtvIHNpbmdsZS1sYXllciBpbWFnZSJ9XSwib3MiOiJsaW51eCIsInJvb3RmcyI6eyJ0eXBlIjoibGF5ZXJzIiwiZGlmZl9pZHMiOlsic2hhMjU2OjdhNDViOWRkOWU3N2IzYWQyOWQxYmM4NzRiNGUzMTRmNjQ1M2ZiNjNjMjZkYzM4OTc0OTU1N2E0NjNjNDdhNjYiXX0sImNvbmZpZyI6eyJFbnYiOlsiUEFUSD0vdXNyL2xvY2FsL3NiaW46L3Vzci9sb2NhbC9iaW46L3Vzci9iaW46L3Vzci9zYmluOi9zYmluOi9iaW4iLCJTU0xfQ0VSVF9GSUxFPS9ldGMvc3NsL2NlcnRzL2NhLWNlcnRpZmljYXRlcy5jcnQiXSwiTGFiZWxzIjp7Im9yZy5vcGVuY29udGFpbmVycy5pbWFnZS5jcmVhdGVkIjoiMjAyNS0xMS0yMFQxNzozMjo0NC0wODowMCJ9fX0=",
+      "repoDigests": [
+        "registry.staging.replicated.com/vxlan-staging/the-everything-imags@sha256:19600173be1488443b1837b06d10a93afa14312f1f976f9d0a3cfd2d2d0251be"
+      ],
+      "architecture": "arm64",
+      "os": "linux",
+      "labels": {
+        "org.opencontainers.image.created": "2025-11-20T17:32:44-08:00"
+      }
+    }
+  },
+  "distro": {
+    "name": "",
+    "version": "",
+    "idLike": null
+  },
+  "descriptor": {
+    "name": "grype",
+    "version": "0.95.0",
+    "configuration": {
+      "output": [
+        "json"
+      ],
+      "file": "",
+      "pretty": false,
+      "distro": "",
+      "add-cpes-if-none": false,
+      "output-template-file": "",
+      "check-for-app-update": true,
+      "only-fixed": true,
+      "only-notfixed": false,
+      "ignore-wontfix": "",
+      "platform": "",
+      "search": {
+        "scope": "squashed",
+        "unindexed-archives": false,
+        "indexed-archives": true
+      },
+      "ignore": [
+        {
+          "vulnerability": "",
+          "include-aliases": false,
+          "reason": "",
+          "namespace": "",
+          "fix-state": "not-fixed",
+          "package": {
+            "name": "",
+            "version": "",
+            "language": "",
+            "type": "",
+            "location": "",
+            "upstream-name": ""
+          },
+          "vex-status": "",
+          "vex-justification": "",
+          "match-type": ""
+        },
+        {
+          "vulnerability": "",
+          "include-aliases": false,
+          "reason": "",
+          "namespace": "",
+          "fix-state": "wont-fix",
+          "package": {
+            "name": "",
+            "version": "",
+            "language": "",
+            "type": "",
+            "location": "",
+            "upstream-name": ""
+          },
+          "vex-status": "",
+          "vex-justification": "",
+          "match-type": ""
+        },
+        {
+          "vulnerability": "",
+          "include-aliases": false,
+          "reason": "",
+          "namespace": "",
+          "fix-state": "unknown",
+          "package": {
+            "name": "",
+            "version": "",
+            "language": "",
+            "type": "",
+            "location": "",
+            "upstream-name": ""
+          },
+          "vex-status": "",
+          "vex-justification": "",
+          "match-type": ""
+        },
+        {
+          "vulnerability": "",
+          "include-aliases": false,
+          "reason": "",
+          "namespace": "",
+          "fix-state": "",
+          "package": {
+            "name": "kernel-headers",
+            "version": "",
+            "language": "",
+            "type": "rpm",
+            "location": "",
+            "upstream-name": "kernel"
+          },
+          "vex-status": "",
+          "vex-justification": "",
+          "match-type": "exact-indirect-match"
+        },
+        {
+          "vulnerability": "",
+          "include-aliases": false,
+          "reason": "",
+          "namespace": "",
+          "fix-state": "",
+          "package": {
+            "name": "linux(-.*)?-headers-.*",
+            "version": "",
+            "language": "",
+            "type": "deb",
+            "location": "",
+            "upstream-name": "linux.*"
+          },
+          "vex-status": "",
+          "vex-justification": "",
+          "match-type": "exact-indirect-match"
+        },
+        {
+          "vulnerability": "",
+          "include-aliases": false,
+          "reason": "",
+          "namespace": "",
+          "fix-state": "",
+          "package": {
+            "name": "linux-libc-dev",
+            "version": "",
+            "language": "",
+            "type": "deb",
+            "location": "",
+            "upstream-name": "linux"
+          },
+          "vex-status": "",
+          "vex-justification": "",
+          "match-type": "exact-indirect-match"
+        }
+      ],
+      "exclude": [],
+      "externalSources": {
+        "enable": false,
+        "maven": {
+          "searchUpstreamBySha1": true,
+          "baseUrl": "https://search.maven.org/solrsearch/select",
+          "rateLimit": 300000000
+        }
+      },
+      "match": {
+        "java": {
+          "using-cpes": false
+        },
+        "jvm": {
+          "using-cpes": true
+        },
+        "dotnet": {
+          "using-cpes": false
+        },
+        "golang": {
+          "using-cpes": false,
+          "always-use-cpe-for-stdlib": true,
+          "allow-main-module-pseudo-version-comparison": false
+        },
+        "javascript": {
+          "using-cpes": false
+        },
+        "python": {
+          "using-cpes": false
+        },
+        "ruby": {
+          "using-cpes": false
+        },
+        "rust": {
+          "using-cpes": false
+        },
+        "stock": {
+          "using-cpes": true
+        }
+      },
+      "fail-on-severity": "",
+      "registry": {
+        "insecure-skip-tls-verify": false,
+        "insecure-use-http": false,
+        "auth": null,
+        "ca-cert": ""
+      },
+      "show-suppressed": false,
+      "by-cve": false,
+      "SortBy": {
+        "sort-by": "risk"
+      },
+      "name": "",
+      "default-image-pull-source": "",
+      "vex-documents": [],
+      "vex-add": [],
+      "match-upstream-kernel-headers": false,
+      "db": {
+        "cache-dir": "/Users/divolgin/Library/Caches/grype/db",
+        "update-url": "https://grype.anchore.io/databases",
+        "ca-cert": "",
+        "auto-update": true,
+        "validate-by-hash-on-start": true,
+        "validate-age": true,
+        "max-allowed-built-age": 432000000000000,
+        "require-update-check": false,
+        "update-available-timeout": 30000000000,
+        "update-download-timeout": 300000000000,
+        "max-update-check-frequency": 7200000000000
+      },
+      "exp": {},
+      "dev": {
+        "db": {
+          "debug": false
+        }
+      }
+    },
+    "db": {
+      "status": {
+        "schemaVersion": "v6.1.3",
+        "from": "https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.3_2025-11-20T00:26:10Z_1763623304.tar.zst?checksum=sha256%3Adf199f9973438fb8ce42617f30df15a6f3e8b1b335582b60c9b878e3a1e6dc11",
+        "built": "2025-11-20T07:21:44Z",
+        "path": "/Users/divolgin/Library/Caches/grype/db/6/vulnerability.db",
+        "valid": true
+      },
+      "providers": {
+        "alma": {
+          "captured": "2025-11-20T00:26:17Z",
+          "input": "xxh64:526fe33984f900f3"
+        },
+        "alpine": {
+          "captured": "2025-11-20T00:26:12Z",
+          "input": "xxh64:892c9dd0b20047fa"
+        },
+        "amazon": {
+          "captured": "2025-11-20T00:26:14Z",
+          "input": "xxh64:30a4603f054a7a02"
+        },
+        "bitnami": {
+          "captured": "2025-11-20T00:26:22Z",
+          "input": "xxh64:59f28ec18f243300"
+        },
+        "chainguard": {
+          "captured": "2025-11-20T00:26:22Z",
+          "input": "xxh64:95348205a19d2370"
+        },
+        "chainguard-libraries": {
+          "captured": "2025-11-20T00:26:25Z",
+          "input": "xxh64:f31776c2518a1286"
+        },
+        "debian": {
+          "captured": "2025-11-20T00:26:23Z",
+          "input": "xxh64:798249ebc8a572e1"
+        },
+        "echo": {
+          "captured": "2025-11-20T00:26:10Z",
+          "input": "xxh64:dbaffde5d52f3282"
+        },
+        "epss": {
+          "captured": "2025-11-20T00:26:20Z",
+          "input": "xxh64:4e62002c01d109b9"
+        },
+        "github": {
+          "captured": "2025-11-20T00:26:30Z",
+          "input": "xxh64:8e0567118d513638"
+        },
+        "kev": {
+          "captured": "2025-11-20T00:26:26Z",
+          "input": "xxh64:63e179459772ca16"
+        },
+        "mariner": {
+          "captured": "2025-11-20T00:26:15Z",
+          "input": "xxh64:a8aaa8e2f76e051b"
+        },
+        "minimos": {
+          "captured": "2025-11-20T00:26:18Z",
+          "input": "xxh64:8828f92567b0d855"
+        },
+        "nvd": {
+          "captured": "2025-11-20T00:28:51Z",
+          "input": "xxh64:e5d8cecb261e4a0e"
+        },
+        "oracle": {
+          "captured": "2025-11-20T00:26:23Z",
+          "input": "xxh64:5ab7bdb1c7517cc5"
+        },
+        "rhel": {
+          "captured": "2025-11-20T00:27:10Z",
+          "input": "xxh64:f2d74b0df8a46f34"
+        },
+        "sles": {
+          "captured": "2025-11-20T00:26:38Z",
+          "input": "xxh64:d55b6fdd9fffef34"
+        },
+        "ubuntu": {
+          "captured": "2025-11-20T00:28:31Z",
+          "input": "xxh64:f81cd39e97f21dec"
+        },
+        "wolfi": {
+          "captured": "2025-11-20T00:26:24Z",
+          "input": "xxh64:ca06f0f7824b95fb"
+        }
+      }
+    },
+    "timestamp": "2025-11-20T17:43:21.094814-08:00"
+  }
+}

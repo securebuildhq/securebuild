@@ -1,0 +1,39 @@
+database: securebuild
+name: pipeline
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: pipeline_type
+        type: varchar(50)
+        constraints:
+          notNull: true
+      - name: path
+        type: varchar(255)
+        constraints:
+          notNull: true
+      - name: yaml_content
+        type: text
+        constraints:
+          notNull: true
+      - name: description
+        type: text
+      - name: created_at
+        type: timestamp with time zone
+        default: now()
+      - name: updated_at
+        type: timestamp with time zone
+        default: now()
+    indexes:
+      - name: idx_pipeline_type_path
+        columns: [pipeline_type, path]
+        isUnique: true
+      - name: idx_pipeline_pipeline_type
+        columns: [pipeline_type]
+
+# seedData is populated when "repldev start" runs. It requires securebuild-specs repo to be cloned and available in the adjacent directory.

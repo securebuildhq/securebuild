@@ -1,0 +1,15 @@
+database: securebuild
+name: execution_control
+schema:
+  postgres:
+    primaryKey:
+      - key
+    columns:
+      - name: key
+        type: text
+        constraints:
+          notNull: true
+      - name: value
+        type: text
+        constraints:
+          notNull: true

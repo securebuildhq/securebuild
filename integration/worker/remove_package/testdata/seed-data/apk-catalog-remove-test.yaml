@@ -1,0 +1,45 @@
+database: securebuild
+name: apk_catalog
+seedData:
+  rows:
+    # Parent package APK entries
+    - columns:
+        - column: filename
+          value:
+            str: "remove-test-parent-1.0.0-r0.apk"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: index_content
+          value:
+            str: '{"origin": "remove-test-parent", "version": "1.0.0-r0", "arch": "x86_64"}'
+        - column: is_withdrawn
+          value:
+            str: "false"
+    - columns:
+        - column: filename
+          value:
+            str: "remove-test-parent-1.1.0-r0.apk"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: index_content
+          value:
+            str: '{"origin": "remove-test-parent", "version": "1.1.0-r0", "arch": "x86_64"}'
+        - column: is_withdrawn
+          value:
+            str: "false"
+    # Subpackage APK entry
+    - columns:
+        - column: filename
+          value:
+            str: "remove-test-subpackage-1.0.0-r0.apk"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: index_content
+          value:
+            str: '{"origin": "remove-test-subpackage", "version": "1.0.0-r0", "arch": "x86_64"}'
+        - column: is_withdrawn
+          value:
+            str: "false"

@@ -1,0 +1,29 @@
+database: securebuild
+name: build_queue_run
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: sequence
+        type: integer
+        constraints:
+          notNull: true
+      - name: status
+        type: text
+        constraints:
+          notNull: true
+      - name: error
+        type: text

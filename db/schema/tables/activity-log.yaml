@@ -1,0 +1,37 @@
+database: securebuild
+name: activity_log
+schema:
+  postgres:
+    primaryKey:
+      - id
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: event_type
+        type: text
+        constraints:
+          notNull: true
+      - name: team_id
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: service_account_id
+        type: text
+
+      - name: image_catalog_id
+        type: text
+      - name: image_name
+        type: text
+      - name: image_tag
+        type: text
+
+      - name: invite_id
+        type: text
+      - name: invite_email
+        type: text

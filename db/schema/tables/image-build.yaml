@@ -1,0 +1,61 @@
+database: securebuild
+name: image_build
+schema:
+  postgres:
+    primaryKey:
+      - id
+    indexes:
+      - name: idx_image_builds_image_apko_version_id
+        columns:
+          - image_apko_version_id
+        isUnique: false
+      - name: idx_image_builds_status
+        columns:
+          - status
+        isUnique: false
+      - name: idx_image_builds_builder_id
+        columns:
+          - builder_id
+        isUnique: false
+    columns:
+      - name: id
+        type: text
+        constraints:
+          notNull: true
+      - name: image_apko_version_id
+        type: text
+        constraints:
+          notNull: true
+      - name: status
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: timeout_at
+        type: timestamp with time zone
+      - name: builder_id
+        type: text
+      - name: build_started_at
+        type: timestamp with time zone
+      - name: build_finished_at
+        type: timestamp with time zone
+      - name: apko_stdout
+        type: text
+      - name: apko_stderr
+        type: text
+      - name: grype_aarch64_stderr
+        type: text
+      - name: grype_x86_64_stderr
+        type: text
+      - name: grype_alternate_aarch64_stderr
+        type: text
+      - name: grype_alternate_x86_64_stderr
+        type: text
+
+      - name: builder_stdout
+        type: text
+      - name: worker_error
+        type: text 

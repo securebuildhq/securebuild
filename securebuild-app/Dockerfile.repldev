@@ -1,0 +1,88 @@
+# syntax=docker/dockerfile:1.4
+# Dockerfile for repldev - Next.js standalone build (linux/amd64)
+FROM node:20-slim AS builder
+
+# Build args for NEXT_PUBLIC_ variables (passed from docker-compose)
+ARG NEXT_PUBLIC_GITHUB_CLIENT_ID
+ARG NEXT_PUBLIC_GITHUB_REDIRECT_URI
+ARG NEXT_PUBLIC_GITHUB_OAUTH_STATE
+ARG NEXT_PUBLIC_CENTRIFUGO_ADDRESS
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies with npm cache mount for faster rebuilds
+# On ARM64, delete package-lock.json to force fresh install with correct binaries
+RUN --mount=type=cache,target=/root/.npm \
+    if [ "$(uname -m)" = "aarch64" ]; then \
+      echo "ARM64 detected - removing package-lock.json for fresh install"; \
+      rm -f package-lock.json; \
+    fi && \
+    npm install
+
+# Copy source
+COPY . .
+
+# Set NEXT_PUBLIC_ environment variables for build
+ENV NEXT_PUBLIC_GITHUB_CLIENT_ID=$NEXT_PUBLIC_GITHUB_CLIENT_ID
+ENV NEXT_PUBLIC_GITHUB_REDIRECT_URI=$NEXT_PUBLIC_GITHUB_REDIRECT_URI
+ENV NEXT_PUBLIC_GITHUB_OAUTH_STATE=$NEXT_PUBLIC_GITHUB_OAUTH_STATE
+ENV NEXT_PUBLIC_CENTRIFUGO_ADDRESS=$NEXT_PUBLIC_CENTRIFUGO_ADDRESS
+
+# Optimization: Disable telemetry, source maps, and increase Node memory
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_DISABLE_SOURCEMAPS=1
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+# Build with Turbopack and cache mounts for incremental builds (5-10x faster)
+RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,target=/app/.next/cache \
+    npm run build
+
+# Production image
+FROM node:20-slim
+
+WORKDIR /app
+
+# Install melange (required for melange YAML validation and compilation)
+# Detect architecture and install appropriate melange binary
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "aarch64" ]; then \
+      MELANGE_URL="https://github.com/chainguard-dev/melange/releases/download/v0.43.3/melange_0.43.3_linux_arm64.tar.gz" && \
+      MELANGE_DIR="melange_0.43.3_linux_arm64"; \
+    else \
+      MELANGE_URL="https://github.com/chainguard-dev/melange/releases/download/v0.43.3/melange_0.43.3_linux_amd64.tar.gz" && \
+      MELANGE_DIR="melange_0.43.3_linux_amd64"; \
+    fi && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    curl -sSL "$MELANGE_URL" -o /tmp/melange.tar.gz && \
+    tar -xzf /tmp/melange.tar.gz -C /tmp && \
+    mv "/tmp/$MELANGE_DIR/melange" /usr/bin/melange && \
+    chmod +x /usr/bin/melange && \
+    rm -rf /tmp/melange.tar.gz "/tmp/$MELANGE_DIR" && \
+    apt-get purge -y curl && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    melange version
+
+# Copy standalone output
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+# Create pipeline directories (default location)
+# These will be used if PIPELINE_DIR is set to /tmp/securebuild-pipelines
+# If PIPELINE_DIR is set to a different location, that directory should be mounted/created separately
+RUN mkdir -p /tmp/securebuild-pipelines/packages /tmp/securebuild-pipelines/images
+
+# Expose port
+EXPOSE 3000
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+CMD ["node", "server.js"]

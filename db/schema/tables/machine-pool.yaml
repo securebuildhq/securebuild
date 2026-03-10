@@ -1,0 +1,53 @@
+database: securebuild
+name: machine_pool
+schema:
+  postgres:
+    primaryKey:
+    - id
+    columns:
+    - name: id
+      type: text
+      constraints:
+        notNull: true
+    - name: machine_id
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: expires_at
+      type: timestamp with time zone
+    - name: private_key
+      type: text
+      constraints:
+        notNull: true
+    - name: username
+      type: text
+      constraints:
+    - name: status
+      type: text
+      constraints:
+        notNull: true
+    - name: ip_address
+      type: text
+    - name: port
+      type: integer
+    - name: assigned_task_type
+      type: text
+    - name: assigned_task_id
+      type: text
+    - name: architecture
+      type: text
+    - name: last_uptime
+      type: text
+    - name: last_uptime_updated_at
+      type: timestamp with time zone
+    - name: cleanup_locked_at
+      type: timestamp with time zone
+    - name: is_on_demand
+      type: boolean
+      constraints:
+        notNull: true
+      default: "false"

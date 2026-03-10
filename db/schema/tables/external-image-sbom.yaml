@@ -1,0 +1,35 @@
+database: securebuild
+name: external_image_sbom
+schema:
+  postgres:
+    primaryKey:
+    - digest
+    - arch
+    columns:
+    - name: digest
+      type: text
+      constraints:
+        notNull: true
+    - name: arch
+      type: text
+      constraints:
+        notNull: true
+      default: "x86_64"
+    - name: sbom
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: source
+      type: text
+      constraints:
+        notNull: true
+    - name: image_size_bytes
+      type: bigint
+    - name: last_security_scanned_at
+      type: timestamp with time zone
+    - name: image_digest
+      type: text

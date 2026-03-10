@@ -1,0 +1,29 @@
+database: securebuild
+name: image_apko_version
+requires:
+  - image_apko
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "apkov01234567890abcdef12345"
+        - column: image_apko_id
+          value:
+            str: "apko01234567890abcdef123456"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: apko_yaml
+          value:
+            str: |
+              contents:
+                repositories:
+                  - https://apk.cve0.io
+                packages:
+                  - kubectl=1.33.4
+              entrypoint:
+                command: /usr/bin/kubectl

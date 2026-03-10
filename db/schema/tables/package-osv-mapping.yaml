@@ -1,0 +1,27 @@
+database: securebuild
+name: package_osv_mapping
+schema:
+  postgres:
+    primaryKey:
+      - package_name
+    columns:
+      - name: package_name
+        type: text
+        constraints:
+          notNull: true
+      - name: osv_ecosystem
+        type: text
+        constraints:
+          notNull: true
+      - name: osv_package_name
+        type: text
+        constraints:
+          notNull: true
+      - name: created_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true
+      - name: updated_at
+        type: timestamp with time zone
+        constraints:
+          notNull: true

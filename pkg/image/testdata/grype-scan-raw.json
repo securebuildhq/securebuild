@@ -1,0 +1,1476 @@
+{
+  "matches": [
+    {
+      "vulnerability": {
+        "id": "CVE-2025-9086",
+        "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-9086",
+        "namespace": "nvd:cpe",
+        "severity": "High",
+        "urls": [
+          "https://curl.se/docs/CVE-2025-9086.html",
+          "https://curl.se/docs/CVE-2025-9086.json",
+          "https://hackerone.com/reports/3294999"
+        ],
+        "description": "1. A cookie is set using the `secure` keyword for `https://target`\n2. curl is redirected to or otherwise made to speak with `http://target` (same\n   hostname, but using clear text HTTP) using the same cookie set\n3. The same cookie name is set - but with just a slash as path (`path='/'`).\n   Since this site is not secure, the cookie *should* just be ignored.\n4. A bug in the path comparison logic makes curl read outside a heap buffer\n   boundary\n\nThe bug either causes a crash or it potentially makes the comparison come to\nthe wrong conclusion and lets the clear-text site override the contents of the\nsecure cookie, contrary to expectations and depending on the memory contents\nimmediately following the single-byte allocation that holds the path.\n\nThe presumed and correct behavior would be to plainly ignore the second set of\nthe cookie since it was already set as secure on a secure host so overriding\nit on an insecure host should not be okay.",
+        "cvss": [
+          {
+            "source": "134c704f-9b21-4f2e-91b3-4a467353bcc0",
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+            "metrics": {
+              "baseScore": 7.5,
+              "exploitabilityScore": 3.9,
+              "impactScore": 3.6
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2025-9086",
+            "epss": 0.00071,
+            "percentile": 0.22316,
+            "date": "2025-09-28"
+          }
+        ],
+        "fix": {
+          "versions": [],
+          "state": "unknown"
+        },
+        "advisories": [],
+        "risk": 0.05325
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "cpe-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "namespace": "nvd:cpe",
+            "cpes": [
+              "cpe:2.3:a:haxx:curl:8.15.0:*:*:*:*:*:*:*"
+            ],
+            "package": {
+              "name": "curl",
+              "version": "8.15.0-r4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2025-9086",
+            "versionConstraint": ">= 7.31.0, < 8.16.0 (unknown)",
+            "cpes": [
+              "cpe:2.3:a:haxx:curl:*:*:*:*:*:*:*:*"
+            ]
+          }
+        }
+      ],
+      "artifact": {
+        "id": "74da3d01e579a493",
+        "name": "curl",
+        "version": "8.15.0-r4",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:a37cd4b81891f7eb0923f9081c2edacf741b71fa2efd99a4cd93622085d52de1",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "MIT"
+        ],
+        "cpes": [
+          "cpe:2.3:a:curl:curl:8.15.0-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:haxx:curl:8.15.0-r4:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/secureos/curl@8.15.0-r4?arch=aarch64&distro=secureos-20230201",
+        "upstreams": [
+          {
+            "name": "curl"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/curl"
+            },
+            {
+              "path": "/usr/bin/wcurl"
+            },
+            {
+              "path": "/usr/lib"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/curl-8.15.0-r4.spdx.json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2025-10148",
+        "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-10148",
+        "namespace": "nvd:cpe",
+        "severity": "Medium",
+        "urls": [
+          "https://curl.se/docs/CVE-2025-10148.html",
+          "https://curl.se/docs/CVE-2025-10148.json",
+          "https://hackerone.com/reports/3330839"
+        ],
+        "description": "curl's websocket code did not update the 32 bit mask pattern for each new\n outgoing frame as the specification says. Instead it used a fixed mask that\npersisted and was used throughout the entire connection.\n\nA predictable mask pattern allows for a malicious server to induce traffic\nbetween the two communicating parties that could be interpreted by an involved\nproxy (configured or transparent) as genuine, real, HTTP traffic with content\nand thereby poison its cache. That cached poisoned content could then be\nserved to all users of that proxy.",
+        "cvss": [
+          {
+            "source": "134c704f-9b21-4f2e-91b3-4a467353bcc0",
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+            "metrics": {
+              "baseScore": 5.3,
+              "exploitabilityScore": 3.9,
+              "impactScore": 1.5
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2025-10148",
+            "epss": 0.00033,
+            "percentile": 0.0826,
+            "date": "2025-09-28"
+          }
+        ],
+        "fix": {
+          "versions": [],
+          "state": "unknown"
+        },
+        "advisories": [],
+        "risk": 0.016995
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "cpe-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "namespace": "nvd:cpe",
+            "cpes": [
+              "cpe:2.3:a:haxx:curl:8.15.0:*:*:*:*:*:*:*"
+            ],
+            "package": {
+              "name": "curl",
+              "version": "8.15.0-r4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2025-10148",
+            "versionConstraint": ">= 8.11.0, < 8.16.0 (unknown)",
+            "cpes": [
+              "cpe:2.3:a:haxx:curl:*:*:*:*:*:*:*:*"
+            ]
+          }
+        }
+      ],
+      "artifact": {
+        "id": "74da3d01e579a493",
+        "name": "curl",
+        "version": "8.15.0-r4",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:a37cd4b81891f7eb0923f9081c2edacf741b71fa2efd99a4cd93622085d52de1",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "MIT"
+        ],
+        "cpes": [
+          "cpe:2.3:a:curl:curl:8.15.0-r4:*:*:*:*:*:*:*",
+          "cpe:2.3:a:haxx:curl:8.15.0-r4:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/secureos/curl@8.15.0-r4?arch=aarch64&distro=secureos-20230201",
+        "upstreams": [
+          {
+            "name": "curl"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/curl"
+            },
+            {
+              "path": "/usr/bin/wcurl"
+            },
+            {
+              "path": "/usr/lib"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/curl-8.15.0-r4.spdx.json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-f9f8-9pmf-xv68",
+        "dataSource": "https://github.com/advisories/GHSA-f9f8-9pmf-xv68",
+        "namespace": "github:language:go",
+        "severity": "Medium",
+        "urls": [],
+        "description": "Helm May Panic Due To Incorrect YAML Content",
+        "cvss": [
+          {
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+            "metrics": {
+              "baseScore": 6.5,
+              "exploitabilityScore": 2.9,
+              "impactScore": 3.6
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2025-55198",
+            "epss": 0.00017,
+            "percentile": 0.02727,
+            "date": "2025-09-28"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.18.5"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0.009775
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2025-55198",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-55198",
+          "namespace": "nvd:cpe",
+          "severity": "Medium",
+          "urls": [
+            "https://github.com/helm/helm/commit/ec5f59e2db56533d042a124f5bae54dd87b558e6",
+            "https://github.com/helm/helm/security/advisories/GHSA-f9f8-9pmf-xv68"
+          ],
+          "description": "Helm is a package manager for Charts for Kubernetes. Prior to version 3.18.5, when parsing Chart.yaml and index.yaml files, an improper validation of type error can lead to a panic. This issue has been resolved in Helm 3.18.5. A workaround involves ensuring YAML files are formatted as Helm expects prior to processing them with Helm.",
+          "cvss": [
+            {
+              "source": "security-advisories@github.com",
+              "type": "Secondary",
+              "version": "3.1",
+              "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+              "metrics": {
+                "baseScore": 6.5,
+                "exploitabilityScore": 2.9,
+                "impactScore": 3.6
+              },
+              "vendorMetadata": {}
+            }
+          ],
+          "epss": [
+            {
+              "cve": "CVE-2025-55198",
+              "epss": 0.00017,
+              "percentile": 0.02727,
+              "date": "2025-09-28"
+            }
+          ]
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "go-module-matcher",
+          "searchedBy": {
+            "language": "go",
+            "namespace": "github:language:go",
+            "package": {
+              "name": "helm.sh/helm/v3",
+              "version": "v3.18.4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-f9f8-9pmf-xv68",
+            "versionConstraint": "<3.18.5 (go)"
+          },
+          "fix": {
+            "suggestedVersion": "3.18.5"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "7c722dbb313e3f94",
+        "name": "helm.sh/helm/v3",
+        "version": "v3.18.4",
+        "type": "go-module",
+        "locations": [
+          {
+            "path": "/replicated",
+            "layerID": "sha256:a37cd4b81891f7eb0923f9081c2edacf741b71fa2efd99a4cd93622085d52de1",
+            "accessPath": "/replicated",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "go",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:helm:v3:v3.18.4:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:golang/helm.sh/helm/v3@v3.18.4",
+        "upstreams": [],
+        "metadataType": "GolangBinMetadata",
+        "metadata": {
+          "goCompiledVersion": "go1.24.6",
+          "architecture": "arm64",
+          "h1Digest": "h1:pNhnHM3nAmDrxz6/UC+hfjDY4yeDATQCka2/87hkZXQ=",
+          "mainModule": "github.com/replicatedhq/replicated-sdk"
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-9h84-qmv7-982p",
+        "dataSource": "https://github.com/advisories/GHSA-9h84-qmv7-982p",
+        "namespace": "github:language:go",
+        "severity": "Medium",
+        "urls": [],
+        "description": "Helm Charts with Specific JSON Schema Values Can Cause Memory Exhaustion",
+        "cvss": [
+          {
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+            "metrics": {
+              "baseScore": 6.5,
+              "exploitabilityScore": 2.9,
+              "impactScore": 3.6
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2025-55199",
+            "epss": 0.00013,
+            "percentile": 0.01476,
+            "date": "2025-09-28"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.18.5"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0.007474999999999999
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2025-55199",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-55199",
+          "namespace": "nvd:cpe",
+          "severity": "Medium",
+          "urls": [
+            "https://github.com/helm/helm/commit/b78692c18f0fb38fe5ba4571a674de067a4c53a5",
+            "https://github.com/helm/helm/security/advisories/GHSA-9h84-qmv7-982p"
+          ],
+          "description": "Helm is a package manager for Charts for Kubernetes. Prior to version 3.18.5, it is possible to craft a JSON Schema file in a manner which could cause Helm to use all available memory and have an out of memory (OOM) termination. This issue has been resolved in Helm 3.18.5. A workaround involves ensuring all Helm charts that are being loaded into Helm do not have any reference of $ref pointing to /dev/zero.",
+          "cvss": [
+            {
+              "source": "security-advisories@github.com",
+              "type": "Secondary",
+              "version": "3.1",
+              "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+              "metrics": {
+                "baseScore": 6.5,
+                "exploitabilityScore": 2.9,
+                "impactScore": 3.6
+              },
+              "vendorMetadata": {}
+            }
+          ],
+          "epss": [
+            {
+              "cve": "CVE-2025-55199",
+              "epss": 0.00013,
+              "percentile": 0.01476,
+              "date": "2025-09-28"
+            }
+          ]
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "go-module-matcher",
+          "searchedBy": {
+            "language": "go",
+            "namespace": "github:language:go",
+            "package": {
+              "name": "helm.sh/helm/v3",
+              "version": "v3.18.4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-9h84-qmv7-982p",
+            "versionConstraint": "<3.18.5 (go)"
+          },
+          "fix": {
+            "suggestedVersion": "3.18.5"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "7c722dbb313e3f94",
+        "name": "helm.sh/helm/v3",
+        "version": "v3.18.4",
+        "type": "go-module",
+        "locations": [
+          {
+            "path": "/replicated",
+            "layerID": "sha256:a37cd4b81891f7eb0923f9081c2edacf741b71fa2efd99a4cd93622085d52de1",
+            "accessPath": "/replicated",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "go",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:helm:v3:v3.18.4:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:golang/helm.sh/helm/v3@v3.18.4",
+        "upstreams": [],
+        "metadataType": "GolangBinMetadata",
+        "metadata": {
+          "goCompiledVersion": "go1.24.6",
+          "architecture": "arm64",
+          "h1Digest": "h1:pNhnHM3nAmDrxz6/UC+hfjDY4yeDATQCka2/87hkZXQ=",
+          "mainModule": "github.com/replicatedhq/replicated-sdk"
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2024-58251",
+        "dataSource": "https://security.securebuild.com/CVE-2024-58251",
+        "namespace": "secureos:distro:secureos:rolling",
+        "severity": "Low",
+        "urls": [],
+        "cvss": [
+          {
+            "source": "cve@mitre.org",
+            "type": "Secondary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:L/AC:H/PR:N/UI:R/S:U/C:N/I:N/A:L",
+            "metrics": {
+              "baseScore": 2.5,
+              "exploitabilityScore": 1.1,
+              "impactScore": 1.5
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2024-58251",
+            "epss": 0.00015,
+            "percentile": 0.01995,
+            "date": "2025-09-28"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.37.0-r49"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0.004125
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2024-58251",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-58251",
+          "namespace": "nvd:cpe",
+          "severity": "Low",
+          "urls": [
+            "https://bugs.busybox.net/show_bug.cgi?id=15922",
+            "https://www.busybox.net",
+            "https://www.busybox.net/downloads/",
+            "http://www.openwall.com/lists/oss-security/2025/04/23/6"
+          ],
+          "description": "In netstat in BusyBox through 1.37.0, local users can launch of network application with an argv[0] containing an ANSI terminal escape sequence, leading to a denial of service (terminal locked up) when netstat is used by a victim.",
+          "cvss": [
+            {
+              "source": "cve@mitre.org",
+              "type": "Secondary",
+              "version": "3.1",
+              "vector": "CVSS:3.1/AV:L/AC:H/PR:N/UI:R/S:U/C:N/I:N/A:L",
+              "metrics": {
+                "baseScore": 2.5,
+                "exploitabilityScore": 1.1,
+                "impactScore": 1.5
+              },
+              "vendorMetadata": {}
+            }
+          ],
+          "epss": [
+            {
+              "cve": "CVE-2024-58251",
+              "epss": 0.00015,
+              "percentile": 0.01995,
+              "date": "2025-09-28"
+            }
+          ]
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "distro": {
+              "type": "secureos",
+              "version": "20230201"
+            },
+            "package": {
+              "name": "busybox",
+              "version": "1.37.0-r48"
+            },
+            "namespace": "secureos:distro:secureos:rolling"
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2024-58251",
+            "versionConstraint": "< 1.37.0-r49 (apk)"
+          },
+          "fix": {
+            "suggestedVersion": "1.37.0-r49"
+          }
+        },
+        {
+          "type": "exact-indirect-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "distro": {
+              "type": "secureos",
+              "version": "20230201"
+            },
+            "package": {
+              "name": "busybox",
+              "version": "1.37.0-r48"
+            },
+            "namespace": "secureos:distro:secureos:rolling"
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2024-58251",
+            "versionConstraint": "< 1.37.0-r49 (apk)"
+          },
+          "fix": {
+            "suggestedVersion": "1.37.0-r49"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "d5eb13a66931ea77",
+        "name": "busybox",
+        "version": "1.37.0-r48",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:a37cd4b81891f7eb0923f9081c2edacf741b71fa2efd99a4cd93622085d52de1",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "GPL-2.0-only"
+        ],
+        "cpes": [
+          "cpe:2.3:a:busybox:busybox:1.37.0-r48:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/secureos/busybox@1.37.0-r48?arch=aarch64&distro=secureos-20230201",
+        "upstreams": [
+          {
+            "name": "busybox"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/etc"
+            },
+            {
+              "path": "/etc/securetty"
+            },
+            {
+              "path": "/etc/busybox-paths.d"
+            },
+            {
+              "path": "/etc/busybox-paths.d/busybox"
+            },
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/busybox"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/busybox-1.37.0-r48.spdx.json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2025-46394",
+        "dataSource": "https://security.securebuild.com/CVE-2025-46394",
+        "namespace": "secureos:distro:secureos:rolling",
+        "severity": "Low",
+        "urls": [],
+        "cvss": [
+          {
+            "source": "nvd@nist.gov",
+            "type": "Primary",
+            "version": "3.1",
+            "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:L/A:N",
+            "metrics": {
+              "baseScore": 3.3,
+              "exploitabilityScore": 1.9,
+              "impactScore": 1.5
+            },
+            "vendorMetadata": {}
+          }
+        ],
+        "epss": [
+          {
+            "cve": "CVE-2025-46394",
+            "epss": 0.00011,
+            "percentile": 0.00948,
+            "date": "2025-09-28"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.37.0-r50"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0.0034649999999999993
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2025-46394",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-46394",
+          "namespace": "nvd:cpe",
+          "severity": "Low",
+          "urls": [
+            "https://bugs.busybox.net/show_bug.cgi?id=16018",
+            "https://www.busybox.net",
+            "https://www.busybox.net/downloads/",
+            "http://www.openwall.com/lists/oss-security/2025/04/23/5",
+            "http://www.openwall.com/lists/oss-security/2025/04/24/3"
+          ],
+          "description": "In tar in BusyBox through 1.37.0, a TAR archive can have filenames hidden from a listing through the use of terminal escape sequences.",
+          "cvss": [
+            {
+              "source": "nvd@nist.gov",
+              "type": "Primary",
+              "version": "3.1",
+              "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:L/A:N",
+              "metrics": {
+                "baseScore": 3.3,
+                "exploitabilityScore": 1.9,
+                "impactScore": 1.5
+              },
+              "vendorMetadata": {}
+            },
+            {
+              "source": "cve@mitre.org",
+              "type": "Secondary",
+              "version": "3.1",
+              "vector": "CVSS:3.1/AV:L/AC:H/PR:N/UI:N/S:C/C:N/I:L/A:N",
+              "metrics": {
+                "baseScore": 3.2,
+                "exploitabilityScore": 1.5,
+                "impactScore": 1.5
+              },
+              "vendorMetadata": {}
+            }
+          ],
+          "epss": [
+            {
+              "cve": "CVE-2025-46394",
+              "epss": 0.00011,
+              "percentile": 0.00948,
+              "date": "2025-09-28"
+            }
+          ]
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "distro": {
+              "type": "secureos",
+              "version": "20230201"
+            },
+            "package": {
+              "name": "busybox",
+              "version": "1.37.0-r48"
+            },
+            "namespace": "secureos:distro:secureos:rolling"
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2025-46394",
+            "versionConstraint": "< 1.37.0-r50 (apk)"
+          },
+          "fix": {
+            "suggestedVersion": "1.37.0-r50"
+          }
+        },
+        {
+          "type": "exact-indirect-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "distro": {
+              "type": "secureos",
+              "version": "20230201"
+            },
+            "package": {
+              "name": "busybox",
+              "version": "1.37.0-r48"
+            },
+            "namespace": "secureos:distro:secureos:rolling"
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2025-46394",
+            "versionConstraint": "< 1.37.0-r50 (apk)"
+          },
+          "fix": {
+            "suggestedVersion": "1.37.0-r50"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "d5eb13a66931ea77",
+        "name": "busybox",
+        "version": "1.37.0-r48",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:a37cd4b81891f7eb0923f9081c2edacf741b71fa2efd99a4cd93622085d52de1",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "GPL-2.0-only"
+        ],
+        "cpes": [
+          "cpe:2.3:a:busybox:busybox:1.37.0-r48:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/secureos/busybox@1.37.0-r48?arch=aarch64&distro=secureos-20230201",
+        "upstreams": [
+          {
+            "name": "busybox"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/etc"
+            },
+            {
+              "path": "/etc/securetty"
+            },
+            {
+              "path": "/etc/busybox-paths.d"
+            },
+            {
+              "path": "/etc/busybox-paths.d/busybox"
+            },
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/busybox"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/busybox-1.37.0-r48.spdx.json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-rrv5-483w-xmr9",
+        "dataSource": "https://security.securebuild.com/GHSA-rrv5-483w-xmr9",
+        "namespace": "secureos:distro:secureos:rolling",
+        "severity": "Unknown",
+        "urls": [],
+        "cvss": [],
+        "fix": {
+          "versions": [
+            "1.37.0-r49"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "distro": {
+              "type": "secureos",
+              "version": "20230201"
+            },
+            "package": {
+              "name": "busybox",
+              "version": "1.37.0-r48"
+            },
+            "namespace": "secureos:distro:secureos:rolling"
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-rrv5-483w-xmr9",
+            "versionConstraint": "< 1.37.0-r49 (apk)"
+          },
+          "fix": {
+            "suggestedVersion": "1.37.0-r49"
+          }
+        },
+        {
+          "type": "exact-indirect-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "distro": {
+              "type": "secureos",
+              "version": "20230201"
+            },
+            "package": {
+              "name": "busybox",
+              "version": "1.37.0-r48"
+            },
+            "namespace": "secureos:distro:secureos:rolling"
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-rrv5-483w-xmr9",
+            "versionConstraint": "< 1.37.0-r49 (apk)"
+          },
+          "fix": {
+            "suggestedVersion": "1.37.0-r49"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "d5eb13a66931ea77",
+        "name": "busybox",
+        "version": "1.37.0-r48",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:a37cd4b81891f7eb0923f9081c2edacf741b71fa2efd99a4cd93622085d52de1",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "GPL-2.0-only"
+        ],
+        "cpes": [
+          "cpe:2.3:a:busybox:busybox:1.37.0-r48:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/secureos/busybox@1.37.0-r48?arch=aarch64&distro=secureos-20230201",
+        "upstreams": [
+          {
+            "name": "busybox"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/etc"
+            },
+            {
+              "path": "/etc/securetty"
+            },
+            {
+              "path": "/etc/busybox-paths.d"
+            },
+            {
+              "path": "/etc/busybox-paths.d/busybox"
+            },
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/busybox"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/busybox-1.37.0-r48.spdx.json"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-wp4q-9jq4-gv74",
+        "dataSource": "https://security.securebuild.com/GHSA-wp4q-9jq4-gv74",
+        "namespace": "secureos:distro:secureos:rolling",
+        "severity": "Unknown",
+        "urls": [],
+        "cvss": [],
+        "fix": {
+          "versions": [
+            "1.37.0-r50"
+          ],
+          "state": "fixed"
+        },
+        "advisories": [],
+        "risk": 0
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "distro": {
+              "type": "secureos",
+              "version": "20230201"
+            },
+            "package": {
+              "name": "busybox",
+              "version": "1.37.0-r48"
+            },
+            "namespace": "secureos:distro:secureos:rolling"
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-wp4q-9jq4-gv74",
+            "versionConstraint": "< 1.37.0-r50 (apk)"
+          },
+          "fix": {
+            "suggestedVersion": "1.37.0-r50"
+          }
+        },
+        {
+          "type": "exact-indirect-match",
+          "matcher": "apk-matcher",
+          "searchedBy": {
+            "distro": {
+              "type": "secureos",
+              "version": "20230201"
+            },
+            "package": {
+              "name": "busybox",
+              "version": "1.37.0-r48"
+            },
+            "namespace": "secureos:distro:secureos:rolling"
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-wp4q-9jq4-gv74",
+            "versionConstraint": "< 1.37.0-r50 (apk)"
+          },
+          "fix": {
+            "suggestedVersion": "1.37.0-r50"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "d5eb13a66931ea77",
+        "name": "busybox",
+        "version": "1.37.0-r48",
+        "type": "apk",
+        "locations": [
+          {
+            "path": "/usr/lib/apk/db/installed",
+            "layerID": "sha256:a37cd4b81891f7eb0923f9081c2edacf741b71fa2efd99a4cd93622085d52de1",
+            "accessPath": "/usr/lib/apk/db/installed",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "language": "",
+        "licenses": [
+          "GPL-2.0-only"
+        ],
+        "cpes": [
+          "cpe:2.3:a:busybox:busybox:1.37.0-r48:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:apk/secureos/busybox@1.37.0-r48?arch=aarch64&distro=secureos-20230201",
+        "upstreams": [
+          {
+            "name": "busybox"
+          }
+        ],
+        "metadataType": "ApkMetadata",
+        "metadata": {
+          "files": [
+            {
+              "path": "/etc"
+            },
+            {
+              "path": "/etc/securetty"
+            },
+            {
+              "path": "/etc/busybox-paths.d"
+            },
+            {
+              "path": "/etc/busybox-paths.d/busybox"
+            },
+            {
+              "path": "/usr"
+            },
+            {
+              "path": "/usr/bin"
+            },
+            {
+              "path": "/usr/bin/busybox"
+            },
+            {
+              "path": "/var"
+            },
+            {
+              "path": "/var/lib"
+            },
+            {
+              "path": "/var/lib/db"
+            },
+            {
+              "path": "/var/lib/db/sbom"
+            },
+            {
+              "path": "/var/lib/db/sbom/busybox-1.37.0-r48.spdx.json"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "source": {
+    "type": "image",
+    "target": {
+      "userInput": "registry.replicated.com/library/replicated-sdk-image:1.8.0",
+      "imageID": "sha256:2f2dbfb250fdf972713279eca8901460168d853f826d194b5ee16bfdcec58a15",
+      "manifestDigest": "sha256:b9a8b9399a1c7d5141a1738b1404485f182a6a514237f057432a2f2c9c267759",
+      "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+      "tags": [
+        "registry.replicated.com/library/replicated-sdk-image:1.8.0"
+      ],
+      "imageSize": 90051146,
+      "layers": [
+        {
+          "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+          "digest": "sha256:a37cd4b81891f7eb0923f9081c2edacf741b71fa2efd99a4cd93622085d52de1",
+          "size": 90051146
+        }
+      ],
+      "manifest": "eyJzY2hlbWFWZXJzaW9uIjoyLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQuZG9ja2VyLmRpc3RyaWJ1dGlvbi5tYW5pZmVzdC52Mitqc29uIiwiY29uZmlnIjp7Im1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5kb2NrZXIuY29udGFpbmVyLmltYWdlLnYxK2pzb24iLCJzaXplIjo2MjgsImRpZ2VzdCI6InNoYTI1NjoyZjJkYmZiMjUwZmRmOTcyNzEzMjc5ZWNhODkwMTQ2MDE2OGQ4NTNmODI2ZDE5NGI1ZWUxNmJmZGNlYzU4YTE1In0sImxheWVycyI6W3sibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLmRvY2tlci5pbWFnZS5yb290ZnMuZGlmZi50YXIuZ3ppcCIsInNpemUiOjI5NjUzOTIxLCJkaWdlc3QiOiJzaGEyNTY6YTM3Y2Q0YjgxODkxZjdlYjA5MjNmOTA4MWMyZWRhY2Y3NDFiNzFmYTJlZmQ5OWE0Y2Q5MzYyMjA4NWQ1MmRlMSJ9XX0=",
+      "config": "eyJhcmNoaXRlY3R1cmUiOiJhcm02NCIsImF1dGhvciI6ImdpdGh1Yi5jb20vY2hhaW5ndWFyZC1kZXYvYXBrbyIsImNyZWF0ZWQiOiIyMDI1LTA4LTA4VDE1OjU5OjUwWiIsImhpc3RvcnkiOlt7ImF1dGhvciI6ImFwa28iLCJjcmVhdGVkIjoiMjAyNS0wOC0wOFQxNTo1OTo1MFoiLCJjcmVhdGVkX2J5IjoiYXBrbyIsImNvbW1lbnQiOiJUaGlzIGlzIGFuIGFwa28gc2luZ2xlLWxheWVyIGltYWdlIn1dLCJvcyI6ImxpbnV4Iiwicm9vdGZzIjp7InR5cGUiOiJsYXllcnMiLCJkaWZmX2lkcyI6WyJzaGEyNTY6YTM3Y2Q0YjgxODkxZjdlYjA5MjNmOTA4MWMyZWRhY2Y3NDFiNzFmYTJlZmQ5OWE0Y2Q5MzYyMjA4NWQ1MmRlMSJdfSwiY29uZmlnIjp7IkVudHJ5cG9pbnQiOlsiL3JlcGxpY2F0ZWQiLCJhcGkiXSwiRW52IjpbIlBBVEg9L3Vzci9sb2NhbC9zYmluOi91c3IvbG9jYWwvYmluOi91c3IvYmluOi91c3Ivc2Jpbjovc2JpbjovYmluIiwiU1NMX0NFUlRfRklMRT0vZXRjL3NzbC9jZXJ0cy9jYS1jZXJ0aWZpY2F0ZXMuY3J0IiwiVkVSU0lPTj0xLjAuMCJdLCJMYWJlbHMiOnsib3JnLm9wZW5jb250YWluZXJzLmltYWdlLmNyZWF0ZWQiOiIyMDI1LTA4LTA4VDE1OjU5OjUwWiJ9LCJVc2VyIjoiMTAwMSJ9fQ==",
+      "repoDigests": [
+        "registry.replicated.com/library/replicated-sdk-image@sha256:9898f6dec0380b21239728677d39af8ca75ff4ab5cd70a5336f2675d68184006"
+      ],
+      "architecture": "arm64",
+      "os": "linux",
+      "labels": {
+        "org.opencontainers.image.created": "2025-08-08T15:59:50Z"
+      }
+    }
+  },
+  "distro": {
+    "name": "secureos",
+    "version": "20230201",
+    "idLike": []
+  },
+  "descriptor": {
+    "name": "grype",
+    "version": "0.95.0",
+    "configuration": {
+      "output": [
+        "json"
+      ],
+      "file": "",
+      "pretty": false,
+      "distro": "",
+      "add-cpes-if-none": false,
+      "output-template-file": "",
+      "check-for-app-update": true,
+      "only-fixed": false,
+      "only-notfixed": false,
+      "ignore-wontfix": "",
+      "platform": "",
+      "search": {
+        "scope": "squashed",
+        "unindexed-archives": true,
+        "indexed-archives": true
+      },
+      "ignore": [
+        {
+          "vulnerability": "CVE-2023-47108",
+          "include-aliases": false,
+          "reason": "",
+          "namespace": "",
+          "fix-state": "",
+          "package": {
+            "name": "",
+            "version": "",
+            "language": "",
+            "type": "",
+            "location": "",
+            "upstream-name": ""
+          },
+          "vex-status": "",
+          "vex-justification": "",
+          "match-type": ""
+        },
+        {
+          "vulnerability": "",
+          "include-aliases": false,
+          "reason": "",
+          "namespace": "",
+          "fix-state": "",
+          "package": {
+            "name": "kernel-headers",
+            "version": "",
+            "language": "",
+            "type": "rpm",
+            "location": "",
+            "upstream-name": "kernel"
+          },
+          "vex-status": "",
+          "vex-justification": "",
+          "match-type": "exact-indirect-match"
+        },
+        {
+          "vulnerability": "",
+          "include-aliases": false,
+          "reason": "",
+          "namespace": "",
+          "fix-state": "",
+          "package": {
+            "name": "linux(-.*)?-headers-.*",
+            "version": "",
+            "language": "",
+            "type": "deb",
+            "location": "",
+            "upstream-name": "linux.*"
+          },
+          "vex-status": "",
+          "vex-justification": "",
+          "match-type": "exact-indirect-match"
+        },
+        {
+          "vulnerability": "",
+          "include-aliases": false,
+          "reason": "",
+          "namespace": "",
+          "fix-state": "",
+          "package": {
+            "name": "linux-libc-dev",
+            "version": "",
+            "language": "",
+            "type": "deb",
+            "location": "",
+            "upstream-name": "linux"
+          },
+          "vex-status": "",
+          "vex-justification": "",
+          "match-type": "exact-indirect-match"
+        }
+      ],
+      "exclude": [],
+      "externalSources": {
+        "enable": false,
+        "maven": {
+          "searchUpstreamBySha1": true,
+          "baseUrl": "https://search.maven.org/solrsearch/select",
+          "rateLimit": 300000000
+        }
+      },
+      "match": {
+        "java": {
+          "using-cpes": false
+        },
+        "jvm": {
+          "using-cpes": true
+        },
+        "dotnet": {
+          "using-cpes": false
+        },
+        "golang": {
+          "using-cpes": false,
+          "always-use-cpe-for-stdlib": true,
+          "allow-main-module-pseudo-version-comparison": false
+        },
+        "javascript": {
+          "using-cpes": false
+        },
+        "python": {
+          "using-cpes": false
+        },
+        "ruby": {
+          "using-cpes": false
+        },
+        "rust": {
+          "using-cpes": false
+        },
+        "stock": {
+          "using-cpes": true
+        }
+      },
+      "fail-on-severity": "medium",
+      "registry": {
+        "insecure-skip-tls-verify": false,
+        "insecure-use-http": false,
+        "auth": null,
+        "ca-cert": ""
+      },
+      "show-suppressed": false,
+      "by-cve": false,
+      "SortBy": {
+        "sort-by": "risk"
+      },
+      "name": "",
+      "default-image-pull-source": "",
+      "vex-documents": [],
+      "vex-add": [],
+      "match-upstream-kernel-headers": false,
+      "db": {
+        "cache-dir": "/Users/ethan/Library/Caches/grype/db",
+        "update-url": "https://grype.anchore.io/databases",
+        "ca-cert": "",
+        "auto-update": true,
+        "validate-by-hash-on-start": true,
+        "validate-age": true,
+        "max-allowed-built-age": 432000000000000,
+        "require-update-check": false,
+        "update-available-timeout": 30000000000,
+        "update-download-timeout": 300000000000,
+        "max-update-check-frequency": 7200000000000
+      },
+      "exp": {},
+      "dev": {
+        "db": {
+          "debug": false
+        }
+      }
+    },
+    "db": {
+      "status": {
+        "schemaVersion": "v6.1.1",
+        "from": "https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.1_2025-09-29T01:31:23Z_1759126070.tar.zst?checksum=sha256%3A4517a0b4fa2a59e4e0e82db91053ce88b6430d7e7d60b60a9ec088e16f9d790a",
+        "built": "2025-09-29T06:07:50Z",
+        "path": "/Users/ethan/Library/Caches/grype/db/6/vulnerability.db",
+        "valid": true
+      },
+      "providers": {
+        "alpine": {
+          "captured": "2025-09-29T01:31:30Z",
+          "input": "xxh64:edaa0e60fa4a1c02"
+        },
+        "amazon": {
+          "captured": "2025-09-29T01:31:44Z",
+          "input": "xxh64:8c4121ab25735e64"
+        },
+        "bitnami": {
+          "captured": "2025-09-29T01:31:24Z",
+          "input": "xxh64:8ff70e3ddb1ac505"
+        },
+        "chainguard": {
+          "captured": "2025-09-29T01:31:28Z",
+          "input": "xxh64:c2e55d7a9bea16d5"
+        },
+        "chainguard-libraries": {
+          "captured": "2025-09-29T01:31:26Z",
+          "input": "xxh64:81d50f3a82e397d3"
+        },
+        "debian": {
+          "captured": "2025-09-29T01:31:29Z",
+          "input": "xxh64:13191c0ab3edd2c4"
+        },
+        "echo": {
+          "captured": "2025-09-29T01:31:32Z",
+          "input": "xxh64:2ad807ee248ffb2e"
+        },
+        "epss": {
+          "captured": "2025-09-29T01:31:27Z",
+          "input": "xxh64:edd4d66bb4facbeb"
+        },
+        "github": {
+          "captured": "2025-09-29T01:31:28Z",
+          "input": "xxh64:90cf28d296e1e06b"
+        },
+        "kev": {
+          "captured": "2025-09-29T01:31:23Z",
+          "input": "xxh64:e2fea312371bf49e"
+        },
+        "mariner": {
+          "captured": "2025-09-29T01:31:39Z",
+          "input": "xxh64:1ec42e9fe986e3b1"
+        },
+        "minimos": {
+          "captured": "2025-09-29T01:31:27Z",
+          "input": "xxh64:50c47661e8949df6"
+        },
+        "nvd": {
+          "captured": "2025-09-29T01:30:49Z",
+          "input": "xxh64:edf75b9cf7b97ea3"
+        },
+        "oracle": {
+          "captured": "2025-09-29T01:31:27Z",
+          "input": "xxh64:a31b083b49853d6f"
+        },
+        "rhel": {
+          "captured": "2025-09-29T01:31:53Z",
+          "input": "xxh64:fbc4a331508d36b7"
+        },
+        "sles": {
+          "captured": "2025-09-29T01:31:35Z",
+          "input": "xxh64:aa6f07336966701a"
+        },
+        "ubuntu": {
+          "captured": "2025-09-29T01:32:57Z",
+          "input": "xxh64:3ee8d4628d05d339"
+        },
+        "secureos": {
+          "captured": "2025-09-29T01:31:31Z",
+          "input": "xxh64:022c54507c4eaa9d"
+        }
+      }
+    },
+    "timestamp": "2025-09-30T10:07:15.367736-07:00"
+  }
+}

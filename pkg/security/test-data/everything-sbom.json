@@ -1,0 +1,1472 @@
+{
+  "artifacts": [
+    {
+      "id": "a0120ebfd6070aa6",
+      "name": "golang.org/x/crypto",
+      "version": "v0.41.0",
+      "type": "go-module",
+      "foundBy": "go-module-binary-cataloger",
+      "locations": [
+        {
+          "path": "/usr/bin/helm",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/usr/bin/helm",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [],
+      "language": "go",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:go:ssh:v0.41.0:*:*:*:*:go:*:*",
+          "source": "nvd-cpe-dictionary"
+        }
+      ],
+      "purl": "pkg:golang/golang.org/x/crypto@v0.41.0",
+      "metadataType": "go-module-buildinfo-entry",
+      "metadata": {
+        "goCompiledVersion": "go1.24.9",
+        "architecture": "arm64",
+        "h1Digest": "h1:WKYxWedPGCTVVl5+WHSSrOBT0O8lx32+zxmHxijgXp4=",
+        "mainModule": "helm.sh/helm/v3"
+      }
+    },
+    {
+      "id": "1441e566fb42f1db",
+      "name": "golang.org/x/crypto",
+      "version": "v0.42.0",
+      "type": "go-module",
+      "foundBy": "go-module-binary-cataloger",
+      "locations": [
+        {
+          "path": "/kots",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/kots",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [],
+      "language": "go",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:go:ssh:v0.42.0:*:*:*:*:go:*:*",
+          "source": "nvd-cpe-dictionary"
+        }
+      ],
+      "purl": "pkg:golang/golang.org/x/crypto@v0.42.0",
+      "metadataType": "go-module-buildinfo-entry",
+      "metadata": {
+        "goCompiledVersion": "go1.24.9",
+        "architecture": "arm64",
+        "h1Digest": "h1:chiH31gIWm57EkTXpwnqf8qeuMUi0yekh6mT2AvFlqI=",
+        "mainModule": "github.com/replicatedhq/kots"
+      }
+    },
+    {
+      "id": "e1a9907c84b7c724",
+      "name": "golang.org/x/crypto",
+      "version": "v0.42.0",
+      "type": "go-module",
+      "foundBy": "go-module-binary-cataloger",
+      "locations": [
+        {
+          "path": "/kotsadm",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/kotsadm",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [],
+      "language": "go",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:go:ssh:v0.42.0:*:*:*:*:go:*:*",
+          "source": "nvd-cpe-dictionary"
+        }
+      ],
+      "purl": "pkg:golang/golang.org/x/crypto@v0.42.0",
+      "metadataType": "go-module-buildinfo-entry",
+      "metadata": {
+        "goCompiledVersion": "go1.24.9",
+        "architecture": "arm64",
+        "h1Digest": "h1:chiH31gIWm57EkTXpwnqf8qeuMUi0yekh6mT2AvFlqI=",
+        "mainModule": "github.com/replicatedhq/kots"
+      }
+    },
+    {
+      "id": "44dbdf4b0c3f6ef4",
+      "name": "helm-3.19",
+      "version": "3.19.0-r2",
+      "type": "apk",
+      "foundBy": "apk-db-cataloger",
+      "locations": [
+        {
+          "path": "/usr/lib/apk/db/installed",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/usr/lib/apk/db/installed",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [
+        {
+          "value": "Apache-2.0",
+          "spdxExpression": "Apache-2.0",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/apk/db/installed",
+              "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+              "accessPath": "/usr/lib/apk/db/installed",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        }
+      ],
+      "language": "",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:helm-3.19:helm-3.19:3.19.0-r2:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:helm-3.19:helm_3.19:3.19.0-r2:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:helm_3.19:helm-3.19:3.19.0-r2:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:helm_3.19:helm_3.19:3.19.0-r2:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:helm-3.19:helm:3.19.0-r2:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:helm:helm-3.19:3.19.0-r2:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:helm:helm_3.19:3.19.0-r2:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:helm_3.19:helm:3.19.0-r2:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:helm:helm:3.19.0-r2:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        }
+      ],
+      "purl": "pkg:apk/securebuild/helm-3.19@3.19.0-r2?arch=aarch64&distro=securebuild-2025.09.09",
+      "metadataType": "apk-db-entry",
+      "metadata": {
+        "package": "helm-3.19",
+        "originPackage": "helm-3.19",
+        "maintainer": "Securebuild",
+        "version": "3.19.0-r2",
+        "architecture": "aarch64",
+        "url": "",
+        "description": "The Kubernetes Package Manager",
+        "size": 17326542,
+        "installedSize": 57790465,
+        "pullDependencies": [
+          "ca-certificates-bundle"
+        ],
+        "provides": [
+          "cmd:helm=3.19.0-r2",
+          "helm=3.19.0-r2"
+        ],
+        "pullChecksum": "Q1XecHSQ1s/37GEY+1KGepLoTXZXc=",
+        "gitCommitOfApkPort": "unknown",
+        "files": [
+          {
+            "path": "/usr"
+          },
+          {
+            "path": "/usr/bin"
+          },
+          {
+            "path": "/usr/bin/helm",
+            "ownerUid": "0",
+            "ownerGid": "0",
+            "permissions": "0755",
+            "digest": {
+              "algorithm": "'Q1'+base64(sha1)",
+              "value": "Q1h4U+e3RCyjU095bcIljHeSA2ygQ="
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "91472aa7e37a378a",
+      "name": "kotsadm-1.128",
+      "version": "1.128.2-r4",
+      "type": "apk",
+      "foundBy": "apk-db-cataloger",
+      "locations": [
+        {
+          "path": "/usr/lib/apk/db/installed",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/usr/lib/apk/db/installed",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [
+        {
+          "value": "Apache-2.0",
+          "spdxExpression": "Apache-2.0",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/apk/db/installed",
+              "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+              "accessPath": "/usr/lib/apk/db/installed",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        }
+      ],
+      "language": "",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:kotsadm-1.128:kotsadm-1.128:1.128.2-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:kotsadm-1.128:kotsadm_1.128:1.128.2-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:kotsadm_1.128:kotsadm-1.128:1.128.2-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:kotsadm_1.128:kotsadm_1.128:1.128.2-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:kotsadm-1.128:kotsadm:1.128.2-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:kotsadm:kotsadm-1.128:1.128.2-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:kotsadm:kotsadm_1.128:1.128.2-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:kotsadm_1.128:kotsadm:1.128.2-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:kotsadm:kotsadm:1.128.2-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        }
+      ],
+      "purl": "pkg:apk/securebuild/kotsadm-1.128@1.128.2-r4?arch=aarch64&distro=securebuild-2025.09.09",
+      "metadataType": "apk-db-entry",
+      "metadata": {
+        "package": "kotsadm-1.128",
+        "originPackage": "kotsadm-1.128",
+        "maintainer": "Securebuild",
+        "version": "1.128.2-r4",
+        "architecture": "aarch64",
+        "url": "",
+        "description": "KOTS Admin Console for managing Kubernetes Off-The-Shelf software applications v1.128",
+        "size": 105235049,
+        "installedSize": 375513087,
+        "pullDependencies": [],
+        "provides": [
+          "kotsadm=1.128.2-r4"
+        ],
+        "pullChecksum": "Q1Ln6pyFzLKuYG9PFhrOC12HC5ED0=",
+        "gitCommitOfApkPort": "unknown",
+        "files": [
+          {
+            "path": "/usr"
+          },
+          {
+            "path": "/usr/bin"
+          },
+          {
+            "path": "/usr/local"
+          },
+          {
+            "path": "/usr/local/bin"
+          },
+          {
+            "path": "/usr/local/bin/kots"
+          },
+          {
+            "path": "/usr/local/bin/kotsadm"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ee2369def3be18f3",
+      "name": "python-3.12",
+      "version": "3.12.12-r8",
+      "type": "apk",
+      "foundBy": "apk-db-cataloger",
+      "locations": [
+        {
+          "path": "/usr/lib/apk/db/installed",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/usr/lib/apk/db/installed",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [
+        {
+          "value": "PSF-2.0",
+          "spdxExpression": "PSF-2.0",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/apk/db/installed",
+              "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+              "accessPath": "/usr/lib/apk/db/installed",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        }
+      ],
+      "language": "",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:python-software-foundation:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-software-foundation:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_software_foundation:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_software_foundation:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-software-foundation:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_software_foundation:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-software:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-software:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_software:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_software:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-3.12:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-3.12:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-software:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_software:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-3.12:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python:python-3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python:python_3.12:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python:python:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        }
+      ],
+      "purl": "pkg:apk/securebuild/python-3.12@3.12.12-r8?arch=aarch64&distro=securebuild-2025.09.09",
+      "metadataType": "apk-db-entry",
+      "metadata": {
+        "package": "python-3.12",
+        "originPackage": "python-3.12",
+        "maintainer": "Securebuild",
+        "version": "3.12.12-r8",
+        "architecture": "aarch64",
+        "url": "",
+        "description": "the Python programming language",
+        "size": 8610,
+        "installedSize": 40297,
+        "pullDependencies": [
+          "openssl",
+          "py3.12-pip",
+          "python-3.12-base=3.12.12-r8",
+          "securebuild-baselayout"
+        ],
+        "provides": [
+          "python-3=3.12.12-r8",
+          "python3=3.12.12-r8"
+        ],
+        "pullChecksum": "Q1UxGoEgX9WuZ6xBcNJROK7Krseq4=",
+        "gitCommitOfApkPort": "unknown",
+        "files": [
+          {
+            "path": "/usr"
+          },
+          {
+            "path": "/usr/bin"
+          },
+          {
+            "path": "/usr/lib"
+          }
+        ]
+      }
+    },
+    {
+      "id": "db339699f2fb65d9",
+      "name": "python-3.12-base",
+      "version": "3.12.12-r8",
+      "type": "apk",
+      "foundBy": "apk-db-cataloger",
+      "locations": [
+        {
+          "path": "/usr/lib/apk/db/installed",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/usr/lib/apk/db/installed",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [
+        {
+          "value": "PSF-2.0",
+          "spdxExpression": "PSF-2.0",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/apk/db/installed",
+              "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+              "accessPath": "/usr/lib/apk/db/installed",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        }
+      ],
+      "language": "",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:python-3.12-base:python-3.12-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-3.12-base:python_3.12_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12_base:python-3.12-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12_base:python_3.12_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-3.12-base:python-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-3.12-base:python_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-3.12:python-3.12-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-3.12:python_3.12_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-base:python-3.12-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-base:python_3.12_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12:python-3.12-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12:python_3.12_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12_base:python-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12_base:python_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_base:python-3.12-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_base:python_3.12_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-3.12:python-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-3.12:python_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-base:python-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python-base:python_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python:python-3.12-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python:python_3.12_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12:python-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_3.12:python_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_base:python-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python_base:python_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python:python-base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:python:python_base:3.12.12-r8:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        }
+      ],
+      "purl": "pkg:apk/securebuild/python-3.12-base@3.12.12-r8?arch=aarch64&distro=securebuild-2025.09.09&upstream=python-3.12",
+      "metadataType": "apk-db-entry",
+      "metadata": {
+        "package": "python-3.12-base",
+        "originPackage": "python-3.12",
+        "maintainer": "Securebuild",
+        "version": "3.12.12-r8",
+        "architecture": "aarch64",
+        "url": "",
+        "description": "python-3.12 without /usr/bin/python3",
+        "size": 11861215,
+        "installedSize": 38746427,
+        "pullDependencies": [
+          "py3-pip-wheel",
+          "so:ld-linux-aarch64.so.1",
+          "so:libbz2.so.1",
+          "so:libc.so.6",
+          "so:libcrypto.so.3",
+          "so:libexpat.so.1",
+          "so:libffi.so.8",
+          "so:libgdbm.so.6",
+          "so:liblzma.so.5",
+          "so:libm.so.6",
+          "so:libmpdec.so.4",
+          "so:libncursesw.so.6",
+          "so:libpanelw.so.6",
+          "so:libsqlite3.so.0",
+          "so:libssl.so.3",
+          "so:libz.so.1",
+          "sqlite-libs",
+          "xz"
+        ],
+        "provides": [
+          "cmd:pydoc3.12=3.12.12-r8",
+          "cmd:python3.12=3.12.12-r8",
+          "so-ver:libpython3.12.so.1.0=3.12.12-r8",
+          "so:libpython3.12.so.1.0=1.0"
+        ],
+        "pullChecksum": "Q1oX1arRUwMBewEcJpAwA7mJMdi4w=",
+        "gitCommitOfApkPort": "unknown",
+        "files": [
+          {
+            "path": "/usr"
+          },
+          {
+            "path": "/usr/bin"
+          },
+          {
+            "path": "/usr/lib"
+          }
+        ]
+      }
+    },
+    {
+      "id": "09d74e1fda7cd65b",
+      "name": "redis-8.0",
+      "version": "8.0.3-r4",
+      "type": "apk",
+      "foundBy": "apk-db-cataloger",
+      "locations": [
+        {
+          "path": "/usr/lib/apk/db/installed",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/usr/lib/apk/db/installed",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [
+        {
+          "value": "BSD-3-Clause",
+          "spdxExpression": "BSD-3-Clause",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/apk/db/installed",
+              "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+              "accessPath": "/usr/lib/apk/db/installed",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        }
+      ],
+      "language": "",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:redis-8.0:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:redis-8.0:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:redis_8.0:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:redis_8.0:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:redis-8.0:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:redis:redis-8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:redis:redis_8.0:8.0.3-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:redis_8.0:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:redis:redis:8.0.3-r4:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        }
+      ],
+      "purl": "pkg:apk/securebuild/redis-8.0@8.0.3-r4?arch=aarch64&distro=securebuild-2025.09.09",
+      "metadataType": "apk-db-entry",
+      "metadata": {
+        "package": "redis-8.0",
+        "originPackage": "redis-8.0",
+        "maintainer": "Securebuild",
+        "version": "8.0.3-r4",
+        "architecture": "aarch64",
+        "url": "",
+        "description": "Redis is an open source, in-memory data structure store",
+        "size": 2476695,
+        "installedSize": 5264149,
+        "pullDependencies": [
+          "so:ld-linux-aarch64.so.1",
+          "so:libc.so.6",
+          "so:libm.so.6",
+          "so:libstdc++.so.6"
+        ],
+        "provides": [
+          "cmd:redis-benchmark=8.0.3-r4",
+          "cmd:redis-server=8.0.3-r4",
+          "redis=8.0.3-r4"
+        ],
+        "pullChecksum": "Q1SPXeKkO2NTkAxXHRQH8un0o/0Ms=",
+        "gitCommitOfApkPort": "unknown",
+        "files": [
+          {
+            "path": "/usr"
+          },
+          {
+            "path": "/usr/bin"
+          }
+        ]
+      }
+    },
+    {
+      "id": "a3b30c6e7d5c4c32",
+      "name": "rexml",
+      "version": "3.3.9",
+      "type": "gem",
+      "foundBy": "ruby-installed-gemspec-cataloger",
+      "locations": [
+        {
+          "path": "/usr/lib/ruby/gems/3.3/specifications/rexml-3.3.9.gemspec",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/usr/lib/ruby/gems/3.3/specifications/rexml-3.3.9.gemspec",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [
+        {
+          "value": "BSD-2-Clause",
+          "spdxExpression": "BSD-2-Clause",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/ruby/gems/3.3/specifications/rexml-3.3.9.gemspec",
+              "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+              "accessPath": "/usr/lib/ruby/gems/3.3/specifications/rexml-3.3.9.gemspec",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        }
+      ],
+      "language": "ruby",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:ruby-lang:rexml:3.3.9:*:*:*:*:ruby:*:*",
+          "source": "nvd-cpe-dictionary"
+        }
+      ],
+      "purl": "pkg:gem/rexml@3.3.9",
+      "metadataType": "ruby-gemspec",
+      "metadata": {
+        "name": "rexml",
+        "version": "3.3.9",
+        "files": [],
+        "authors": [
+          "Kouhei Sutou"
+        ],
+        "homepage": "https://github.com/ruby/rexml"
+      }
+    },
+    {
+      "id": "be0f779a90702d65",
+      "name": "ruby-3.3",
+      "version": "3.3.9-r1",
+      "type": "apk",
+      "foundBy": "apk-db-cataloger",
+      "locations": [
+        {
+          "path": "/usr/lib/apk/db/installed",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/usr/lib/apk/db/installed",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [
+        {
+          "value": "BSD-2-Clause",
+          "spdxExpression": "BSD-2-Clause",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/apk/db/installed",
+              "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+              "accessPath": "/usr/lib/apk/db/installed",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        },
+        {
+          "value": "License",
+          "spdxExpression": "",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/apk/db/installed",
+              "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+              "accessPath": "/usr/lib/apk/db/installed",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        },
+        {
+          "value": "OR",
+          "spdxExpression": "",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/apk/db/installed",
+              "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+              "accessPath": "/usr/lib/apk/db/installed",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        },
+        {
+          "value": "Ruby",
+          "spdxExpression": "Ruby",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/apk/db/installed",
+              "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+              "accessPath": "/usr/lib/apk/db/installed",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        }
+      ],
+      "language": "",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:ruby-lang:ruby-3.3:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby-lang:ruby_3.3:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby_lang:ruby-3.3:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby_lang:ruby_3.3:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby-3.3:ruby-3.3:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby-3.3:ruby_3.3:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby_3.3:ruby-3.3:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby_3.3:ruby_3.3:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby-lang:ruby:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby_lang:ruby:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby-3.3:ruby:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby:ruby-3.3:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby:ruby_3.3:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby_3.3:ruby:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:ruby:ruby:3.3.9-r1:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        }
+      ],
+      "purl": "pkg:apk/securebuild/ruby-3.3@3.3.9-r1?arch=aarch64&distro=securebuild-2025.09.09",
+      "metadataType": "apk-db-entry",
+      "metadata": {
+        "package": "ruby-3.3",
+        "originPackage": "ruby-3.3",
+        "maintainer": "Securebuild",
+        "version": "3.3.9-r1",
+        "architecture": "aarch64",
+        "url": "",
+        "description": "The Ruby programming language - version 3.3",
+        "size": 11300835,
+        "installedSize": 37829975,
+        "pullDependencies": [
+          "libyaml-0.2",
+          "securebuild-baselayout",
+          "so:ld-linux-aarch64.so.1",
+          "so:libc.so.6",
+          "so:libcrypto.so.3",
+          "so:libffi.so.8",
+          "so:libm.so.6",
+          "so:libssl.so.3",
+          "so:libyaml-0.so.2",
+          "so:libz.so.1"
+        ],
+        "provides": [
+          "cmd:bundle=3.3.9-r1",
+          "cmd:bundler=3.3.9-r1",
+          "cmd:erb=3.3.9-r1",
+          "cmd:gem=3.3.9-r1",
+          "cmd:irb=3.3.9-r1",
+          "cmd:racc=3.3.9-r1",
+          "cmd:rake=3.3.9-r1",
+          "cmd:rbs=3.3.9-r1",
+          "cmd:rdbg=3.3.9-r1",
+          "cmd:rdoc=3.3.9-r1",
+          "cmd:ri=3.3.9-r1",
+          "cmd:ruby=3.3.9-r1",
+          "cmd:syntax_suggest=3.3.9-r1",
+          "cmd:typeprof=3.3.9-r1",
+          "ruby=3.3.9-r1",
+          "so-ver:libruby.so.3.3=3.3.9-r1",
+          "so:libruby.so.3.3=3.3"
+        ],
+        "pullChecksum": "Q1WvOe3oYBmQX4srihCgxpXDP1iUo=",
+        "gitCommitOfApkPort": "unknown",
+        "files": [
+          {
+            "path": "/usr"
+          },
+          {
+            "path": "/usr/bin"
+          },
+          {
+            "path": "/usr/lib"
+          },
+          {
+            "path": "/usr/lib/ruby"
+          },
+          {
+            "path": "/usr/lib/ruby/gems"
+          },
+          {
+            "path": "/usr/lib/ruby/gems/3.3"
+          },
+          {
+            "path": "/usr/lib/ruby/gems/3.3/specifications"
+          },
+          {
+            "path": "/usr/lib/ruby/gems/3.3/specifications/rexml-3.3.9.gemspec",
+            "digest": {
+              "algorithm": "'Q1'+base64(sha1)",
+              "value": "Q1dVNWDFpWh5nPr64pQM1Sv9TDLYo="
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "crypto-kots-v045",
+      "name": "golang.org/x/crypto",
+      "version": "v0.45.0",
+      "type": "go-module",
+      "foundBy": "go-module-binary-cataloger",
+      "locations": [
+        {
+          "path": "/usr/local/bin/kots",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/usr/local/bin/kots",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [],
+      "language": "go",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:go:ssh:v0.45.0:*:*:*:*:go:*:*",
+          "source": "nvd-cpe-dictionary"
+        }
+      ],
+      "purl": "pkg:golang/golang.org/x/crypto@v0.45.0",
+      "metadataType": "go-module-buildinfo-entry",
+      "metadata": {
+        "goCompiledVersion": "go1.24.9",
+        "architecture": "arm64",
+        "h1Digest": "h1:NewDigestForKots=",
+        "mainModule": "github.com/replicatedhq/kots"
+      }
+    },
+    {
+      "id": "crypto-kotsadm-v045",
+      "name": "golang.org/x/crypto",
+      "version": "v0.45.0",
+      "type": "go-module",
+      "foundBy": "go-module-binary-cataloger",
+      "locations": [
+        {
+          "path": "/usr/local/bin/kotsadm",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/usr/local/bin/kotsadm",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [],
+      "language": "go",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:go:ssh:v0.45.0:*:*:*:*:go:*:*",
+          "source": "nvd-cpe-dictionary"
+        }
+      ],
+      "purl": "pkg:golang/golang.org/x/crypto@v0.45.0",
+      "metadataType": "go-module-buildinfo-entry",
+      "metadata": {
+        "goCompiledVersion": "go1.24.9",
+        "architecture": "arm64",
+        "h1Digest": "h1:NewDigestForKotsadm=",
+        "mainModule": "github.com/replicatedhq/kotsadm"
+      }
+    },
+    {
+      "id": "kots-cli-package",
+      "name": "kots-cli-1.128",
+      "version": "1.128.0-r1",
+      "type": "apk",
+      "foundBy": "apk-db-cataloger",
+      "locations": [
+        {
+          "path": "/lib/apk/db/installed",
+          "layerID": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "accessPath": "/lib/apk/db/installed",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "language": "",
+      "cpes": [],
+      "purl": "pkg:apk/kots-cli-1.128@1.128.0-r1?arch=arm64&upstream=kots-cli-1.128&distro=securebuilder-2025",
+      "metadataType": "apk-db-entry",
+      "metadata": {
+        "package": "kots-cli-1.128",
+        "originPackage": "kots-cli-1.128",
+        "maintainer": "SecureBuild <dev@securebuildhq.com>",
+        "version": "1.128.0-r1",
+        "license": "Apache-2.0",
+        "architecture": "arm64",
+        "url": "https://kots.io",
+        "description": "KOTS CLI tool for managing Kubernetes Off-The-Shelf applications",
+        "size": 45678901,
+        "installedSize": 123456789,
+        "pullDependencies": "",
+        "pullChecksum": "Q1abcdef123456789=",
+        "gitCommitOfApkPort": "abc123def456",
+        "files": [
+          {
+            "path": "/usr/local"
+          },
+          {
+            "path": "/usr/local/bin"
+          },
+          {
+            "path": "/usr/local/bin/kots"
+          }
+        ]
+      }
+    }
+  ],
+  "artifactRelationships": [
+    {
+      "parent": "44dbdf4b0c3f6ef4",
+      "child": "a0120ebfd6070aa6",
+      "type": "ownership-by-file-overlap",
+      "metadata": {
+        "files": [
+          "/usr/bin/helm"
+        ]
+      }
+    },
+    {
+      "parent": "be0f779a90702d65",
+      "child": "a3b30c6e7d5c4c32",
+      "type": "ownership-by-file-overlap",
+      "metadata": {
+        "files": [
+          "/usr/lib/ruby/gems/3.3/specifications/rexml-3.3.9.gemspec"
+        ]
+      }
+    },
+    {
+      "parent": "db339699f2fb65d9",
+      "child": "ee2369def3be18f3",
+      "type": "dependency-of"
+    },
+    {
+      "parent": "kots-cli-package",
+      "child": "crypto-kots-v045",
+      "type": "ownership-by-file-overlap",
+      "metadata": {
+        "files": [
+          "/usr/local/bin/kots"
+        ]
+      }
+    },
+    {
+      "parent": "91472aa7e37a378a",
+      "child": "crypto-kots-v045",
+      "type": "ownership-by-file-overlap",
+      "metadata": {
+        "files": [
+          "/usr/local/bin/kots"
+        ]
+      }
+    },
+    {
+      "parent": "91472aa7e37a378a",
+      "child": "crypto-kotsadm-v045",
+      "type": "ownership-by-file-overlap",
+      "metadata": {
+        "files": [
+          "/usr/local/bin/kotsadm"
+        ]
+      }
+    }
+  ],
+  "files": [],
+  "source": {
+    "id": "b8f87342b1fa4ba7fb9f2a42e7a828ad9b02d56cdf2509bcd6f5997c512bb9a8",
+    "name": "registry.staging.replicated.com/vxlan-staging/the-everything-imags",
+    "version": "1.0.0",
+    "type": "image",
+    "metadata": {
+      "userInput": "registry.staging.replicated.com/vxlan-staging/the-everything-imags:1.0.0",
+      "imageID": "sha256:d39cd64869f482f6158566501fed6fc4231f68bbdc2333f5302feb454a071f54",
+      "manifestDigest": "sha256:b8f87342b1fa4ba7fb9f2a42e7a828ad9b02d56cdf2509bcd6f5997c512bb9a8",
+      "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+      "tags": [
+        "registry.staging.replicated.com/vxlan-staging/the-everything-imags:1.0.0"
+      ],
+      "imageSize": 776243444,
+      "layers": [
+        {
+          "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+          "digest": "sha256:7a45b9dd9e77b3ad29d1bc874b4e314f6453fb63c26dc389749557a463c47a66",
+          "size": 776243444
+        }
+      ],
+      "manifest": "eyJzY2hlbWFWZXJzaW9uIjoyLCJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQuZG9ja2VyLmRpc3RyaWJ1dGlvbi5tYW5pZmVzdC52Mitqc29uIiwiY29uZmlnIjp7Im1lZGlhVHlwZSI6ImFwcGxpY2F0aW9uL3ZuZC5kb2NrZXIuY29udGFpbmVyLmltYWdlLnYxK2pzb24iLCJzaXplIjo1NzgsImRpZ2VzdCI6InNoYTI1NjpkMzljZDY0ODY5ZjQ4MmY2MTU4NTY2NTAxZmVkNmZjNDIzMWY2OGJiZGMyMzMzZjUzMDJmZWI0NTRhMDcxZjU0In0sImxheWVycyI6W3sibWVkaWFUeXBlIjoiYXBwbGljYXRpb24vdm5kLmRvY2tlci5pbWFnZS5yb290ZnMuZGlmZi50YXIuZ3ppcCIsInNpemUiOjc4NzM5MDQ2NCwiZGlnZXN0Ijoic2hhMjU2OjdhNDViOWRkOWU3N2IzYWQyOWQxYmM4NzRiNGUzMTRmNjQ1M2ZiNjNjMjZkYzM4OTc0OTU1N2E0NjNjNDdhNjYifV19",
+      "config": "eyJhcmNoaXRlY3R1cmUiOiJhcm02NCIsImF1dGhvciI6ImdpdGh1Yi5jb20vY2hhaW5ndWFyZC1kZXYvYXBrbyIsImNyZWF0ZWQiOiIyMDI1LTExLTIwVDE3OjMyOjQ0LTA4OjAwIiwiaGlzdG9yeSI6W3siYXV0aG9yIjoiYXBrbyIsImNyZWF0ZWQiOiIyMDI1LTExLTIwVDE3OjMyOjQ0LTA4OjAwIiwiY3JlYXRlZF9ieSI6ImFwa28iLCJjb21tZW50IjoiVGhpcyBpcyBhbiBhcGtvIHNpbmdsZS1sYXllciBpbWFnZSJ9XSwib3MiOiJsaW51eCIsInJvb3RmcyI6eyJ0eXBlIjoibGF5ZXJzIiwiZGlmZl9pZHMiOlsic2hhMjU2OjdhNDViOWRkOWU3N2IzYWQyOWQxYmM4NzRiNGUzMTRmNjQ1M2ZiNjNjMjZkYzM4OTc0OTU1N2E0NjNjNDdhNjYiXX0sImNvbmZpZyI6eyJFbnYiOlsiUEFUSD0vdXNyL2xvY2FsL3NiaW46L3Vzci9sb2NhbC9iaW46L3Vzci9iaW46L3Vzci9zYmluOi9zYmluOi9iaW4iLCJTU0xfQ0VSVF9GSUxFPS9ldGMvc3NsL2NlcnRzL2NhLWNlcnRpZmljYXRlcy5jcnQiXSwiTGFiZWxzIjp7Im9yZy5vcGVuY29udGFpbmVycy5pbWFnZS5jcmVhdGVkIjoiMjAyNS0xMS0yMFQxNzozMjo0NC0wODowMCJ9fX0=",
+      "repoDigests": [
+        "registry.staging.replicated.com/vxlan-staging/the-everything-imags@sha256:19600173be1488443b1837b06d10a93afa14312f1f976f9d0a3cfd2d2d0251be"
+      ],
+      "architecture": "arm64",
+      "os": "linux",
+      "labels": {
+        "org.opencontainers.image.created": "2025-11-20T17:32:44-08:00"
+      }
+    }
+  },
+  "distro": {
+    "prettyName": "SecureBuild",
+    "name": "SecureBuild",
+    "id": "securebuild",
+    "versionID": "2025.09.09",
+    "homeURL": "https://securebuild.com/"
+  },
+  "descriptor": {
+    "name": "syft",
+    "version": "1.28.0",
+    "configuration": {
+      "catalogers": {
+        "requested": {
+          "default": [
+            "image",
+            "file"
+          ]
+        },
+        "used": [
+          "alpm-db-cataloger",
+          "apk-db-cataloger",
+          "binary-classifier-cataloger",
+          "bitnami-cataloger",
+          "cargo-auditable-binary-cataloger",
+          "conan-info-cataloger",
+          "dotnet-deps-binary-cataloger",
+          "dotnet-packages-lock-cataloger",
+          "dpkg-db-cataloger",
+          "elf-binary-package-cataloger",
+          "file-content-cataloger",
+          "file-digest-cataloger",
+          "file-executable-cataloger",
+          "file-metadata-cataloger",
+          "go-module-binary-cataloger",
+          "graalvm-native-image-cataloger",
+          "homebrew-cataloger",
+          "java-archive-cataloger",
+          "java-jvm-cataloger",
+          "javascript-package-cataloger",
+          "linux-kernel-cataloger",
+          "lua-rock-cataloger",
+          "nix-cataloger",
+          "pe-binary-package-cataloger",
+          "php-composer-installed-cataloger",
+          "php-interpreter-cataloger",
+          "php-pear-serialized-cataloger",
+          "portage-cataloger",
+          "python-installed-package-cataloger",
+          "r-package-cataloger",
+          "rpm-db-cataloger",
+          "ruby-installed-gemspec-cataloger",
+          "wordpress-plugins-cataloger"
+        ]
+      },
+      "data-generation": {
+        "generate-cpes": true
+      },
+      "files": {
+        "content": {
+          "globs": null,
+          "skip-files-above-size": 0
+        },
+        "hashers": [
+          "sha-1",
+          "sha-256"
+        ],
+        "selection": "owned-by-package"
+      },
+      "licenses": {
+        "coverage": 75,
+        "include-content": "none"
+      },
+      "packages": {
+        "binary": [
+          "python-binary",
+          "python-binary-lib",
+          "pypy-binary-lib",
+          "go-binary",
+          "julia-binary",
+          "helm",
+          "redis-binary",
+          "java-binary-openjdk",
+          "java-binary-ibm",
+          "java-binary-oracle",
+          "java-binary-graalvm",
+          "java-binary-jdk",
+          "nodejs-binary",
+          "go-binary-hint",
+          "busybox-binary",
+          "util-linux-binary",
+          "haproxy-binary",
+          "perl-binary",
+          "php-composer-binary",
+          "httpd-binary",
+          "memcached-binary",
+          "traefik-binary",
+          "arangodb-binary",
+          "postgresql-binary",
+          "mysql-binary",
+          "mysql-binary",
+          "mysql-binary",
+          "xtrabackup-binary",
+          "mariadb-binary",
+          "rust-standard-library-linux",
+          "rust-standard-library-macos",
+          "ruby-binary",
+          "erlang-binary",
+          "erlang-alpine-binary",
+          "erlang-library",
+          "swipl-binary",
+          "dart-binary",
+          "haskell-ghc-binary",
+          "haskell-cabal-binary",
+          "haskell-stack-binary",
+          "consul-binary",
+          "nginx-binary",
+          "bash-binary",
+          "openssl-binary",
+          "gcc-binary",
+          "fluent-bit-binary",
+          "wordpress-cli-binary",
+          "curl-binary",
+          "lighttpd-binary",
+          "proftpd-binary",
+          "zstd-binary",
+          "xz-binary",
+          "gzip-binary",
+          "sqlcipher-binary",
+          "jq-binary",
+          "chrome-binary"
+        ],
+        "dotnet": {
+          "dep-packages-must-claim-dll": true,
+          "dep-packages-must-have-dll": false,
+          "propagate-dll-claims-to-parents": true,
+          "relax-dll-claims-when-bundling-detected": true
+        },
+        "golang": {
+          "local-mod-cache-dir": "/Users/divolgin/go/pkg/mod",
+          "local-vendor-dir": "",
+          "main-module-version": {
+            "from-build-settings": true,
+            "from-contents": false,
+            "from-ld-flags": true
+          },
+          "proxies": [
+            "https://proxy.golang.org",
+            "direct"
+          ],
+          "search-local-mod-cache-licenses": false,
+          "search-local-vendor-licenses": false,
+          "search-remote-licenses": false
+        },
+        "java-archive": {
+          "include-indexed-archives": true,
+          "include-unindexed-archives": false,
+          "maven-base-url": "https://repo1.maven.org/maven2",
+          "maven-localrepository-dir": "/Users/divolgin/.m2/repository",
+          "max-parent-recursive-depth": 0,
+          "resolve-transitive-dependencies": false,
+          "use-maven-localrepository": false,
+          "use-network": false
+        },
+        "javascript": {
+          "include-dev-dependencies": false,
+          "npm-base-url": "https://registry.npmjs.org",
+          "search-remote-licenses": false
+        },
+        "linux-kernel": {
+          "catalog-modules": true
+        },
+        "nix": {
+          "capture-owned-files": false
+        },
+        "python": {
+          "guess-unpinned-requirements": false
+        }
+      },
+      "relationships": {
+        "exclude-binary-packages-with-file-ownership-overlap": true,
+        "package-file-ownership": true,
+        "package-file-ownership-overlap": true
+      },
+      "search": {
+        "scope": "squashed"
+      }
+    }
+  },
+  "schema": {
+    "version": "16.0.34",
+    "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.0.34.json"
+  }
+}
