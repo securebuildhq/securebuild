@@ -39,6 +39,13 @@ GO_MODULE_FILES := go.mod go.sum
 # Disable CGO for all Go builds to create static binaries
 export CGO_ENABLED=0
 
+# Build version info (set at build time; release workflow overrides VERSION and GIT_SHA)
+VERSION_PACKAGE := github.com/securebuildhq/securebuild/pkg/buildversion
+VERSION ?= 0.0.0-dev
+GIT_SHA ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+BUILD_LDFLAGS := -X $(VERSION_PACKAGE).version=$(VERSION) -X $(VERSION_PACKAGE).gitSHA=$(GIT_SHA) -X $(VERSION_PACKAGE).buildTime=$(BUILD_TIME)
+
 .PHONY: migrate
 migrate:
 	@echo "Running migrations..."
@@ -113,7 +120,7 @@ bin/worker: bin/builder-linux-amd64 bin/builder-linux-arm64 $(GO_SOURCES) $(GO_M
 	@echo "Copying builder binaries for embedding..."
 	cp bin/builder-linux-amd64 pkg/builder/builder-linux-amd64
 	cp bin/builder-linux-arm64 pkg/builder/builder-linux-arm64
-	go build -o bin/worker cmd/main.go
+	go build -ldflags "$(BUILD_LDFLAGS)" -o bin/worker cmd/main.go
 	@echo "Cleaning up copied builder binaries..."
 	rm -f pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64
 
@@ -122,14 +129,15 @@ build-worker: bin/worker
 
 # Cross-compiled worker binaries for release (linux/amd64 and linux/arm64).
 # Embeds both builder binaries so the worker can build for either arch.
+# Set VERSION and GIT_SHA in CI (e.g. VERSION=1.2.3 GIT_SHA=abc1234 make build-worker-release).
 .PHONY: build-worker-release
 build-worker-release: bin/builder-linux-amd64 bin/builder-linux-arm64
 	@echo "Building worker for linux/amd64..."
 	cp bin/builder-linux-amd64 pkg/builder/builder-linux-amd64
 	cp bin/builder-linux-arm64 pkg/builder/builder-linux-arm64
-	GOOS=linux GOARCH=amd64 go build -o bin/securebuild-worker-linux-amd64 cmd/main.go
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(BUILD_LDFLAGS)" -o bin/securebuild-worker-linux-amd64 cmd/main.go
 	@echo "Building worker for linux/arm64..."
-	GOOS=linux GOARCH=arm64 go build -o bin/securebuild-worker-linux-arm64 cmd/main.go
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(BUILD_LDFLAGS)" -o bin/securebuild-worker-linux-arm64 cmd/main.go
 	@echo "Cleaning up copied builder binaries..."
 	rm -f pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64
 

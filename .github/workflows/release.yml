@@ -25,7 +25,10 @@ jobs:
           cache: true
 
       - name: Build worker (linux/amd64 and linux/arm64)
-        run: make build-worker-release
+        run: |
+          export VERSION="${GITHUB_REF#refs/tags/v}"
+          export GIT_SHA="${GITHUB_SHA}"
+          make build-worker-release
 
       - name: Stage worker binaries
         run: |
