@@ -1,14 +1,7 @@
 "use client";
 
 import React from "react";
-import { DEPLOY_TIME } from "@/lib/build-info";
-
-// Constants for deployment time and version (these will be written during the build process)
-
-// BEGIN AUTOMATED REPLACE
-// const DEPLOY_TIME: string = "UNKNOWN";
-// const VERSION: string = "0.0.0";
-// END AUTOMATED REPLACE
+import { VERSION } from "@/lib/build-info";
 
 export default function DebugPage() {
   return (
@@ -27,8 +20,8 @@ export default function DebugPage() {
             </thead>
             <tbody>
               <tr>
-                <td className="px-4 py-2 border-b border-border">DEPLOY_TIME (UTC)</td>
-                <td className="px-4 py-2 border-b border-border">{DEPLOY_TIME}</td>
+                <td className="px-4 py-2 border-b border-border">VERSION</td>
+                <td className="px-4 py-2 border-b border-border">{VERSION}</td>
               </tr>
               <tr>
                 <td className="px-4 py-2 border-b">Public Environment Variables</td>

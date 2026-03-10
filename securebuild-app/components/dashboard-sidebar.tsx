@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { LayoutDashboard, Rocket, Package, Image, Users, Users2, CreditCard, FolderTree, FileCode, Shield, FileSearch } from "lucide-react"
-import { DEPLOY_TIME, VERSION } from "@/lib/build-info";
+import { VERSION } from "@/lib/build-info";
 
 export default function DashboardSidebar() {
   const pathname = usePathname()
@@ -186,7 +186,6 @@ export default function DashboardSidebar() {
       </div>
       <div className="p-4 mt-auto border-t border-zinc-200 dark:border-zinc-700">
         <p className="text-xs text-zinc-500 dark:text-zinc-400">Version: {VERSION}</p>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">Deployed: {DEPLOY_TIME}</p>
       </div>
     </div>
   )
