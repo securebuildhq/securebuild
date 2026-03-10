@@ -78,7 +78,7 @@
     "semver": "^7.7.4",
     "sonner": "^1.7.1",
     "stripe": "^20.3.1",
-    "tailwind-merge": "^2.5.5",
+    "tailwind-merge": "^3.5.0",
     "tar": "^7.5.9",
     "tar-stream": "^3.1.7",
     "vaul": "^1.1.2",
