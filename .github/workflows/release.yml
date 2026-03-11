@@ -13,6 +13,11 @@ permissions:
 
 jobs:
   build-worker:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -24,22 +29,17 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
-      - name: Build worker (linux/amd64 and linux/arm64)
+      - name: Build worker (linux/${{ matrix.arch }})
         run: |
           export VERSION="${GITHUB_REF#refs/tags/v}"
           export GIT_SHA="${GITHUB_SHA}"
-          make build-worker-release
+          make build-worker-release-${{ matrix.arch }}
 
-      - name: Stage worker binaries
-        run: |
-          mkdir -p worker-assets
-          cp bin/securebuild-worker-linux-amd64 bin/securebuild-worker-linux-arm64 worker-assets/
-
-      - name: Upload worker binaries
+      - name: Upload worker binary
         uses: actions/upload-artifact@v4
         with:
-          name: worker
-          path: worker-assets
+          name: worker-${{ matrix.arch }}
+          path: bin/securebuild-worker-linux-${{ matrix.arch }}
 
   build-app:
     runs-on: ubuntu-latest
@@ -169,7 +169,12 @@ jobs:
       - name: Download worker artifacts
         uses: actions/download-artifact@v4
         with:
-          name: worker
+          name: worker-amd64
+
+      - name: Download worker arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: worker-arm64
 
       - name: Download app artifact
         uses: actions/download-artifact@v4
@@ -189,9 +194,9 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          # download-artifact merges all artifacts into workspace root (no worker/ or app/ subdirs)
-          mv securebuild-worker-linux-amd64 release-assets/
-          mv securebuild-worker-linux-arm64 release-assets/
+          # Worker binaries from matrix jobs (path: bin/... preserved when downloaded)
+          mv bin/securebuild-worker-linux-amd64 bin/securebuild-worker-linux-arm64 release-assets/
+          # App/www/docs from download-artifact (merged into workspace root)
           mv securebuild-app.tar.gz release-assets/
           mv securebuild-www.tar.gz release-assets/
           mv securebuild-docs.tar.gz release-assets/
