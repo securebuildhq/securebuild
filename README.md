@@ -1,6 +1,6 @@
 # SecureBuild
 
-SecureBuild delivers **zero-CVE container images** built from source. Images are rebuilt in isolated environments with full SBOMs, vulnerability scanning, and cryptographic signing. The platform partners with open source maintainers and shares revenue with them.
+SecureBuild delivers **zero-CVE container images** built from source. Images are rebuilt in isolated environments with full SBOMs, vulnerability scanning, and cryptographic signing. 
 
 This repository contains the core services and application:
 
