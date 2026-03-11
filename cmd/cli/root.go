@@ -10,6 +10,7 @@ func RootCmd() *cobra.Command {
 	}
 
 	rootCmd.AddCommand(RunCmd())
+	rootCmd.AddCommand(VersionCmd())
 	rootCmd.AddCommand(OCIProxyCmd())
 	rootCmd.AddCommand(APKProxyCmd())
 	rootCmd.AddCommand(RebuildPackageCmd())

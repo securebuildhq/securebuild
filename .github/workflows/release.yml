@@ -25,7 +25,10 @@ jobs:
           cache: true
 
       - name: Build worker (linux/amd64 and linux/arm64)
-        run: make build-worker-release
+        run: |
+          export VERSION="${GITHUB_REF#refs/tags/v}"
+          export GIT_SHA="${GITHUB_SHA}"
+          make build-worker-release
 
       - name: Stage worker binaries
         run: |
@@ -53,6 +56,11 @@ jobs:
 
       - name: Install dependencies
         run: cd securebuild-app && npm ci
+
+      - name: Set VERSION in build-info
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          sed -i "s/VERSION: string = \"0.0.0\"/VERSION: string = \"$VERSION\"/" securebuild-app/lib/build-info.ts
 
       - name: Build
         run: cd securebuild-app && npm run build
@@ -90,6 +98,11 @@ jobs:
 
       - name: Install dependencies
         run: cd securebuild-www && npm ci
+
+      - name: Set VERSION in build-info
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          sed -i "s/VERSION: string = \"0.0.0\"/VERSION: string = \"$VERSION\"/" securebuild-www/lib/build-info.ts
 
       - name: Build
         run: cd securebuild-www && npm run build
