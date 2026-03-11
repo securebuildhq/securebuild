@@ -481,8 +481,10 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 	defer rows.Close()
 
 	var (
-		latestID  string
-		latestVer *semver.Version
+		latestID      string
+		latestVer     *semver.Version
+		fallbackID    string
+		allVersionIDs []string
 	)
 
 	for rows.Next() {
@@ -491,9 +493,15 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 			return nil, fmt.Errorf("scan version row: %w", err)
 		}
 
+		// Keep track of all versions as fallback
+		allVersionIDs = append(allVersionIDs, id)
+		if fallbackID == "" {
+			fallbackID = id // First version as fallback
+		}
+
 		v, err := semver.NewVersion(version)
 		if err != nil {
-			logger.Errorf("failed to parse version as semver",
+			logger.Warn("failed to parse version as semver, will use as fallback",
 				zap.String("package_version_id", id),
 				zap.String("version", version),
 				zap.Error(err))
@@ -512,11 +520,32 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 		}
 	}
 
-	if latestID == "" {
-		return nil, fmt.Errorf("no versions found for package %s", packageID)
+	// If we found a valid semver version, use it
+	if latestID != "" {
+		return getPackageVersion(ctx, latestID)
 	}
 
-	return getPackageVersion(ctx, latestID)
+	// Fall back to most recent version by created_at if no valid semver versions exist
+	if fallbackID != "" {
+		logger.Warn("no valid semver versions found, falling back to most recent version",
+			zap.String("package_id", packageID),
+			zap.String("fallback_version_id", fallbackID))
+
+		// Query for the most recent version by created_at as final fallback
+		fallbackQuery := `
+			SELECT id
+			FROM package_version
+			WHERE package_id = $1
+			ORDER BY created_at DESC, apk_release DESC
+			LIMIT 1
+		`
+		var mostRecentID string
+		if err := conn.QueryRow(ctx, fallbackQuery, packageID).Scan(&mostRecentID); err == nil {
+			return getPackageVersion(ctx, mostRecentID)
+		}
+	}
+
+	return nil, fmt.Errorf("no versions found for package %s", packageID)
 }
 
 func changeVersionInMelangeYAML(ctx context.Context, melangeYAML string, version string, commit string) (string, error) {
