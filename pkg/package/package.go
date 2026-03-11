@@ -481,8 +481,10 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 	defer rows.Close()
 
 	var (
-		latestID  string
-		latestVer *semver.Version
+		latestID        string
+		latestVer       *semver.Version
+		fallbackID      string
+		fallbackVersion string
 	)
 
 	for rows.Next() {
@@ -493,10 +495,16 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 
 		v, err := semver.NewVersion(version)
 		if err != nil {
-			logger.Errorf("failed to parse version as semver",
+			logger.Warn("failed to parse version as semver, will use lexicographical fallback",
 				zap.String("package_version_id", id),
 				zap.String("version", version),
 				zap.Error(err))
+
+			// Use lexicographical comparison for non-semver versions
+			if fallbackVersion == "" || version > fallbackVersion {
+				fallbackID = id
+				fallbackVersion = version
+			}
 			continue
 		}
 
@@ -512,11 +520,21 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 		}
 	}
 
-	if latestID == "" {
-		return nil, fmt.Errorf("no versions found for package %s", packageID)
+	// If we found a valid semver version, use it
+	if latestID != "" {
+		return getPackageVersion(ctx, latestID)
 	}
 
-	return getPackageVersion(ctx, latestID)
+	// Fall back to lexicographical comparison if no valid semver versions exist
+	if fallbackID != "" {
+		logger.Warn("no valid semver versions found, using lexicographically highest version",
+			zap.String("package_id", packageID),
+			zap.String("fallback_version_id", fallbackID),
+			zap.String("fallback_version", fallbackVersion))
+		return getPackageVersion(ctx, fallbackID)
+	}
+
+	return nil, fmt.Errorf("no versions found for package %s", packageID)
 }
 
 func changeVersionInMelangeYAML(ctx context.Context, melangeYAML string, version string, commit string) (string, error) {
