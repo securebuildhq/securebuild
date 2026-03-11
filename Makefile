@@ -107,22 +107,17 @@ release-docs:
 		--progress plain \
 		--version 20250609-142925
 
-bin/builder-linux-amd64: $(GO_SOURCES) $(GO_MODULE_FILES)
-	GOOS=linux GOARCH=amd64 go build -o bin/builder-linux-amd64 builder-cmd/main.go
+pkg/builder/builder-linux-amd64: $(GO_SOURCES) $(GO_MODULE_FILES)
+	GOOS=linux GOARCH=amd64 go build -o pkg/builder/builder-linux-amd64 builder-cmd/main.go
 
-bin/builder-linux-arm64: $(GO_SOURCES) $(GO_MODULE_FILES)
-	GOOS=linux GOARCH=arm64 go build -o bin/builder-linux-arm64 builder-cmd/main.go
+pkg/builder/builder-linux-arm64: $(GO_SOURCES) $(GO_MODULE_FILES)
+	GOOS=linux GOARCH=arm64 go build -o pkg/builder/builder-linux-arm64 builder-cmd/main.go
 
 .PHONY: build-builder
-build-builder: bin/builder-linux-amd64 bin/builder-linux-arm64
+build-builder: pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64
 
-bin/worker: bin/builder-linux-amd64 bin/builder-linux-arm64 $(GO_SOURCES) $(GO_MODULE_FILES)
-	@echo "Copying builder binaries for embedding..."
-	cp bin/builder-linux-amd64 pkg/builder/builder-linux-amd64
-	cp bin/builder-linux-arm64 pkg/builder/builder-linux-arm64
+bin/worker: pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64 $(GO_SOURCES) $(GO_MODULE_FILES)
 	go build -ldflags "$(BUILD_LDFLAGS)" -o bin/worker cmd/main.go
-	@echo "Cleaning up copied builder binaries..."
-	rm -f pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64
 
 .PHONY: build-worker
 build-worker: bin/worker
@@ -131,15 +126,17 @@ build-worker: bin/worker
 # Embeds both builder binaries so the worker can build for either arch.
 # Set VERSION and GIT_SHA in CI (e.g. VERSION=1.2.3 GIT_SHA=abc1234 make build-worker-release).
 .PHONY: build-worker-release
-build-worker-release: bin/builder-linux-amd64 bin/builder-linux-arm64
+build-worker-release: build-worker-release-amd64 build-worker-release-arm64
+
+# Build worker for a single arch (for parallel CI; set VERSION and GIT_SHA in CI).
+.PHONY: build-worker-release-amd64 build-worker-release-arm64
+build-worker-release-amd64: pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64
 	@echo "Building worker for linux/amd64..."
-	cp bin/builder-linux-amd64 pkg/builder/builder-linux-amd64
-	cp bin/builder-linux-arm64 pkg/builder/builder-linux-arm64
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(BUILD_LDFLAGS)" -o bin/securebuild-worker-linux-amd64 cmd/main.go
+
+build-worker-release-arm64: pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64
 	@echo "Building worker for linux/arm64..."
 	GOOS=linux GOARCH=arm64 go build -ldflags "$(BUILD_LDFLAGS)" -o bin/securebuild-worker-linux-arm64 cmd/main.go
-	@echo "Cleaning up copied builder binaries..."
-	rm -f pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64
 
 .PHONY: run-worker
 run-worker: build-worker
