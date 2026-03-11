@@ -481,10 +481,10 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 	defer rows.Close()
 
 	var (
-		latestID      string
-		latestVer     *semver.Version
-		fallbackID    string
-		allVersionIDs []string
+		latestID        string
+		latestVer       *semver.Version
+		fallbackID      string
+		fallbackVersion string
 	)
 
 	for rows.Next() {
@@ -493,18 +493,18 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 			return nil, fmt.Errorf("scan version row: %w", err)
 		}
 
-		// Keep track of all versions as fallback
-		allVersionIDs = append(allVersionIDs, id)
-		if fallbackID == "" {
-			fallbackID = id // First version as fallback
-		}
-
 		v, err := semver.NewVersion(version)
 		if err != nil {
-			logger.Warn("failed to parse version as semver, will use as fallback",
+			logger.Warn("failed to parse version as semver, will use lexicographical fallback",
 				zap.String("package_version_id", id),
 				zap.String("version", version),
 				zap.Error(err))
+
+			// Use lexicographical comparison for non-semver versions
+			if fallbackVersion == "" || version > fallbackVersion {
+				fallbackID = id
+				fallbackVersion = version
+			}
 			continue
 		}
 
@@ -525,24 +525,13 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 		return getPackageVersion(ctx, latestID)
 	}
 
-	// Fall back to most recent version by created_at if no valid semver versions exist
+	// Fall back to lexicographical comparison if no valid semver versions exist
 	if fallbackID != "" {
-		logger.Warn("no valid semver versions found, falling back to most recent version",
+		logger.Warn("no valid semver versions found, using lexicographically highest version",
 			zap.String("package_id", packageID),
-			zap.String("fallback_version_id", fallbackID))
-
-		// Query for the most recent version by created_at as final fallback
-		fallbackQuery := `
-			SELECT id
-			FROM package_version
-			WHERE package_id = $1
-			ORDER BY created_at DESC, apk_release DESC
-			LIMIT 1
-		`
-		var mostRecentID string
-		if err := conn.QueryRow(ctx, fallbackQuery, packageID).Scan(&mostRecentID); err == nil {
-			return getPackageVersion(ctx, mostRecentID)
-		}
+			zap.String("fallback_version_id", fallbackID),
+			zap.String("fallback_version", fallbackVersion))
+		return getPackageVersion(ctx, fallbackID)
 	}
 
 	return nil, fmt.Errorf("no versions found for package %s", packageID)
