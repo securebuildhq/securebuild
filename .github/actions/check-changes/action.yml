@@ -7,9 +7,6 @@ outputs:
   run-app:
     description: 'Whether to run securebuild-app jobs'
     value: ${{ steps.changes.outputs.run-app }}
-  run-docs:
-    description: 'Whether to run securebuild-docs jobs'
-    value: ${{ steps.changes.outputs.run-docs }}
   run-go:
     description: 'Whether to run Go jobs'
     value: ${{ steps.changes.outputs.run-go }}
@@ -35,7 +32,6 @@ runs:
           echo "run-all=true" >> $GITHUB_OUTPUT
           echo "run-www=true" >> $GITHUB_OUTPUT
           echo "run-app=true" >> $GITHUB_OUTPUT
-          echo "run-docs=true" >> $GITHUB_OUTPUT
           echo "run-go=true" >> $GITHUB_OUTPUT
           exit 0
         fi
@@ -52,13 +48,6 @@ runs:
           echo "run-app=true" >> $GITHUB_OUTPUT
         else
           echo "run-app=false" >> $GITHUB_OUTPUT
-        fi
-
-        # Check for securebuild-docs changes
-        if echo "$CHANGED_FILES" | grep -q '^securebuild-docs/'; then
-          echo "run-docs=true" >> $GITHUB_OUTPUT
-        else
-          echo "run-docs=false" >> $GITHUB_OUTPUT
         fi
 
         # Check for Go changes
