@@ -192,5 +192,4 @@ Only the external dependencies are mocked:
 - ❌ Image manifest parsing
 - ❌ Network failure scenarios
 
-For end-to-end API testing including actual scan results, see:
-- `securebuild-www/integration/api/v1/external-image/scan.test.ts`
+For end-to-end API testing including actual scan results, see the securebuild-app integration tests.

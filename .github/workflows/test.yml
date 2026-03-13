@@ -9,7 +9,6 @@ jobs:
   check-changes:
     runs-on: ubuntu-latest
     outputs:
-      run-www: ${{ steps.check.outputs.run-www }}
       run-app: ${{ steps.check.outputs.run-app }}
       run-go: ${{ steps.check.outputs.run-go }}
       run-all: ${{ steps.check.outputs.run-all }}
@@ -22,42 +21,6 @@ jobs:
       - name: Check for changes
         id: check
         uses: ./.github/actions/check-changes
-
-  securebuild-www-tests:
-    needs: check-changes
-    if: needs.check-changes.outputs.run-www == 'true'
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v6
-      with:
-        node-version: '24'
-
-    - name: Cache Node.js modules
-      uses: actions/cache@v5
-      with:
-        path: |
-          ~/.npm
-          securebuild-www/node_modules
-          securebuild-www/.next/cache
-        key: ${{ runner.os }}-node-www-${{ hashFiles('securebuild-www/package-lock.json') }}
-        restore-keys: |
-          ${{ runner.os }}-node-www-
-
-    - name: Install Node.js dependencies
-      uses: ./.github/actions/install-npm-dependencies
-      with:
-        working-directory: securebuild-www
-
-    - name: Run unit tests
-      run: |
-        cd securebuild-www
-        npm test
-      env:
-        CI: true
 
   securebuild-app-tests:
     needs: check-changes

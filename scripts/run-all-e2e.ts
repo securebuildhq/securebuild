@@ -24,18 +24,6 @@ async function runAllE2ETests() {
       DATABASE_URL: testDb.connectionString
     };
 
-    console.log('\n=== Running securebuild-www E2E tests ===');
-    try {
-      execSync('cd securebuild-www && npm run test:e2e', {
-        stdio: 'inherit',
-        env
-      });
-      console.log('✅ securebuild-www E2E tests passed');
-    } catch (error) {
-      console.error('❌ securebuild-www E2E tests failed');
-      throw error;
-    }
-
     console.log('\n=== Running securebuild-app E2E tests ===');
     try {
       execSync('cd securebuild-app && npm run test:e2e', {

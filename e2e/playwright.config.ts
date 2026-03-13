@@ -56,7 +56,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
 
   /* Run all projects in parallel (each gets its own DB + server) */
-  workers: process.env.CI ? 3 : undefined,
+  workers: process.env.CI ? 1 : undefined,
 
   /* Reporter to use. */
   reporter: [
@@ -66,43 +66,6 @@ export default defineConfig({
 
   /* Configure projects - one per test file */
   projects: [
-    // securebuild-www: home test
-    {
-      name: 'www-home',
-      testDir: path.resolve(__dirname, '../securebuild-www/e2e'),
-      testMatch: '**/home.spec.ts',
-      use: {
-        ...sharedUse,
-        ...browserConfig,
-        baseURL: 'http://localhost:3300',
-      },
-    },
-
-    // securebuild-www: login test
-    {
-      name: 'www-login',
-      testDir: path.resolve(__dirname, '../securebuild-www/e2e'),
-      testMatch: '**/login.spec.ts',
-      use: {
-        ...sharedUse,
-        ...browserConfig,
-        baseURL: 'http://localhost:3301',
-      },
-    },
-
-    // securebuild-www: purchase test
-    {
-      name: 'www-purchase',
-      testDir: path.resolve(__dirname, '../securebuild-www/e2e'),
-      testMatch: '**/purchase.spec.ts',
-      timeout: 60000, // Stripe purchase flow can take a while
-      use: {
-        ...sharedUse,
-        ...browserConfig,
-        baseURL: 'http://localhost:3302',
-      },
-    },
-
     // securebuild-app: admin-login test
     {
       name: 'app-admin-login',

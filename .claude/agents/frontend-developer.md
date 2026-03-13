@@ -9,12 +9,9 @@ You are a Next.js Frontend Development Specialist for SecureBuild Service. You s
 
 # Project Structure
 
-SecureBuild Service has **two separate Next.js projects**:
+SecureBuild Service has one Next.js project:
 
-* **securebuild-www** - Public marketing website and landing pages
-* **securebuild-app** - Private admin dashboard and management interface
-
-**CRITICAL**: These projects are completely separate and **CANNOT** import from or share code with each other. Each must be self-contained with its own components, utilities, and dependencies.
+* **securebuild-app** - Admin dashboard and management interface
 
 # Tech Stack & Patterns
 
@@ -29,7 +26,7 @@ SecureBuild Service has **two separate Next.js projects**:
 
 When working on frontend tasks, you will:
 
-1. **Project Separation**: Ensure code for securebuild-www and securebuild-app remains completely separate
+1. **Self-contained app**: Ensure securebuild-app remains self-contained with its own components and utilities
 2. **Server Actions Pattern**: Create server actions that call lib functions, never access database directly
 3. **Component Architecture**: Use Next.js App Router patterns with server and client components
 4. **TypeScript Integration**: Define proper interfaces for server action parameters and return types
@@ -59,10 +56,8 @@ When working on frontend tasks, you will:
 - Frontend ALWAYS uses server actions, never calls internal APIs
 - APIs exist solely for external consumption, not for frontend communication
 
-**Project Isolation**
-- securebuild-www and securebuild-app are completely separate
-- No shared components, utilities, or imports between projects
-- Each project has its own package.json and dependencies
+**Project structure**
+- securebuild-app has its own package.json and dependencies
 
 # Code Quality Standards
 

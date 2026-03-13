@@ -15,7 +15,7 @@ help:
 	@echo "  migrate        - Run database migrations using schemahero"
 	@echo ""
 	@echo "Testing:"
-	@echo "  test-unit                   - Run all unit tests (Go + securebuild-www + securebuild-app)"
+	@echo "  test-unit                   - Run all unit tests (Go + securebuild-app)"
 	@echo "  test-unit-go                - Run Go unit tests only"
 	@echo "  test-integration-oci-proxy  - Run OCI proxy integration tests"
 	@echo "  test-integration-apk-proxy       - Run APK proxy integration tests"
@@ -28,7 +28,6 @@ help:
 	@echo ""
 	@echo "Deployment:"
 	@echo "  release        - Create a new release using Dagger"
-	@echo "  release-www    - Release securebuild-www using Dagger"
 	@echo "  release-docs   - Release securebuild-docs using Dagger"
 	@echo ""
 
@@ -79,8 +78,6 @@ test-integration-worker: create-fake-builder
 
 .PHONY: test-unit
 test-unit: test-unit-go
-	@echo "Running securebuild-www unit tests..."
-	@cd securebuild-www && npm ci && npm test
 	@echo "Running securebuild-app unit tests..."
 	@cd securebuild-app && npm ci && npm test
 	@echo "All unit tests passed!"
@@ -92,13 +89,6 @@ release:
 		--github-token env:GITHUB_TOKEN \
 		--doppler-key env:DOPPLER_KEY_SECUREBUILD_PROD \
 		--progress plain
-
-.PHONY: release-www
-release-www:
-	dagger call release-www \
-		--doppler-key env:DOPPLER_KEY_SECUREBUILD_PROD \
-		--progress plain \
-		--version 20250609-142925
 
 .PHONY: release-docs
 release-docs:

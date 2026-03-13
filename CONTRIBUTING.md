@@ -34,10 +34,10 @@ make help
 - **Build worker:** `make build-worker` (builds worker with embedded builder binaries).
 - **Run services:** `make run-worker`, `make run-oci-proxy`, `make run-apk-proxy` (each builds first if needed).
 
-### TypeScript (securebuild-app, securebuild-www)
+### TypeScript (securebuild-app)
 
-- **Install:** `cd securebuild-app && npm install` (and similarly for `securebuild-www`).
-- **Dev server:** `npm run dev` (app on port 3000, www on port 3001).
+- **Install:** `cd securebuild-app && npm install`.
+- **Dev server:** `npm run dev` (app on port 3000).
 
 ### Database
 
@@ -45,7 +45,7 @@ make help
 
 ## Testing
 
-- **Unit tests (all):** `make test-unit` — runs Go unit tests plus securebuild-www and securebuild-app tests.
+- **Unit tests (all):** `make test-unit` — runs Go unit tests plus securebuild-app tests.
 - **Go unit tests only:** `make test-unit-go`.
 - **Integration tests:**
   - `make test-integration-oci-proxy`

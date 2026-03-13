@@ -1,6 +1,6 @@
 # E2E Tests
 
-End-to-end tests for SecureBuild services (securebuild-app and securebuild-www).
+End-to-end tests for SecureBuild services (securebuild-app).
 
 ## Architecture
 
@@ -12,53 +12,44 @@ Each test file runs in complete isolation with its own database and server:
 │                    (Orchestrates Everything)                         │
 └─────────────────────────────────────────────────────────────────────┘
                                   │
-                    ┌─────────────┼─────────────┐
-                    │             │             │
-                    ▼             ▼             ▼
-         ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-         │ home.spec.ts │ │login.spec.ts │ │admin-login   │
-         │              │ │              │ │  .spec.ts    │
-         │ Port: 3300   │ │ Port: 3301   │ │ Port: 3302   │
-         └──────────────┘ └──────────────┘ └──────────────┘
-                │                 │                 │
-                ▼                 ▼                 ▼
-         ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-         │ Next.js Dev  │ │ Next.js Dev  │ │ Next.js Dev  │
-         │   Server     │ │   Server     │ │   Server     │
-         │              │ │              │ │              │
-         │ (www:3300)   │ │ (www:3301)   │ │ (app:3302)   │
-         └──────────────┘ └──────────────┘ └──────────────┘
-                │                 │                 │
+                                  ▼
+         ┌──────────────────────────┐
+         │ admin-login.spec.ts       │
+         │ Port: 3303                │
+         └──────────────┘
+                │
+                ▼
+         ┌──────────────┐
+         │ Next.js Dev  │
+         │   Server     │
+         │ (app:3303)   │
+         └──────────────┘
+                │
          (instrumentation.ts detects E2E_TEST_MODE)
-                │                 │                 │
-                ▼                 ▼                 ▼
-         ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-         │ setup-db.ts  │ │ setup-db.ts  │ │ setup-db.ts  │
-         │              │ │              │ │              │
-         │ Creates DB   │ │ Creates DB   │ │ Creates DB   │
-         └──────────────┘ └──────────────┘ └──────────────┘
-                │                 │                 │
-                ▼                 ▼                 ▼
-         ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-         │  Postgres    │ │  Postgres    │ │  Postgres    │
-         │  Container   │ │  Container   │ │  Container   │
-         │              │ │              │ │              │
-         │ test_3300    │ │ test_3301    │ │ test_3302    │
-         └──────────────┘ └──────────────┘ └──────────────┘
-                │                 │                 │
+                │
+                ▼
+         ┌──────────────┐
+         │ setup-db.ts  │
+         │ Creates DB   │
+         └──────────────┘
+                │
+                ▼
+         ┌──────────────┐
+         │  Postgres    │
+         │  Container   │
+         │ test_3303    │
+         └──────────────┘
+                │
          (Apply schemas + seed data)
-                │                 │                 │
-                ▼                 ▼                 ▼
-         ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-         │   home       │ │   login      │ │ admin-login  │
-         │ .seed-data/  │ │ .seed-data/  │ │ .seed-data/  │
-         │              │ │              │ │              │
-         │ - catalog    │ │ - users      │ │ - admin user │
-         │ - images     │ │ - nonces     │ │              │
-         │              │ │ - catalog    │ │              │
-         └──────────────┘ └──────────────┘ └──────────────┘
-                │                 │                 │
-                └─────────────────┼─────────────────┘
+                │
+                ▼
+         ┌──────────────┐
+         │ admin-login  │
+         │ .seed-data/  │
+         │ - admin user │
+         └──────────────┘
+                │
+                └─────────────────────
                                   │
                     All tests run in parallel
                                   │
@@ -78,24 +69,6 @@ e2e/
 ├── playwright.config.ts     # Per-project configuration
 └── README.md                # This file
 
-securebuild-www/
-├── instrumentation.ts       # Calls e2e/setup-db.ts on startup
-└── e2e/
-    ├── home.spec.ts
-    ├── login.spec.ts
-    ├── home.seed-data/      # Catalog data only
-    │   ├── 002-catalog.yaml
-    │   ├── 003-image.yaml
-    │   └── 004-catalog_image.yaml
-    └── login.seed-data/     # Full data (user, nonce, catalog)
-        ├── 001-securebuild_user.yaml
-        ├── 002-catalog.yaml
-        ├── 003-image.yaml
-        ├── 004-catalog_image.yaml
-        ├── 005-passwordless_login_nonce.yaml
-        ├── 006-securebuild_team.yaml
-        └── 007-user_team.yaml
-
 securebuild-app/
 ├── instrumentation.ts       # Calls e2e/setup-db.ts on startup
 └── e2e/
@@ -111,22 +84,19 @@ securebuild-app/
 ```bash
 npm test
   ↓
-run-tests.ts sets up 3 databases in parallel:
-  - Calls setup-db.ts for each test file
-  - Creates isolated Postgres containers
+run-tests.ts sets up database:
+  - Calls setup-db.ts for the test
+  - Creates isolated Postgres container
   - Applies schemas from db/schema/tables/
   - Applies seed data from {service}/e2e/{testName}.seed-data/
-  - Returns DB_URI for each
+  - Returns DB_URI
   ↓
-run-tests.ts starts 3 servers in parallel:
-  - securebuild-www on port 3300 (for home.spec.ts) with DB_URI
-  - securebuild-www on port 3301 (for login.spec.ts) with DB_URI
-  - securebuild-app on port 3302 (for admin-login.spec.ts) with DB_URI
-  - Each server gets DB_URI via environment variable
+run-tests.ts starts server:
+  - securebuild-app on port 3303 (for admin-login.spec.ts) with DB_URI
+  - Server gets DB_URI via environment variable
   ↓
-All servers ready, run-tests.ts starts Playwright:
-  - All 3 projects run in parallel
-  - Each hits its own port/database
+Server ready, run-tests.ts starts Playwright:
+  - Project runs against its port/database
   - No test interference
   ↓
 Tests complete, run-tests.ts cleanup:
@@ -172,7 +142,6 @@ Tests complete, run-tests.ts cleanup:
 ```bash
 # Install service dependencies
 cd securebuild-app && npm install && cd ..
-cd securebuild-www && npm install && cd ..
 
 # Install E2E test dependencies
 cd e2e
@@ -187,24 +156,19 @@ npx playwright install chromium
 From the `e2e/` directory:
 
 ```bash
-# Run all tests (all 3 in parallel)
+# Run all tests
 npm test
 
 # Run a single test
-npm test -- --project=www-home
-npm test -- --project=www-login
 npm test -- --project=app-admin-login
-
-# Run multiple specific tests
-npm test -- --project=www-home --project=www-login
 
 # Run with visible browser
 npm run test:headed
-npm test -- --project=www-home --headed
+npm test -- --project=app-admin-login --headed
 
 # Run with Playwright UI
 npm run test:ui
-npm test -- --project=www-login --ui
+npm test -- --project=app-admin-login --ui
 
 # Run with debug mode
 npm run test:debug
@@ -238,23 +202,12 @@ Each server instance gets:
 1. Create test file: `{service}/e2e/{testname}.spec.ts`
 2. Create seed data directory: `{service}/e2e/{testname}.seed-data/`
 3. Add YAML seed files to directory
-4. Add project to `e2e/playwright.config.ts`:
-   ```typescript
-   {
-     name: 'www-newtest',
-     testDir: path.resolve(__dirname, '../securebuild-www/e2e'),
-     testMatch: '**/newtest.spec.ts',
-     use: { ...sharedUse, ...browserConfig, baseURL: 'http://localhost:3303' },
-   }
-   ```
-5. Add config to `e2e/run-tests.ts` in the `allTestConfigs` array:
-   ```typescript
-   { service: 'securebuild-www', port: 3303, testName: 'newtest', projectName: 'www-newtest' }
-   ```
+4. Add project to `e2e/playwright.config.ts`
+5. Add config to `e2e/run-tests.ts` in the `allTestConfigs` array
 
-That's it! The new test will run in parallel with the others, and you can run it individually with:
+That's it! You can run the new test individually with:
 ```bash
-npm test -- --project=www-newtest
+npm test -- --project=app-your-new-test
 ```
 
 ## CI/CD - GitHub Actions
@@ -270,11 +223,6 @@ strategy:
   fail-fast: false
   matrix:
     include:
-      - project: www-home
-        service: securebuild-www
-      - project: www-login
-        service: securebuild-www
-        needs_stripe: true
       - project: app-admin-login
         service: securebuild-app
 ```
@@ -282,14 +230,14 @@ strategy:
 ### How It Works in CI
 
 1. **Change detection** - Only runs tests for modified services
-2. **Matrix execution** - All 3 tests run in parallel on separate runners
+2. **Matrix execution** - E2E test runs on its own runner
 3. **Isolated environments** - Each runner gets its own DB container + server
 4. **Conditional secrets** - Stripe keys only passed to login test
 5. **Artifact upload** - Reports and results saved per test
 
 ### CI Benefits
 
-- **Fast**: All tests run simultaneously (~2-3 minutes total)
+- **Fast**: E2E test runs in isolation
 - **Efficient**: Only tests affected services
 - **Isolated**: No cross-test contamination
 - **Debuggable**: Separate reports for each test

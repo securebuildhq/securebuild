@@ -60,44 +60,6 @@ updates:
   # NPM / NODE.JS PROJECTS
   # =============================================================================
 
-  # securebuild-www - Customer-facing Next.js app (60+ dependencies)
-  - package-ecosystem: "npm"
-    directory: "/securebuild-www"
-    versioning-strategy: increase
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "09:00"
-      timezone: "America/Los_Angeles"
-    open-pull-requests-limit: 10
-    labels:
-      - "dependencies"
-      - "npm"
-      - "securebuild-www"
-    commit-message:
-      prefix: "chore(deps)"
-    groups:
-      www-production-minor-patch:
-        patterns:
-          - "*"
-        exclude-patterns:
-          - "@types/*"
-          - "eslint*"
-          - "jest*"
-          - "typescript"
-        update-types:
-          - "minor"
-          - "patch"
-      www-dev-dependencies:
-        patterns:
-          - "@types/*"
-          - "eslint*"
-          - "jest*"
-          - "typescript"
-        update-types:
-          - "minor"
-          - "patch"
-
   # securebuild-app - Admin interface Next.js app (65+ dependencies)
   - package-ecosystem: "npm"
     directory: "/securebuild-app"

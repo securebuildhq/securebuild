@@ -22,9 +22,6 @@ interface TestConfig {
 }
 
 const allTestConfigs: TestConfig[] = [
-  { service: 'securebuild-www', port: 3300, testName: 'home', projectName: 'www-home' },
-  { service: 'securebuild-www', port: 3301, testName: 'login', projectName: 'www-login' },
-  { service: 'securebuild-www', port: 3302, testName: 'purchase', projectName: 'www-purchase' },
   { service: 'securebuild-app', port: 3303, testName: 'admin-login', projectName: 'app-admin-login' },
 ];
 
