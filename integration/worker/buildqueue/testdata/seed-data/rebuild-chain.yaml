@@ -1,0 +1,19 @@
+database: securebuild
+name: rebuild_chain
+requires:
+  - package
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "rc-bq-test-1"
+        - column: package_id
+          value:
+            str: "pkg-bq-ok"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: chain_name
+          value:
+            str: "bq-test-chain"

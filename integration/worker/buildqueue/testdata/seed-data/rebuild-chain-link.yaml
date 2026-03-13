@@ -1,0 +1,27 @@
+database: securebuild
+name: rebuild_chain_link
+requires:
+  - rebuild_chain
+  - package
+seedData:
+  rows:
+    - columns:
+        - column: link_id
+          value:
+            str: "rcl-bq-ok"
+        - column: rebuild_chain_id
+          value:
+            str: "rc-bq-test-1"
+        - column: package_id
+          value:
+            str: "pkg-bq-ok"
+    - columns:
+        - column: link_id
+          value:
+            str: "rcl-bq-fail"
+        - column: rebuild_chain_id
+          value:
+            str: "rc-bq-test-1"
+        - column: package_id
+          value:
+            str: "pkg-bq-fail"
