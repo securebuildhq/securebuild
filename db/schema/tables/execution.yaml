@@ -9,6 +9,11 @@ schema:
         - cause_id
         name: execution_cause_id_idx
         isUnique: false
+      - columns:
+        - cause_id
+        - created_at
+        name: execution_cause_id_created_at_idx
+        isUnique: false
     columns:
       - name: id
         type: text

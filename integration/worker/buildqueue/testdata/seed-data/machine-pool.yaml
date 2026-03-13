@@ -1,0 +1,143 @@
+database: securebuild
+name: machine_pool
+seedData:
+  rows:
+    # 2 VMs per architecture so whichever link is picked first can assign both archs instantly.
+    # tryTakeVMWithAssignment requires: architecture, status = 'running', assigned_task_id NULL,
+    # cleanup_locked_at NULL, is_on_demand = false.
+    - columns:
+        - column: id
+          value:
+            str: "vmbq-x86-64-00000000000000001"
+        - column: machine_id
+          value:
+            str: "fly-machine-bq-x86-1"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: expires_at
+          value:
+            str: "2030-01-01T00:00:00Z"
+        - column: private_key
+          value:
+            str: "dummy-private-key-for-test"
+        - column: username
+          value:
+            str: "builder"
+        - column: status
+          value:
+            str: "running"
+        - column: ip_address
+          value:
+            str: "127.0.0.1"
+        - column: port
+          value:
+            str: "0"
+        - column: architecture
+          value:
+            str: "x86_64"
+        - column: is_on_demand
+          value:
+            str: "false"
+    - columns:
+        - column: id
+          value:
+            str: "vmbq-x86-64-00000000000000002"
+        - column: machine_id
+          value:
+            str: "fly-machine-bq-x86-2"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: expires_at
+          value:
+            str: "2030-01-01T00:00:00Z"
+        - column: private_key
+          value:
+            str: "dummy-private-key-for-test"
+        - column: username
+          value:
+            str: "builder"
+        - column: status
+          value:
+            str: "running"
+        - column: ip_address
+          value:
+            str: "127.0.0.1"
+        - column: port
+          value:
+            str: "0"
+        - column: architecture
+          value:
+            str: "x86_64"
+        - column: is_on_demand
+          value:
+            str: "false"
+    - columns:
+        - column: id
+          value:
+            str: "vmbq-arm64-00000000000000001"
+        - column: machine_id
+          value:
+            str: "fly-machine-bq-arm-1"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: expires_at
+          value:
+            str: "2030-01-01T00:00:00Z"
+        - column: private_key
+          value:
+            str: "dummy-private-key-for-test"
+        - column: username
+          value:
+            str: "builder"
+        - column: status
+          value:
+            str: "running"
+        - column: ip_address
+          value:
+            str: "127.0.0.1"
+        - column: port
+          value:
+            str: "0"
+        - column: architecture
+          value:
+            str: "aarch64"
+        - column: is_on_demand
+          value:
+            str: "false"
+    - columns:
+        - column: id
+          value:
+            str: "vmbq-arm64-00000000000000002"
+        - column: machine_id
+          value:
+            str: "fly-machine-bq-arm-2"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: expires_at
+          value:
+            str: "2030-01-01T00:00:00Z"
+        - column: private_key
+          value:
+            str: "dummy-private-key-for-test"
+        - column: username
+          value:
+            str: "builder"
+        - column: status
+          value:
+            str: "running"
+        - column: ip_address
+          value:
+            str: "127.0.0.1"
+        - column: port
+          value:
+            str: "0"
+        - column: architecture
+          value:
+            str: "aarch64"
+        - column: is_on_demand
+          value:
+            str: "false"

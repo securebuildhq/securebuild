@@ -522,7 +522,11 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 
 	// If we found a valid semver version, use it
 	if latestID != "" {
-		return getPackageVersion(ctx, latestID)
+		pv, err := getPackageVersion(ctx, latestID)
+		if err != nil {
+			return nil, fmt.Errorf("get package version: %w", err)
+		}
+		return pv, nil
 	}
 
 	// Fall back to lexicographical comparison if no valid semver versions exist
@@ -531,7 +535,11 @@ func GetLatestPackageVersion(ctx context.Context, packageID string) (*types.Pack
 			zap.String("package_id", packageID),
 			zap.String("fallback_version_id", fallbackID),
 			zap.String("fallback_version", fallbackVersion))
-		return getPackageVersion(ctx, fallbackID)
+		pv, err := getPackageVersion(ctx, fallbackID)
+		if err != nil {
+			return nil, fmt.Errorf("get fallback package version: %w", err)
+		}
+		return pv, nil
 	}
 
 	return nil, fmt.Errorf("no versions found for package %s", packageID)

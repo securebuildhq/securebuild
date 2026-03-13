@@ -1,0 +1,83 @@
+database: securebuild
+name: package_version
+requires:
+  - package
+seedData:
+  rows:
+    # Package with epoch: CreateNewRelease succeeds; HandleBuildPackage runs and assigns VMs from machine_pool.
+    - columns:
+        - column: id
+          value:
+            str: "pkgver-bq-ok-1"
+        - column: package_id
+          value:
+            str: "pkg-bq-ok"
+        - column: version
+          value:
+            str: "1.0.0"
+        - column: melange_yaml
+          value:
+            str: |
+              package:
+                name: bq-ok-package
+                version: 1.0.0
+                epoch: 0
+                description: OK package for buildqueue test
+              pipeline:
+                - runs: echo test
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: apk_release
+          value:
+            str: "0"
+        - column: use_root
+          value:
+            str: "false"
+        - column: has_securebuild_edits
+          value:
+            str: "false"
+        - column: bootstrap_enabled
+          value:
+            str: "false"
+    # Package without epoch: CreateNewRelease fails (bumpReleaseInMelangeYAML); recordFailedExecutionForLink succeeds.
+    - columns:
+        - column: id
+          value:
+            str: "pkgver-bq-fail-1"
+        - column: package_id
+          value:
+            str: "pkg-bq-fail"
+        - column: version
+          value:
+            str: "1.0.0"
+        - column: melange_yaml
+          value:
+            str: |
+              package:
+                name: bq-fail-package
+                version: 1.0.0
+                description: No epoch - bump will fail
+              pipeline:
+                - runs: echo test
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: apk_release
+          value:
+            str: "0"
+        - column: use_root
+          value:
+            str: "false"
+        - column: has_securebuild_edits
+          value:
+            str: "false"
+        - column: bootstrap_enabled
+          value:
+            str: "false"

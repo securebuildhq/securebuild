@@ -1,0 +1,36 @@
+database: securebuild
+name: package
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "pkg-bq-ok"
+        - column: name
+          value:
+            str: "bq-ok-package"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: is_delete_protection_enabled
+          value:
+            str: "false"
+    - columns:
+        - column: id
+          value:
+            str: "pkg-bq-fail"
+        - column: name
+          value:
+            str: "bq-fail-package"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-07T00:00:00Z"
+        - column: is_delete_protection_enabled
+          value:
+            str: "false"
