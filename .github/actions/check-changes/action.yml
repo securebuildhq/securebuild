@@ -1,9 +1,6 @@
 name: 'Check Changes'
 description: 'Determine which build and test suites need to run based on changed files'
 outputs:
-  run-www:
-    description: 'Whether to run securebuild-www jobs'
-    value: ${{ steps.changes.outputs.run-www }}
   run-app:
     description: 'Whether to run securebuild-app jobs'
     value: ${{ steps.changes.outputs.run-app }}
@@ -30,17 +27,9 @@ runs:
         if echo "$CHANGED_FILES" | grep -q -E '^\.github/workflows/.*\.yml$|^Makefile$|^db/schema/tables/'; then
           echo "Workflow, Makefile, or schema changed - running all jobs"
           echo "run-all=true" >> $GITHUB_OUTPUT
-          echo "run-www=true" >> $GITHUB_OUTPUT
           echo "run-app=true" >> $GITHUB_OUTPUT
           echo "run-go=true" >> $GITHUB_OUTPUT
           exit 0
-        fi
-
-        # Check for securebuild-www changes
-        if echo "$CHANGED_FILES" | grep -q '^securebuild-www/'; then
-          echo "run-www=true" >> $GITHUB_OUTPUT
-        else
-          echo "run-www=false" >> $GITHUB_OUTPUT
         fi
 
         # Check for securebuild-app changes

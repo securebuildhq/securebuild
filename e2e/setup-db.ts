@@ -15,7 +15,7 @@ const containers = new Map<number, StartedPostgreSqlContainer>();
 
 /**
  * Setup a test database for a specific service and port
- * @param serviceName - Name of the service (e.g., 'securebuild-www')
+ * @param serviceName - Name of the service (e.g., 'securebuild-app')
  * @param port - Port number for the server (used for DB isolation)
  * @param testName - Name of the test file without extension (e.g., 'login', 'home')
  * @returns Database connection URI

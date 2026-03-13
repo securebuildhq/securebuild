@@ -25,35 +25,30 @@ Use `make build-worker` instead of `go build ./pkg` for building the Go project.
 
 ### TypeScript Projects
 
-For the TypeScript web projects (`securebuild-www` and `securebuild-app`):
+For the TypeScript web project (`securebuild-app`):
 
 **Install dependencies:**
 ```bash
-cd securebuild-www && npm install
 cd securebuild-app && npm install
 ```
 
 **Type checking:**
 ```bash
-cd securebuild-www && npx tsc --noEmit
 cd securebuild-app && npx tsc --noEmit
 ```
 
 **Linting:**
 ```bash
-cd securebuild-www && npm run lint
 cd securebuild-app && npm run lint
 ```
 
 **Build for production:**
 ```bash
-cd securebuild-www && npm run build
 cd securebuild-app && npm run build
 ```
 
 **Development server:**
 ```bash
-cd securebuild-www && npm run dev  # Runs on port 3001
 cd securebuild-app && npm run dev  # Runs on port 3000
 ```
 
