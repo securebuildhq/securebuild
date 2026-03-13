@@ -1,5 +1,5 @@
 # Build release assets on semver tag (vX.Y.Z).
-# Produces worker binaries (amd64/arm64), app, www, and docs bundles.
+# Produces worker binaries (amd64/arm64) and app bundle.
 # Does not build or push images; downstream process consumes these assets.
 name: Release
 
@@ -83,87 +83,8 @@ jobs:
           name: securebuild-app
           path: securebuild-app/securebuild-app.tar.gz
 
-  build-www:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: securebuild-www/package-lock.json
-
-      - name: Install dependencies
-        run: cd securebuild-www && npm ci
-
-      - name: Set VERSION in build-info
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          sed -i "s/VERSION: string = \"0.0.0\"/VERSION: string = \"$VERSION\"/" securebuild-www/lib/build-info.ts
-
-      - name: Build
-        run: cd securebuild-www && npm run build
-        env:
-          CI: true
-
-      - name: Package www bundle
-        run: |
-          cd securebuild-www
-          mkdir -p release
-          cp -r .next/standalone release/
-          mkdir -p release/.next
-          cp -r .next/static release/.next/
-          cp -r public release/
-          tar -czvf securebuild-www.tar.gz -C release .
-
-      - name: Upload www bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: securebuild-www
-          path: securebuild-www/securebuild-www.tar.gz
-
-  build-docs:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: securebuild-docs/package-lock.json
-
-      - name: Install dependencies
-        run: cd securebuild-docs && npm install --legacy-peer-deps
-
-      - name: Build
-        run: cd securebuild-docs && npm run build
-        env:
-          CI: true
-
-      - name: Package docs bundle
-        run: |
-          cd securebuild-docs
-          mkdir -p release
-          cp -r .next/standalone release/
-          mkdir -p release/.next
-          cp -r .next/static release/.next/
-          cp -r public release/
-          tar -czvf securebuild-docs.tar.gz -C release .
-
-      - name: Upload docs bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: securebuild-docs
-          path: securebuild-docs/securebuild-docs.tar.gz
-
   release:
-    needs: [build-worker, build-app, build-www, build-docs]
+    needs: [build-worker, build-app]
     runs-on: ubuntu-latest
     steps:
       - name: Download worker artifacts
@@ -181,25 +102,13 @@ jobs:
         with:
           name: securebuild-app
 
-      - name: Download www artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: securebuild-www
-
-      - name: Download docs artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: securebuild-docs
-
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
           # Worker binaries from matrix jobs (path: bin/... preserved when downloaded)
           mv bin/securebuild-worker-linux-amd64 bin/securebuild-worker-linux-arm64 release-assets/
-          # App/www/docs from download-artifact (merged into workspace root)
+          # App from download-artifact (merged into workspace root)
           mv securebuild-app.tar.gz release-assets/
-          mv securebuild-www.tar.gz release-assets/
-          mv securebuild-docs.tar.gz release-assets/
           ls -la release-assets/
 
       - name: Create Release

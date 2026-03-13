@@ -11,7 +11,6 @@ jobs:
     outputs:
       run-www: ${{ steps.check.outputs.run-www }}
       run-app: ${{ steps.check.outputs.run-app }}
-      run-docs: ${{ steps.check.outputs.run-docs }}
       run-go: ${{ steps.check.outputs.run-go }}
       run-all: ${{ steps.check.outputs.run-all }}
     steps:
@@ -92,42 +91,6 @@ jobs:
     - name: Build
       run: |
         cd securebuild-app
-        npm run build
-      env:
-        CI: true
-
-  securebuild-docs-build:
-    needs: check-changes
-    if: needs.check-changes.outputs.run-docs == 'true'
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v6
-      with:
-        node-version: '24'
-
-    - name: Cache Node.js modules
-      uses: actions/cache@v5
-      with:
-        path: |
-          ~/.npm
-          securebuild-docs/node_modules
-          securebuild-docs/.next/cache
-        key: ${{ runner.os }}-node-docs-${{ hashFiles('securebuild-docs/package-lock.json') }}
-        restore-keys: |
-          ${{ runner.os }}-node-docs-
-
-    - name: Install dependencies
-      run: |
-        cd securebuild-docs
-        npm install --legacy-peer-deps
-
-    - name: Build
-      run: |
-        cd securebuild-docs
         npm run build
       env:
         CI: true
