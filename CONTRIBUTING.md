@@ -1,22 +1,33 @@
 # Contributing to SecureBuild
 
-## Ways to contribute
+Thank you for your interest in contributing to SecureBuild! Please review our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 
-- **Bug reports and feature requests** – Open an [issue](https://github.com/securebuildhq/securebuild/issues).
-- **Code and documentation** – Open a pull request (see [Submitting changes](#submitting-changes) below).
+## Ways to Contribute
 
-## Development setup
+- **Bug reports and feature requests** — Open an [issue](https://github.com/securebuildhq/securebuild/issues).
+- **Security vulnerabilities** — See [SECURITY.md](SECURITY.md) for responsible disclosure.
+- **Code and documentation** — Open a pull request (see [Submitting Changes](#submitting-changes) below).
+
+## Development Setup
 
 The project uses a **Nix flake** for the development environment (Go, Node, SchemaHero, apko, melange, syft, Dagger, vunnel, etc.).
 
-1. **Enter the dev environment:**
-   - Run `nix develop`, or
-   - Use [direnv](https://direnv.net/) with `use flake` in `.envrc` so the environment loads automatically.
+### Prerequisites
 
-2. **See available targets:**
-   ```bash
-   make help
-   ```
+You need a **container runtime** for building and running images:
+- [Docker](https://docs.docker.com/get-docker/) or a Docker-compatible daemon (Docker Desktop, Colima/Lima on macOS)
+- [OrbStack](https://orbstack.dev/) — a lightweight Docker-compatible runtime, especially common on macOS
+
+### Enter the Dev Environment
+
+1. Run `nix develop`, or
+2. Use [direnv](https://direnv.net/) with `use flake` in `.envrc` so the environment loads automatically.
+
+### See Available Targets
+
+```bash
+make help
+```
 
 ### Go (worker, builder, proxies)
 
@@ -34,11 +45,20 @@ The project uses a **Nix flake** for the development environment (Go, Node, Sche
 
 ## Testing
 
-- **Unit tests (all):** `make test-unit` – runs Go unit tests plus securebuild-www and securebuild-app tests.
+- **Unit tests (all):** `make test-unit` — runs Go unit tests plus securebuild-www and securebuild-app tests.
 - **Go unit tests only:** `make test-unit-go`.
-- **Integration tests:**  
-  - `make test-integration-oci-proxy`  
-  - `make test-integration-apk-proxy`  
+- **Integration tests:**
+  - `make test-integration-oci-proxy`
+  - `make test-integration-apk-proxy`
   - `make test-integration-worker`
 
 CI runs tests on pull requests; run the relevant targets locally before submitting.
+
+## Submitting Changes
+
+1. Fork the repository and create a branch from `main`.
+2. Make your changes and add tests where applicable.
+3. Run the relevant test targets locally (see [Testing](#testing) above).
+4. Open a pull request against `main` with a clear description of the change and the problem it solves.
+
+For more details, see the [Development Setup](https://securebuild.com/docs/development) and [Contributing](https://securebuild.com/docs/contributing) pages in the documentation.
