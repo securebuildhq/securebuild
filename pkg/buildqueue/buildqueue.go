@@ -21,24 +21,29 @@ func ProcessRebuildChains(ctx context.Context) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
+	// Optimized: use NOT EXISTS for "no execution" (avoids large join) and a single
+	// CTE for latest execution per cause_id. EXPLAIN ANALYZE showed the previous
+	// inline ROW_NUMBER() subquery was executed ~14k times (once per candidate link),
+	// each doing a full execution scan+sort — moving it to a CTE runs it once.
+	// Index execution_cause_id_created_at_idx makes the CTE efficient.
 	query := `
+		WITH latest_execution AS (
+			SELECT DISTINCT ON (cause_id) cause_id, status
+			FROM execution
+			ORDER BY cause_id, created_at DESC
+		)
 		SELECT p.name, p.id, rcl.link_id, rc.chain_name
 		FROM rebuild_chain_link rcl
 		JOIN package p ON rcl.package_id = p.id
 		JOIN rebuild_chain rc ON rcl.rebuild_chain_id = rc.id
-		LEFT JOIN execution e ON rcl.link_id = e.cause_id
-		WHERE e.status IS NULL
+		WHERE NOT EXISTS (SELECT 1 FROM execution e WHERE e.cause_id = rcl.link_id)
 		AND NOT EXISTS (
 			SELECT 1
 			FROM rebuild_chain_dependency rcd
 			JOIN rebuild_chain_link dep_rcl ON rcd.dependency_id = dep_rcl.link_id
-			LEFT JOIN (
-				SELECT cause_id, status,
-					   ROW_NUMBER() OVER (PARTITION BY cause_id ORDER BY created_at DESC) as rn
-				FROM execution
-			) latest_dep_e ON dep_rcl.link_id = latest_dep_e.cause_id AND latest_dep_e.rn = 1
+			LEFT JOIN latest_execution le ON dep_rcl.link_id = le.cause_id
 			WHERE rcd.link_id = rcl.link_id
-			AND (latest_dep_e.status IS NULL OR latest_dep_e.status != 'success')
+			AND (le.status IS NULL OR le.status != 'success')
 		)
 	`
 
