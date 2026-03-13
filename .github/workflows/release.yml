@@ -105,9 +105,9 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          # Worker binaries from matrix jobs (path: bin/... preserved when downloaded)
-          mv bin/securebuild-worker-linux-amd64 bin/securebuild-worker-linux-arm64 release-assets/
-          # App from download-artifact (merged into workspace root)
+          # Worker binaries: upload-artifact stores single-file path as basename only, so they land at workspace root
+          mv securebuild-worker-linux-amd64 securebuild-worker-linux-arm64 release-assets/
+          # App from download-artifact (single file at workspace root)
           mv securebuild-app.tar.gz release-assets/
           ls -la release-assets/
 
