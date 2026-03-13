@@ -72,7 +72,7 @@ make test-integration-worker         # Worker integration tests
 
 ## Documentation
 
-Full documentation is available at **[securebuild.com/docs](https://securebuild.com/docs)**.
+Full documentation is available at **[securebuild.com/docs](https://www.securebuild.com/docs)**.
 
 ## Contributing
 
