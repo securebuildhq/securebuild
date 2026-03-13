@@ -61,4 +61,4 @@ CI runs tests on pull requests; run the relevant targets locally before submitti
 3. Run the relevant test targets locally (see [Testing](#testing) above).
 4. Open a pull request against `main` with a clear description of the change and the problem it solves.
 
-For more details, see the [Development Setup](https://securebuild.com/docs/development) and [Contributing](https://securebuild.com/docs/contributing) pages in the documentation.
+For more details, see the [Development Setup](https://www.securebuild.com/docs/development) and [Contributing](https://www.securebuild.com/docs/contributing) pages in the documentation.
