@@ -349,7 +349,7 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 
 		// Queue build_image_with_vm_assigned events for images that depend on this package
 		if err := queueBuildApkoEventsForPackage(ctx, pkgVersion.PackageID, pkgVersion.Version); err != nil {
-			logger.Warn("failed to queue build_image_with_vm_assigned events for dependent images",
+			logger.Error(fmt.Errorf("failed to queue build_image_with_vm_assigned events for dependent images: %w", err),
 				zap.String("packageID", pkgVersion.PackageID),
 				zap.Error(err))
 		}
@@ -619,7 +619,8 @@ func readRemoteFileContent(client *ssh.Client, filePath string) (string, error) 
 	return string(output), nil
 }
 
-// queueBuildApkoEventsForPackage creates build_image_with_vm_assigned events for APKOs that depend on the given package
+// queueBuildApkoEventsForPackage enqueues build_apko events for APKOs that depend on the given package.
+// VM assignment and image build creation happen asynchronously in the build_apko handler, so the status checker is not blocked.
 func queueBuildApkoEventsForPackage(ctx context.Context, packageID string, version string) error {
 	// Get the package info for logging
 	pkg, err := sbpackage.GetPackage(ctx, packageID)
@@ -644,115 +645,37 @@ func queueBuildApkoEventsForPackage(ctx context.Context, packageID string, versi
 		zap.Int("apkoCount", len(apkoIDs)),
 		zap.Strings("apkoIDs", apkoIDs))
 
-	// Queue a build_image_with_vm_assigned event for each dependent APKO
 	for _, apkoID := range apkoIDs {
-		// Get the latest APKO version directly
-		latestApkoVersion, err := image.GetLatestImageAPKOVersion(ctx, apkoID)
+		// Get image ID for this APKO (build_apko handler expects imageId + apkoId)
+		_, imageID, err := image.GetAPKO(ctx, apkoID)
 		if err != nil {
-			logger.Warn("failed to get latest APKO version",
+			logger.Warn("failed to get APKO for dependent image build",
 				zap.String("apkoID", apkoID),
 				zap.Error(err))
 			continue
 		}
 
-		imageBuild, err := image.CreateImageBuild(ctx, latestApkoVersion.ID)
-		if err != nil {
-			logger.Warn("failed to create image build",
-				zap.String("apkoID", apkoID),
-				zap.Error(err))
-			continue
+		payload := BuildAPKOPayload{
+			ImageID: imageID,
+			APKOID:  apkoID,
 		}
-
-		// Update build status to queued
-		if err := image.UpdateImageBuildStatus(ctx, imageBuild.ID, imagetypes.ImageBuildStatusQueued); err != nil {
-			logger.Warn("failed to update image build status to queued", zap.Error(err))
-		}
-
-		// Assign VM for image building (selects best available architecture)
-		logger.Debug("assigning VM for image build",
-			zap.String("buildID", imageBuild.ID),
-			zap.Duration("timeout", time.Minute*10),
-		)
-
-		// Create a context with timeout
-		timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute*10)
-		defer cancel()
-
-		// Select the best architecture based on available VM counts
-		selectedArch, err := builder.SelectBestArchitectureForImageBuild(ctx)
-		if err != nil {
-			logger.Warn("IMAGE BUILD FAILED: architecture selection failure",
-				zap.String("buildID", imageBuild.ID),
-				zap.String("apkoID", apkoID),
-				zap.Error(fmt.Errorf("failed to select architecture for image build: %w", err)))
-
-			// Mark build as failed
-			if statusErr := image.UpdateImageBuildStatus(ctx, imageBuild.ID, imagetypes.ImageBuildStatusFailed, fmt.Errorf("architecture selection failure: %w", err)); statusErr != nil {
-				logger.Warn("failed to update image build status to failed", zap.Error(statusErr))
-			}
-			continue
-		}
-
-		logger.Debug("selected architecture for image build",
-			zap.String("buildID", imageBuild.ID),
-			zap.String("apkoID", apkoID),
-			zap.String("architecture", selectedArch))
-
-		// Take VM with selected architecture for image building (can build both architectures)
-		vm, err := builder.TakeVMWithAssignment(timeoutCtx, selectedArch, "build_image", imageBuild.ID)
-		if err != nil {
-			logger.Warn("IMAGE BUILD FAILED: VM assignment failure - could not assign VM for image build",
-				zap.String("buildID", imageBuild.ID),
-				zap.String("apkoID", apkoID),
-				zap.String("architecture", selectedArch),
-				zap.Error(fmt.Errorf("failed to take %s VM for image build: %w", selectedArch, err)))
-
-			// Mark build as failed
-			if statusErr := image.UpdateImageBuildStatus(ctx, imageBuild.ID, imagetypes.ImageBuildStatusFailed, fmt.Errorf("VM assignment failure: %w", err)); statusErr != nil {
-				logger.Warn("failed to update image build status to failed", zap.Error(statusErr))
-			}
-			continue
-		}
-
-		vmID := vm.ID
-
-		// Update build record with VM ID
-		if err := image.SetImageBuildBuilderID(ctx, imageBuild.ID, vmID); err != nil {
-			logger.Warn("failed to set image build builder ID", zap.Error(err))
-		}
-
-		// Create payload for build_image_with_vm_assigned event
-		payload := BuildImageWithVMAssignedPayload{
-			VMID:    vmID,
-			BuildID: imageBuild.ID,
-		}
-
 		payloadJSON, err := json.Marshal(payload)
 		if err != nil {
-			logger.Warn("failed to marshal build_image_with_vm_assigned payload",
+			logger.Warn("failed to marshal build_apko payload",
 				zap.String("apkoID", apkoID),
 				zap.Error(err))
-
-			// Mark build as failed
-			if statusErr := image.UpdateImageBuildStatus(ctx, imageBuild.ID, imagetypes.ImageBuildStatusFailed, fmt.Errorf("JSON marshalling failure: %w", err)); statusErr != nil {
-				logger.Warn("failed to update image build status to failed", zap.Error(statusErr))
-			}
 			continue
 		}
 
-		if err := persistence.EnqueueWork(ctx, "build_image_with_vm_assigned", string(payloadJSON)); err != nil {
-			logger.Warn("failed to enqueue build_image_with_vm_assigned event",
+		if err := persistence.EnqueueWork(ctx, "build_apko", string(payloadJSON)); err != nil {
+			logger.Warn("failed to enqueue build_apko event",
+				zap.String("packageID", packageID),
 				zap.String("apkoID", apkoID),
 				zap.Error(err))
-
-			// Mark build as failed
-			if statusErr := image.UpdateImageBuildStatus(ctx, imageBuild.ID, imagetypes.ImageBuildStatusFailed, fmt.Errorf("work queue enqueue failure: %w", err)); statusErr != nil {
-				logger.Warn("failed to update image build status to failed", zap.Error(statusErr))
-			}
 			continue
 		}
 
-		logger.Info("queued build_image_with_vm_assigned event for dependent APKO",
+		logger.Info("queued build_apko event for dependent APKO",
 			zap.String("packageID", packageID),
 			zap.String("apkoID", apkoID))
 	}
