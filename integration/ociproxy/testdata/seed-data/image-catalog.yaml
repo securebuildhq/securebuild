@@ -20,12 +20,6 @@ seedData:
         - column: updated_at
           value:
             str: "2025-01-01T00:00:00Z"
-        - column: sbom_x86
-          value:
-            str: "{}"
-        - column: sbom_aarch64
-          value:
-            str: "{}"
         - column: image_id
           value:
             str: "test-image-oci"
