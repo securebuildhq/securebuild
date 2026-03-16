@@ -35,12 +35,6 @@ schema:
         type: timestamp with time zone
         constraints:
           notNull: true
-      - name: sbom_x86
-        type: text
-        default: ""
-      - name: sbom_aarch64
-        type: text
-        default: ""
       - name: image_id
         type: text
         constraints:
