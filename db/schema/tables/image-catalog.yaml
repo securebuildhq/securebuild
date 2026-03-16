@@ -37,12 +37,10 @@ schema:
           notNull: true
       - name: sbom_x86
         type: text
-        constraints:
-          notNull: true
+        default: ""
       - name: sbom_aarch64
         type: text
-        constraints:
-          notNull: true
+        default: ""
       - name: image_id
         type: text
         constraints:

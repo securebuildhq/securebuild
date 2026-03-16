@@ -36,7 +36,6 @@ type ImageCatalogItem struct {
 	Tag         string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
-	SBOM        string
 	IsPublished bool
 	IndexDigest string
 	APKOId      string
