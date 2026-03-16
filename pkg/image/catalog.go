@@ -20,19 +20,13 @@ func GetImageCatalogItem(ctx context.Context, id string) (*types.ImageCatalogIte
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `select id, name, tag, created_at, updated_at, sbom_x86, is_published, index_digest, apko_id from image_catalog where id = $1`
+	query := `select id, name, tag, created_at, updated_at, is_published, index_digest, apko_id from image_catalog where id = $1`
 	row := conn.QueryRow(ctx, query, id)
 
 	var imageCatalogItem types.ImageCatalogItem
-	var sbom sql.NullString
 	var indexDigest sql.NullString
-	if err := row.Scan(&imageCatalogItem.ID, &imageCatalogItem.Name, &imageCatalogItem.Tag, &imageCatalogItem.CreatedAt, &imageCatalogItem.UpdatedAt, &sbom, &imageCatalogItem.IsPublished, &indexDigest, &imageCatalogItem.APKOId); err != nil {
+	if err := row.Scan(&imageCatalogItem.ID, &imageCatalogItem.Name, &imageCatalogItem.Tag, &imageCatalogItem.CreatedAt, &imageCatalogItem.UpdatedAt, &imageCatalogItem.IsPublished, &indexDigest, &imageCatalogItem.APKOId); err != nil {
 		return nil, err
-	}
-	if sbom.Valid {
-		imageCatalogItem.SBOM = sbom.String
-	} else {
-		imageCatalogItem.SBOM = ""
 	}
 	if indexDigest.Valid {
 		imageCatalogItem.IndexDigest = indexDigest.String
@@ -61,7 +55,7 @@ func GetImageCatalogID(ctx context.Context, imageName string, tag string) (strin
 	return id, nil
 }
 
-func CreateCatalogImage(ctx context.Context, name string, tag string, sbomX86 string, sbomAarch64 string, imageID string, apkoID string, apkoVersionID string,
+func CreateCatalogImage(ctx context.Context, name string, tag string, imageID string, apkoID string, apkoVersionID string,
 	sizeX86 int64, sizeAarch64 int64, digestX86 string, digestAarch64 string, indexDigest string,
 	scanAt time.Time, scanResultX86 string, scanResultAarch64 string,
 	customScanResultX86 string, customScanResultAarch64 string,
@@ -90,7 +84,6 @@ func CreateCatalogImage(ctx context.Context, name string, tag string, sbomX86 st
 	query := `
 		INSERT INTO image_catalog (
 			id, name, tag, created_at, updated_at,
-			sbom_x86, sbom_aarch64,
 			image_id, apko_id, apko_version_id,
 			is_published,
 			size_x86, size_aarch64,
@@ -103,31 +96,29 @@ func CreateCatalogImage(ctx context.Context, name string, tag string, sbomX86 st
 			readme
 		) VALUES (
 			$1, $2, $3, now(), now(),
-			$4, $5,
-			$6, $7, $8,
+			$4, $5, $6,
 			false,
-			$9, $10,
-			$11, $12, $13,
-			$14, $15, $16,
-			$17, $18,
-			$19,
+			$7, $8,
+			$9, $10, $11,
+			$12, $13, $14,
+			$15, $16,
+			$17,
+			$18, $19,
 			$20, $21,
-			$22, $23,
-			$24
+			$22
 		)`
 
 	_, err = conn.Exec(ctx, query,
 		id, name, tag, // $1, $2, $3
-		sbomX86, sbomAarch64, // $4, $5
-		imageID, apkoID, apkoVersionID, // $6, $7, $8
-		sizeX86, sizeAarch64, // $9, $10
-		digestX86, digestAarch64, indexDigest, // $11, $12, $13
-		scanAt, scanResultX86, scanResultAarch64, // $14, $15, $16
-		customScanResultX86, customScanResultAarch64, // $17, $18
-		scanAt.Add(4*time.Hour),                            // $19
-		alternateScanResultX86, alternateScanResultAarch64, // $20, $21
-		fixedCVECountX86, fixedCVECountAarch64, // $22, $23
-		readme, // $24
+		imageID, apkoID, apkoVersionID, // $4, $5, $6
+		sizeX86, sizeAarch64, // $7, $8
+		digestX86, digestAarch64, indexDigest, // $9, $10, $11
+		scanAt, scanResultX86, scanResultAarch64, // $12, $13, $14
+		customScanResultX86, customScanResultAarch64, // $15, $16
+		scanAt.Add(4*time.Hour),                            // $17
+		alternateScanResultX86, alternateScanResultAarch64, // $18, $19
+		fixedCVECountX86, fixedCVECountAarch64, // $20, $21
+		readme, // $22
 	)
 	if err != nil {
 		return "", err
@@ -276,7 +267,7 @@ func PublishCatalogImage(ctx context.Context, name string, ids []string, apkoID 
 // getPreviouslyPublishedImages returns a map of tag -> catalog item for all currently published catalog items of the given image and APKO
 func getPreviouslyPublishedImages(ctx context.Context, tx pgx.Tx, imageName string, apkoID string) (map[string]*types.ImageCatalogItem, error) {
 	query := `
-		SELECT id, name, tag, created_at, updated_at, sbom_x86, is_published, index_digest, apko_id
+		SELECT id, name, tag, created_at, updated_at, is_published, index_digest, apko_id
 		FROM image_catalog
 		WHERE name = $1 AND apko_id = $2 AND is_published = true`
 
@@ -289,18 +280,14 @@ func getPreviouslyPublishedImages(ctx context.Context, tx pgx.Tx, imageName stri
 	publishedItems := make(map[string]*types.ImageCatalogItem)
 	for rows.Next() {
 		var item types.ImageCatalogItem
-		var sbom sql.NullString
 		var indexDigest sql.NullString
 
 		err := rows.Scan(&item.ID, &item.Name, &item.Tag, &item.CreatedAt,
-			&item.UpdatedAt, &sbom, &item.IsPublished, &indexDigest, &item.APKOId)
+			&item.UpdatedAt, &item.IsPublished, &indexDigest, &item.APKOId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan previously published catalog item: %w", err)
 		}
 
-		if sbom.Valid {
-			item.SBOM = sbom.String
-		}
 		if indexDigest.Valid {
 			item.IndexDigest = indexDigest.String
 		}

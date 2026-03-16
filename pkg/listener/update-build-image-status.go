@@ -321,17 +321,6 @@ func processImageBuildResults(ctx context.Context, buildID string, tmpDir string
 		actualTags = append(actualTags, actualTag)
 	}
 
-	// Read the attributed SBOMs from VM download
-	sbomX86, err := readAttributedSBOMFromDownload(tmpDir, "x86_64")
-	if err != nil {
-		return fmt.Errorf("failed to read attributed x86_64 SBOM: %w", err)
-	}
-
-	sbomAarch64, err := readAttributedSBOMFromDownload(tmpDir, "aarch64")
-	if err != nil {
-		return fmt.Errorf("failed to read attributed aarch64 SBOM: %w", err)
-	}
-
 	// Read VM-generated SBOMs and scan them with Grype
 	scanResults, err := readVMScanResults(ctx, tmpDir)
 	if err != nil {
@@ -365,7 +354,7 @@ func processImageBuildResults(ctx context.Context, buildID string, tmpDir string
 	for _, actualTag := range actualTags {
 		// Pass STANDARD database scan results (includes SecureOS provider) for WWW display
 		// and CUSTOM database scan results (without SecureOS provider) for record-keeping
-		imageCatalogID, err := processImageTag(ctx, img, apko, actualTag, ociPathWithoutTag, sbomX86, sbomAarch64, scanAt,
+		imageCatalogID, err := processImageTag(ctx, img, apko, actualTag, ociPathWithoutTag, scanAt,
 			scanResults.GrypeScanStandardX86, scanResults.GrypeScanStandardAarch64,
 			scanResults.GrypeScanCustomX86, scanResults.GrypeScanCustomAarch64,
 			scanResults.AlternateScanX86, scanResults.AlternateScanAarch64,
@@ -428,24 +417,6 @@ func processImageBuildResults(ctx context.Context, buildID string, tmpDir string
 	}
 
 	return nil
-}
-
-// readAttributedSBOMFromDownload reads the attributed SBOM for a specific architecture from the downloaded VM files
-func readAttributedSBOMFromDownload(tmpDir, arch string) ([]byte, error) {
-	// First try to read the attributed SBOM (with SecureBuild attribution)
-	attributedSBOMPath := filepath.Join(tmpDir, fmt.Sprintf("sbom-%s-with-securebuild.spdx.json", arch))
-	if data, err := os.ReadFile(attributedSBOMPath); err == nil {
-		return data, nil
-	}
-
-	// If attributed SBOM doesn't exist, fall back to original SBOM
-	originalSBOMPath := filepath.Join(tmpDir, fmt.Sprintf("sbom-%s.spdx.json", arch))
-	data, err := os.ReadFile(originalSBOMPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read SBOM file (tried both %s and %s): %w", attributedSBOMPath, originalSBOMPath, err)
-	}
-
-	return data, nil
 }
 
 // captureBuilderLogs captures stdout and stderr from build log files on the VM
@@ -577,7 +548,7 @@ func captureLogFile(ctx context.Context, client *ssh.Client, buildID, process, l
 }
 
 // processImageTag processes a single image tag and creates catalog entries
-func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetypes.ImageAPKO, actualTag string, ociPathWithoutTag string, sbomX86, sbomAarch64 []byte, scanAt time.Time, scanResultX86Raw, scanResultAarch64Raw, customScanResultX86Raw, customScanResultAarch64Raw, alternateScanResultX86Raw, alternateScanResultAarch64Raw string, readme *string, tmpDir string) (string, error) {
+func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetypes.ImageAPKO, actualTag string, ociPathWithoutTag string, scanAt time.Time, scanResultX86Raw, scanResultAarch64Raw, customScanResultX86Raw, customScanResultAarch64Raw, alternateScanResultX86Raw, alternateScanResultAarch64Raw string, readme *string, tmpDir string) (string, error) {
 	// ----------------------------------------------------
 	// Resolve digest for the just-pushed image tag FIRST
 	// ----------------------------------------------------
@@ -604,7 +575,7 @@ func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetype
 	// ----------------------------------------------
 
 	imageCatalogID, err := image.CreateCatalogImage(ctx,
-		img.Name, actualTag, string(sbomX86), string(sbomAarch64), img.ID, apko.ID, apko.LatestVersion.ID,
+		img.Name, actualTag, img.ID, apko.ID, apko.LatestVersion.ID,
 		0, 0, "", "", digest, // include index digest
 		scanAt, scanResultX86Raw, scanResultAarch64Raw,
 		customScanResultX86Raw, customScanResultAarch64Raw,
