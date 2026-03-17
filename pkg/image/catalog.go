@@ -56,23 +56,12 @@ func GetImageCatalogID(ctx context.Context, imageName string, tag string) (strin
 }
 
 func CreateCatalogImage(ctx context.Context, name string, tag string, imageID string, apkoID string, apkoVersionID string,
-	sizeX86 int64, sizeAarch64 int64, digestX86 string, digestAarch64 string, indexDigest string,
+	digestX86 string, digestAarch64 string, indexDigest string,
 	scanAt time.Time, scanResultX86 string, scanResultAarch64 string,
-	customScanResultX86 string, customScanResultAarch64 string,
 	alternateScanResultX86 string, alternateScanResultAarch64 string,
-	readme *string,
 ) (string, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
-
-	fixedCVECountX86, err := CountFixedCVEs(ctx, scanResultX86, alternateScanResultX86)
-	if err != nil {
-		return "", err
-	}
-	fixedCVECountAarch64, err := CountFixedCVEs(ctx, scanResultAarch64, alternateScanResultAarch64)
-	if err != nil {
-		return "", err
-	}
 
 	id, err := securerandom.Hex(24)
 	if err != nil {
@@ -86,39 +75,27 @@ func CreateCatalogImage(ctx context.Context, name string, tag string, imageID st
 			id, name, tag, created_at, updated_at,
 			image_id, apko_id, apko_version_id,
 			is_published,
-			size_x86, size_aarch64,
 			digest_x86, digest_aarch64, index_digest,
 			last_scanned_at, last_scan_result_x86, last_scan_result_aarch64,
-			last_scan_result_custom_x86, last_scan_result_custom_aarch64,
 			next_scan_at,
-			last_scan_result_alternate_x86, last_scan_result_alternate_aarch64,
-			fixed_cve_count_x86, fixed_cve_count_aarch64,
-			readme
+			last_scan_result_alternate_x86, last_scan_result_alternate_aarch64
 		) VALUES (
 			$1, $2, $3, now(), now(),
 			$4, $5, $6,
 			false,
-			$7, $8,
-			$9, $10, $11,
-			$12, $13, $14,
-			$15, $16,
-			$17,
-			$18, $19,
-			$20, $21,
-			$22
+			$7, $8, $9,
+			$10, $11, $12,
+			$13,
+			$14, $15
 		)`
 
 	_, err = conn.Exec(ctx, query,
 		id, name, tag, // $1, $2, $3
 		imageID, apkoID, apkoVersionID, // $4, $5, $6
-		sizeX86, sizeAarch64, // $7, $8
-		digestX86, digestAarch64, indexDigest, // $9, $10, $11
-		scanAt, scanResultX86, scanResultAarch64, // $12, $13, $14
-		customScanResultX86, customScanResultAarch64, // $15, $16
-		scanAt.Add(4*time.Hour),                            // $17
-		alternateScanResultX86, alternateScanResultAarch64, // $18, $19
-		fixedCVECountX86, fixedCVECountAarch64, // $20, $21
-		readme, // $22
+		digestX86, digestAarch64, indexDigest, // $7, $8, $9
+		scanAt, scanResultX86, scanResultAarch64, // $10, $11, $12
+		scanAt.Add(4*time.Hour),                            // $13
+		alternateScanResultX86, alternateScanResultAarch64, // $14, $15
 	)
 	if err != nil {
 		return "", err

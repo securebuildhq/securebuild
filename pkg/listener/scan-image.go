@@ -94,11 +94,7 @@ func handleScanImage(ctx context.Context, payload string) error {
 					"x86_64":  scanResultX86Raw,
 					"aarch64": scanResultAarch64Raw,
 				}
-				customResults := map[string]string{
-					"x86_64":  results.GrypeScanCustomX86,
-					"aarch64": results.GrypeScanCustomAarch64,
-				}
-				if err := updateCatalogScanResults(ctx, imageCatalogID, standardResults, customResults); err != nil {
+				if err := updateCatalogScanResults(ctx, imageCatalogID, standardResults); err != nil {
 					logger.Warn("failed to update catalog scan results",
 						zap.String("catalogImageID", imageCatalogID),
 						zap.Error(err))
