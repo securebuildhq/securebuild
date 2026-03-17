@@ -56,5 +56,3 @@ schema:
         type: text
       - name: custom_disk_size
         type: integer
-      - name: last_scanned_for_cves
-        type: timestamp with time zone
