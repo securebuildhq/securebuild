@@ -33,6 +33,18 @@ type BuilderVM struct {
 	IsOnDemand       bool   `json:"is_on_demand"`
 	AssignedTaskType string `json:"assigned_task_type"`
 	AssignedTaskID   string `json:"assigned_task_id"`
+
+	// Type is the build backend type: "local", "static", or "cmx"
+	Type string `json:"type"`
+}
+
+// MachineAssignment represents a row in the machine_assignment table.
+type MachineAssignment struct {
+	MachineID        string    `json:"machine_id"`
+	AssignedTaskType string    `json:"assigned_task_type"`
+	AssignedTaskID   string    `json:"assigned_task_id"`
+	WorkDir          string    `json:"work_dir"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type MachinePoolHistory struct {

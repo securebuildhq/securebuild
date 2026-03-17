@@ -2,13 +2,13 @@ package listener
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -17,9 +17,9 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/securebuildhq/securebuild/builder-cmd/cli"
+	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/builder"
-	buildertypes "github.com/securebuildhq/securebuild/pkg/builder/types"
-	"github.com/securebuildhq/securebuild/pkg/image"
+	imagepkg "github.com/securebuildhq/securebuild/pkg/image"
 	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/oci"
@@ -27,7 +27,6 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/pipeline"
 	"github.com/securebuildhq/securebuild/pkg/scan"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
 )
 
@@ -52,11 +51,11 @@ func HandleBuildImageWithVMAssigned(ctx context.Context, payload string) error {
 				zap.Error(err))
 
 			// Mark the image build as failed
-			if statusErr := image.UpdateImageBuildStatus(ctx, p.BuildID, imagetypes.ImageBuildStatusFailed,
+			if statusErr := imagepkg.UpdateImageBuildStatus(ctx, p.BuildID, imagetypes.ImageBuildStatusFailed,
 				fmt.Errorf("VM %s no longer exists", p.VMID)); statusErr != nil {
 				logger.Warn("failed to update image build status to failed", zap.Error(statusErr))
 			}
-			if finishedErr := image.SetImageBuildFinishedAt(ctx, p.BuildID); finishedErr != nil {
+			if finishedErr := imagepkg.SetImageBuildFinishedAt(ctx, p.BuildID); finishedErr != nil {
 				logger.Warn("failed to set image build finished timestamp", zap.Error(finishedErr))
 			}
 
@@ -67,34 +66,34 @@ func HandleBuildImageWithVMAssigned(ctx context.Context, payload string) error {
 	}
 
 	// Get the image build record to get the image APKO version ID
-	imageBuild, err := image.GetImageBuildByID(ctx, p.BuildID)
+	imageBuild, err := imagepkg.GetImageBuildByID(ctx, p.BuildID)
 	if err != nil {
 		return fmt.Errorf("failed to get image build: %w", err)
 	}
 
 	// Get the image APKO version to find the associated image and APKO
-	apkoVersion, err := image.GetImageApkoVersion(ctx, imageBuild.ImageApkoVersionID)
+	apkoVersion, err := imagepkg.GetImageApkoVersion(ctx, imageBuild.ImageApkoVersionID)
 	if err != nil {
 		return fmt.Errorf("failed to get image APKO version: %w", err)
 	}
 
 	// Get the APKO and image ID
-	apko, imageID, err := image.GetAPKO(ctx, apkoVersion.ImageApkoID)
+	apko, imageID, err := imagepkg.GetAPKO(ctx, apkoVersion.ImageApkoID)
 	if err != nil {
 		return fmt.Errorf("failed to get APKO: %w", err)
 	}
 
 	// Get the image to get the name
-	img, err := image.GetImage(ctx, imageID)
+	img, err := imagepkg.GetImage(ctx, imageID)
 	if err != nil {
 		return fmt.Errorf("failed to get image: %w", err)
 	}
 
 	// Update build status to building and set start time
-	if err := image.UpdateImageBuildStatus(ctx, p.BuildID, imagetypes.ImageBuildStatusBuilding); err != nil {
+	if err := imagepkg.UpdateImageBuildStatus(ctx, p.BuildID, imagetypes.ImageBuildStatusBuilding); err != nil {
 		logger.Warn("failed to update image build status to building", zap.Error(err))
 	}
-	if err := image.SetImageBuildStartedAt(ctx, p.BuildID); err != nil {
+	if err := imagepkg.SetImageBuildStartedAt(ctx, p.BuildID); err != nil {
 		logger.Warn("failed to set image build started timestamp", zap.Error(err))
 	}
 
@@ -104,7 +103,7 @@ func HandleBuildImageWithVMAssigned(ctx context.Context, payload string) error {
 		zap.String("vmID", p.VMID))
 
 	// Start background build job for the specific APKO version
-	err = buildAndPushAPKOWithVM(ctx, img, apko.ID, apkoVersion.ID, apko.Tags, apkoVersion.APKOYAML, p.VMID)
+	err = buildAndPushAPKOWithVM(ctx, img, p.BuildID, apko.ID, apkoVersion.ID, apko.Tags, apkoVersion.APKOYAML, p.VMID, p.WorkDir)
 	if err != nil {
 		logger.Warn("IMAGE BUILD FAILED: buildAndPushAPKOWithVM failed",
 			zap.String("buildID", p.BuildID),
@@ -112,10 +111,10 @@ func HandleBuildImageWithVMAssigned(ctx context.Context, payload string) error {
 			zap.Error(err))
 
 		// Mark build as failed and set finished time with error details
-		if statusErr := image.UpdateImageBuildStatus(ctx, p.BuildID, imagetypes.ImageBuildStatusFailed, err); statusErr != nil {
+		if statusErr := imagepkg.UpdateImageBuildStatus(ctx, p.BuildID, imagetypes.ImageBuildStatusFailed, err); statusErr != nil {
 			logger.Warn("failed to update image build status to failed", zap.Error(statusErr))
 		}
-		if finishedErr := image.SetImageBuildFinishedAt(ctx, p.BuildID); finishedErr != nil {
+		if finishedErr := imagepkg.SetImageBuildFinishedAt(ctx, p.BuildID); finishedErr != nil {
 			logger.Warn("failed to set image build finished timestamp", zap.Error(finishedErr))
 		}
 
@@ -179,11 +178,11 @@ type VMScanResults struct {
 func readVMScanResults(ctx context.Context, tmpDir string) (*VMScanResults, error) {
 	results := &VMScanResults{}
 
-	// Read x86_64 SBOM (required)
+	// Read x86_64 SBOM (required). Files are expected to have been downloaded from the VM into tmpDir.
 	x86SBOMPath := filepath.Join(tmpDir, "syft-sbom-x86_64.json")
 	sbomX86Raw, err := os.ReadFile(x86SBOMPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read x86_64 SBOM: %w", err)
+		return nil, fmt.Errorf("failed to read x86_64 SBOM at %s (download from VM may have failed or builder did not write it): %w", x86SBOMPath, err)
 	}
 	results.SyftSBOMX86 = string(sbomX86Raw)
 
@@ -191,7 +190,7 @@ func readVMScanResults(ctx context.Context, tmpDir string) (*VMScanResults, erro
 	aarch64SBOMPath := filepath.Join(tmpDir, "syft-sbom-aarch64.json")
 	sbomAarch64Raw, err := os.ReadFile(aarch64SBOMPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read aarch64 SBOM: %w", err)
+		return nil, fmt.Errorf("failed to read aarch64 SBOM at %s (download from VM may have failed or builder did not write it): %w", aarch64SBOMPath, err)
 	}
 	results.SyftSBOMAarch64 = string(sbomAarch64Raw)
 
@@ -246,20 +245,21 @@ func readVMScanResults(ctx context.Context, tmpDir string) (*VMScanResults, erro
 	return results, nil
 }
 
-// buildAndPushAPKOWithVM starts a background build job on the VM for the given APKO configuration
-func buildAndPushAPKOWithVM(ctx context.Context, img *imagetypes.Image, apkoID string, apkoVersionID string, apkoTags []string, apkoYAML, vmID string) error {
+// buildAndPushAPKOWithVM starts a background build job on the VM for the given APKO configuration.
+// buildID is the image build record ID; it is used to look up the machine assignment (work dir) when workDir is empty.
+func buildAndPushAPKOWithVM(ctx context.Context, img *imagetypes.Image, buildID string, apkoID string, apkoVersionID string, apkoTags []string, apkoYAML, vmID, workDir string) error {
 	logger.Debug("Building APKO with VM",
 		zap.String("imageID", img.ID),
 		zap.String("apkoID", apkoID),
 		zap.String("vmID", vmID))
 
 	// Get packages for APKO (same as original)
-	packages, err := image.GetAPKOOperations().ListPackages(ctx, apkoYAML)
+	packages, err := imagepkg.GetAPKOOperations().ListPackages(ctx, apkoYAML)
 	if err != nil {
 		return fmt.Errorf("failed to list packages for apko: %w", err)
 	}
 
-	if err := image.StoreImagePackages(ctx, img.ID, apkoID, packages); err != nil {
+	if err := imagepkg.StoreImagePackages(ctx, img.ID, apkoID, packages); err != nil {
 		return fmt.Errorf("failed to store image packages: %w", err)
 	}
 
@@ -282,7 +282,7 @@ func buildAndPushAPKOWithVM(ctx context.Context, img *imagetypes.Image, apkoID s
 
 	// Build and push the image on VM - this starts a background job
 	ociPathWithoutTag := fmt.Sprintf("%s/%s/%s", param.GetParam(ctx).ReplicatedRegistryHost, param.GetParam(ctx).ReplicatedAppSlug, img.Name)
-	if err := buildAndPushImageOnVM(ctx, vmID, img.Name, img, apkoID, apkoVersionID, apkoYAML, tmpDir, ociPathWithoutTag, actualTags); err != nil {
+	if err := buildAndPushImageOnVM(ctx, vmID, img.Name, img, buildID, apkoID, apkoVersionID, apkoYAML, tmpDir, ociPathWithoutTag, actualTags, workDir); err != nil {
 		return fmt.Errorf("failed to build and push image on VM: %w", err)
 	}
 
@@ -297,7 +297,7 @@ func buildAndPushAPKOWithVM(ctx context.Context, img *imagetypes.Image, apkoID s
 	return nil
 }
 
-func buildAndPushImageOnVM(ctx context.Context, vmID string, imageName string, img *imagetypes.Image, apkoID string, apkoVersionID string, apkoYAML, hostTmpDir string, ociPathWithoutTag string, actualTags []string) error {
+func buildAndPushImageOnVM(ctx context.Context, vmID string, imageName string, img *imagetypes.Image, buildID string, apkoID string, apkoVersionID string, apkoYAML, hostTmpDir string, ociPathWithoutTag string, actualTags []string, payloadWorkDir string) error {
 	logger.Debug("Building and pushing image on VM", zap.String("vmID", vmID), zap.String("apkoID", apkoID))
 
 	// Get VM connection
@@ -306,35 +306,50 @@ func buildAndPushImageOnVM(ctx context.Context, vmID string, imageName string, i
 		return fmt.Errorf("failed to get VM: %w", err)
 	}
 
-	client, err := getSSHClientForVM(ctx, vm)
+	runner, err := buildbackend.NewRunner(ctx, vm)
 	if err != nil {
-		return fmt.Errorf("failed to get SSH client: %w", err)
+		return fmt.Errorf("failed to create runner: %w", err)
 	}
-	defer client.Close()
+	defer runner.Close()
 
-	// Create working directory on VM
-	vmWorkDir := fmt.Sprintf("/home/builder/image-build-%s", apkoID)
-	if err := createWorkingDirectory(ctx, client, vm.ID, vmWorkDir); err != nil {
+	// Resolve work directory. Machine assignment is keyed by buildID (assigned_task_id = image build record ID).
+	vmWorkDir := payloadWorkDir
+	if vmWorkDir == "" {
+		wd, err := builder.GetWorkDirForTask(ctx, "build_image", buildID, vm.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get work dir for image build %s: %w", buildID, err)
+		}
+		vmWorkDir = wd
+	}
+
+	// Create working directory
+	if err := runner.MkdirAll(vmWorkDir); err != nil {
 		return fmt.Errorf("failed to create working directory: %w", err)
 	}
 
-	// Copy all pipeline types to VM (both package and image pipelines)
-	if err := pipeline.CopyAllPipelinesToVM(ctx, client, &vm); err != nil {
-		return fmt.Errorf("failed to copy pipelines to VM: %w", err)
+	// Copy all pipeline types (both package and image pipelines)
+	if sshRunner, ok := runner.(*buildbackend.SSHRunner); ok {
+		if err := pipeline.CopyAllPipelinesToVM(ctx, sshRunner.SSHClient(), &vm, vmWorkDir); err != nil {
+			return fmt.Errorf("failed to copy pipelines to VM: %w", err)
+		}
+	} else {
+		if err := pipeline.CopyAllPipelinesLocal(ctx, vmWorkDir); err != nil {
+			return fmt.Errorf("failed to copy pipelines locally: %w", err)
+		}
 	}
 
-	// Write APKO YAML to VM
-	if err := writeAPKOYAML(client, vm.ID, vmWorkDir, apkoYAML); err != nil {
+	// Write APKO YAML
+	if err := runner.WriteFile(filepath.Join(vmWorkDir, "apko.yaml"), apkoYAML); err != nil {
 		return fmt.Errorf("failed to write APKO YAML: %w", err)
 	}
 
-	// Get test YAML and write to VM if it exists
-	testYAML, err := image.GetImageTest(ctx, apkoID, apkoVersionID)
+	// Get test YAML and write if it exists
+	testYAML, err := imagepkg.GetImageTest(ctx, apkoID, apkoVersionID)
 	if err != nil {
 		return fmt.Errorf("failed to get image test: %w", err)
 	}
 	if testYAML != "" {
-		if err := writeImageTestYAML(client, vm.ID, vmWorkDir, testYAML); err != nil {
+		if err := runner.WriteFile(filepath.Join(vmWorkDir, "apko.test.yaml"), testYAML); err != nil {
 			return fmt.Errorf("failed to write image test YAML: %w", err)
 		}
 	}
@@ -385,7 +400,7 @@ func buildAndPushImageOnVM(ctx context.Context, vmID string, imageName string, i
 	}
 
 	// Add external registries if configured
-	externalRegistries, err := image.ListImageExternalRegistries(ctx, img.ID)
+	externalRegistries, err := imagepkg.ListImageExternalRegistries(ctx, img.ID)
 	if err != nil {
 		logger.Warn("failed to list external registries", zap.String("imageID", img.ID), zap.Error(err))
 	} else if len(externalRegistries) > 0 {
@@ -402,19 +417,48 @@ func buildAndPushImageOnVM(ctx context.Context, vmID string, imageName string, i
 		logger.Debug("added external registries to build config", zap.Int("count", len(externalRegistryConfigs)))
 	}
 
-	// Write config file to VM
+	// Write config file
 	configFile := filepath.Join(vmWorkDir, "build-config.json")
-	if err := writeConfigFile(client, vm.ID, configFile, buildConfig); err != nil {
+	configBytes, err := json.Marshal(buildConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal build config: %w", err)
+	}
+	if err := runner.WriteFile(configFile, string(configBytes)); err != nil {
 		return fmt.Errorf("failed to write build config: %w", err)
 	}
 
-	// Run the build-image command on VM using nohup (similar to package builds)
+	// Copy the builder binary into the work dir so the build command can run it.
+	// Local runner: use binary for current runtime. Remote (static/cmx): use Linux for VM arch.
+	var builderData []byte
+	if _, isLocal := runner.(*buildbackend.LocalRunner); isLocal {
+		if !builder.IsBuilderEmbeddedForRuntime() {
+			return fmt.Errorf("builder binary is not embedded for current runtime (GOOS=%s GOARCH=%s)", runtime.GOOS, runtime.GOARCH)
+		}
+		builderData = builder.GetEmbeddedBuilderForRuntime()
+	} else {
+		if !builder.IsBuilderEmbedded(vm.Architecture) {
+			return fmt.Errorf("builder binary is not embedded for VM architecture %s", vm.Architecture)
+		}
+		builderData = builder.GetEmbeddedBuilder(vm.Architecture)
+	}
+	builderBin := filepath.Join(vmWorkDir, "builder")
+	if len(builderData) == 0 {
+		return fmt.Errorf("embedded builder binary is empty")
+	}
+	if err := runner.WriteBinaryFile(builderBin, builderData); err != nil {
+		return fmt.Errorf("failed to copy builder binary to VM work dir: %w", err)
+	}
+	if _, err := runner.RunCommand(ctx, fmt.Sprintf("chmod +x %s", builderBin)); err != nil {
+		return fmt.Errorf("failed to make builder binary executable: %w", err)
+	}
+
+	// Run the build-image command using nohup (similar to package builds)
 	// The builder writes its status to builder-status file (building/testing/publishing/success/failed)
 	buildCmd := fmt.Sprintf(`set -euo pipefail
 cd %s
 echo "Starting image build for %s at $(date)";
 nohup bash -c '
-/home/builder/builder build-image \
+%s build-image \
 		--config %s \
 		--work-dir %s \
 		--sbom-path %s \
@@ -423,9 +467,9 @@ nohup bash -c '
 echo "Image build backgrounded for %s at $(date)";
 `,
 		vmWorkDir, apkoID,
-		configFile, vmWorkDir, vmWorkDir, vmWorkDir, vmWorkDir, apkoID)
+		builderBin, configFile, vmWorkDir, vmWorkDir, vmWorkDir, vmWorkDir, apkoID)
 
-	if err := runSyncCommand(client, vm.ID, buildCmd); err != nil {
+	if _, err := runner.RunCommand(ctx, buildCmd); err != nil {
 		return fmt.Errorf("failed to run build-image command: %w", err)
 	}
 
@@ -436,98 +480,31 @@ echo "Image build backgrounded for %s at $(date)";
 	return nil
 }
 
-func runSyncCommand(client *ssh.Client, vmID string, command string) error {
-	sess, err := client.NewSession()
-	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
+func downloadSBOMsAndMetadata(ctx context.Context, runner buildbackend.Runner, vmWorkDir string, hostTmpDir string) error {
+	logger.Debug("Downloading SBOMs and scan results", zap.String("vmID", runner.VMID()))
+
+	// Only transfer files needed for post-build processing (SBOMs, scan results, builder logs).
+	includePatterns := []string{
+		"syft-sbom-*.json",
+		"grype-alternate-scan-*.json",
+		"sbom-index*.spdx.json",
+		"apko-build.*",
+		"builder-output.log",
+		"builder-status",
 	}
-	defer sess.Close()
-
-	logger.Debug("Running sync command on VM", zap.String("vmID", vmID), zap.String("command", command))
-
-	output, err := sess.CombinedOutput(command)
-	logger.Debug("Command output", zap.String("vmID", vmID), zap.String("output", string(output)))
-
-	if err != nil {
-		return fmt.Errorf("command failed: %w (output: %s)", err, string(output))
+	if err := buildbackend.RunnerCopyToLocalTar(ctx, runner, vmWorkDir, hostTmpDir, includePatterns); err != nil {
+		return fmt.Errorf("failed to download SBOMs and metadata: %w", err)
 	}
 
 	return nil
 }
 
-func downloadSBOMsAndMetadata(client *ssh.Client, vmID string, vmWorkDir string, hostTmpDir string) error {
-	logger.Debug("Downloading SBOMs and scan results from VM", zap.String("vmID", vmID))
+func downloadBuildResults(ctx context.Context, runner buildbackend.Runner, vmWorkDir string, hostTmpDir string) error {
+	logger.Debug("Downloading build results", zap.String("vmID", runner.VMID()))
 
-	// Create a tar archive with all files in the work directory, excluding build artifacts
-	tarCmd := fmt.Sprintf(`cd %s && tar -czf /tmp/sboms-metadata.tar.gz --exclude='index.json' --exclude='oci-layout' --exclude='blobs' --exclude='image' .`, vmWorkDir)
-	if err := runSyncCommand(client, vmID, tarCmd); err != nil {
-		return fmt.Errorf("failed to create SBOM and scan results tar archive: %w", err)
+	if err := buildbackend.RunnerCopyToLocalTar(ctx, runner, vmWorkDir, hostTmpDir, nil); err != nil {
+		return fmt.Errorf("failed to download build results: %w", err)
 	}
-
-	// Read the tar file and write to host
-	sess, err := client.NewSession()
-	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
-	}
-	defer sess.Close()
-
-	output, err := sess.Output("cat /tmp/sboms-metadata.tar.gz")
-	if err != nil {
-		return fmt.Errorf("failed to read SBOM and scan results tar archive: %w", err)
-	}
-
-	// Write to host tmp directory
-	tarPath := filepath.Join(hostTmpDir, "sboms-metadata.tar.gz")
-	if err := os.WriteFile(tarPath, output, 0o644); err != nil {
-		return fmt.Errorf("failed to write SBOM and scan results tar file to host: %w", err)
-	}
-
-	// Extract in host tmp directory
-	if err := extractTarFile(tarPath, hostTmpDir); err != nil {
-		return fmt.Errorf("failed to extract SBOM and scan results tar file: %w", err)
-	}
-
-	// Clean up tar file
-	os.Remove(tarPath)
-
-	return nil
-}
-
-func downloadBuildResults(client *ssh.Client, vmID string, vmWorkDir string, hostTmpDir string) error {
-	logger.Debug("Downloading build results from VM", zap.String("vmID", vmID))
-
-	// Create an SCP-like function using SSH
-	// For now, we'll use a simple approach with tar to transfer the entire directory
-	tarCmd := fmt.Sprintf("cd %s && tar -czf /tmp/build-results.tar.gz .", vmWorkDir)
-	if err := runSyncCommand(client, vmID, tarCmd); err != nil {
-		return fmt.Errorf("failed to create tar archive: %w", err)
-	}
-
-	// Read the tar file and write to host
-	sess, err := client.NewSession()
-	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
-	}
-	defer sess.Close()
-
-	output, err := sess.Output("cat /tmp/build-results.tar.gz")
-	if err != nil {
-		return fmt.Errorf("failed to read tar archive: %w", err)
-	}
-
-	// Write to host tmp directory
-	tarPath := filepath.Join(hostTmpDir, "build-results.tar.gz")
-	if err := os.WriteFile(tarPath, output, 0o644); err != nil {
-		return fmt.Errorf("failed to write tar file to host: %w", err)
-	}
-
-	// Extract in host tmp directory
-	if err := extractTarFile(tarPath, hostTmpDir); err != nil {
-		return fmt.Errorf("failed to extract tar file: %w", err)
-	}
-
-	// Clean up tar file
-	os.Remove(tarPath)
 
 	return nil
 }
@@ -594,128 +571,3 @@ func storeMultiArchIndexManifest(ctx context.Context, ociPathWithoutTag string, 
 	return nil
 }
 
-func getSSHClientForVM(ctx context.Context, vm buildertypes.BuilderVM) (*ssh.Client, error) {
-	privateKeyBytes, err := base64.StdEncoding.DecodeString(vm.PrivateKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to base64 decode private key: %w", err)
-	}
-	key, err := ssh.ParsePrivateKey(privateKeyBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	config := &ssh.ClientConfig{
-		User: vm.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(key),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         30 * time.Second,
-	}
-
-	addr := fmt.Sprintf("%s:%d", vm.IPAddress, vm.Port)
-
-	// SSH connection with retry logic
-	var client *ssh.Client
-	maxRetries := 3
-	baseDelay := time.Second * 2
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		client, err = ssh.Dial("tcp", addr, config)
-		if err == nil {
-			break
-		}
-
-		if attempt < maxRetries-1 {
-			delay := baseDelay * time.Duration(1<<attempt)
-			logger.Warn("SSH connection failed during image build setup, retrying",
-				zap.String("vmID", vm.ID),
-				zap.String("addr", addr),
-				zap.Int("attempt", attempt+1),
-				zap.Int("maxRetries", maxRetries),
-				zap.Duration("retryDelay", delay),
-				zap.Error(err))
-
-			builder.DebugVMStatus(ctx, vm.ID)
-
-			select {
-			case <-ctx.Done():
-				return nil, fmt.Errorf("context cancelled during SSH retry: %w", ctx.Err())
-			case <-time.After(delay):
-			}
-		}
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to dial SSH after %d attempts: %w", maxRetries, err)
-	}
-
-	return client, nil
-}
-
-func createWorkingDirectory(ctx context.Context, client *ssh.Client, vmID string, workDir string) error {
-	cmd := fmt.Sprintf("mkdir -p %s", workDir)
-
-	stdoutCh := make(chan string)
-	stderrCh := make(chan string)
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		for line := range stdoutCh {
-			logger.Debug("mkdir stdout", zap.String("vmID", vmID), zap.String("output", line))
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		for line := range stderrCh {
-			logger.Debug("mkdir stderr", zap.String("vmID", vmID), zap.String("output", line))
-		}
-	}()
-
-	err := builder.RunCommand(ctx, client, vmID, cmd, stdoutCh, stderrCh)
-	wg.Wait()
-
-	if err != nil {
-		return fmt.Errorf("failed to create working directory: %w", err)
-	}
-
-	return nil
-}
-
-func writeAPKOYAML(client *ssh.Client, vmID string, workDir string, apkoYAML string) error {
-	apkoFile := fmt.Sprintf("%s/apko.yaml", workDir)
-
-	if err := builder.CreateRemoteTextFile(client, apkoFile, apkoYAML); err != nil {
-		return fmt.Errorf("failed to create APKO YAML file: %w", err)
-	}
-
-	logger.Debug("APKO YAML file created", zap.String("vmID", vmID), zap.String("file", apkoFile))
-	return nil
-}
-
-func writeImageTestYAML(client *ssh.Client, vmID string, workDir string, testYAML string) error {
-	testFile := fmt.Sprintf("%s/apko.test.yaml", workDir)
-
-	if err := builder.CreateRemoteTextFile(client, testFile, testYAML); err != nil {
-		return fmt.Errorf("failed to create image test YAML file: %w", err)
-	}
-
-	logger.Debug("Image test YAML file created", zap.String("vmID", vmID), zap.String("file", testFile))
-	return nil
-}
-
-func writeConfigFile(client *ssh.Client, vmID string, configFile string, config map[string]interface{}) error {
-	configBytes, err := json.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	if err := builder.CreateRemoteTextFile(client, configFile, string(configBytes)); err != nil {
-		return fmt.Errorf("failed to create config file: %w", err)
-	}
-
-	logger.Debug("Config file created", zap.String("vmID", vmID), zap.String("file", configFile))
-	return nil
-}

@@ -55,8 +55,8 @@ migrate:
 
 .PHONY: create-fake-builder
 create-fake-builder:
-	@touch pkg/builder/builder-linux-amd64
-	@touch pkg/builder/builder-linux-arm64
+	@printf '%s' 'test' > pkg/builder/builder-linux-amd64
+	@printf '%s' 'test' > pkg/builder/builder-linux-arm64
 
 .PHONY: test-unit-go
 test-unit-go: create-fake-builder
@@ -97,16 +97,32 @@ release-docs:
 		--progress plain \
 		--version 20250609-142925
 
+UNAME_S := $(shell uname -s)
+
 pkg/builder/builder-linux-amd64: $(GO_SOURCES) $(GO_MODULE_FILES)
 	GOOS=linux GOARCH=amd64 go build -o pkg/builder/builder-linux-amd64 builder-cmd/main.go
 
 pkg/builder/builder-linux-arm64: $(GO_SOURCES) $(GO_MODULE_FILES)
 	GOOS=linux GOARCH=arm64 go build -o pkg/builder/builder-linux-arm64 builder-cmd/main.go
 
+# Darwin builder binaries only on Mac (for local backend); not needed for static/cmx or Linux workers
+pkg/builder/builder-darwin-amd64: $(GO_SOURCES) $(GO_MODULE_FILES)
+	GOOS=darwin GOARCH=amd64 go build -o pkg/builder/builder-darwin-amd64 builder-cmd/main.go
+
+pkg/builder/builder-darwin-arm64: $(GO_SOURCES) $(GO_MODULE_FILES)
+	GOOS=darwin GOARCH=arm64 go build -o pkg/builder/builder-darwin-arm64 builder-cmd/main.go
+
 .PHONY: build-builder
 build-builder: pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64
+ifeq ($(UNAME_S),Darwin)
+build-builder: pkg/builder/builder-darwin-amd64 pkg/builder/builder-darwin-arm64
+endif
 
+# Worker needs darwin builders only when building on Mac (for local backend)
 bin/worker: pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64 $(GO_SOURCES) $(GO_MODULE_FILES)
+ifeq ($(UNAME_S),Darwin)
+bin/worker: pkg/builder/builder-darwin-amd64 pkg/builder/builder-darwin-arm64
+endif
 	go build -ldflags "$(BUILD_LDFLAGS)" -o bin/worker cmd/main.go
 
 .PHONY: build-worker

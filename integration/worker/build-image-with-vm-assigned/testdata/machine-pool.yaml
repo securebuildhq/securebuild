@@ -35,3 +35,6 @@ seedData:
         - column: is_on_demand
           value:
             str: "false"
+        - column: type
+          value:
+            str: "cmx"

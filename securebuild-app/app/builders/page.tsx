@@ -141,6 +141,7 @@ export default function BuildersPage() {
           expiresAt: b.expiresAt,
           status: b.status,
           assignedTask: b.assignedTask,
+          assignedTasks: b.assignedTasks,
           architecture: b.architecture,
           lastUptime: b.lastUptime,
           lastUptimeUpdatedAt: b.lastUptimeUpdatedAt,
@@ -158,6 +159,7 @@ export default function BuildersPage() {
           expiresAt: b.expiresAt,
           status: b.status,
           assignedTask: b.assignedTask,
+          assignedTasks: b.assignedTasks,
           architecture: b.architecture,
           lastUptime: b.lastUptime,
           lastUptimeUpdatedAt: b.lastUptimeUpdatedAt,
@@ -567,12 +569,12 @@ export default function BuildersPage() {
                 <td className="px-4 py-2">{builder.expiresAt ? formatDateTime(builder.expiresAt) : '-'}</td>
                 <td className="px-4 py-2">
                   {(() => {
-                    // Determine the display status
+                    const hasAssignments = (builder.assignedTasks?.length ?? 0) > 0 || !!builder.assignedTask;
                     // If execution status is "provisioning", show the VM status instead of "assigned"
                     let displayStatus;
-                    if (builder.assignedTask && builder.executionStatus === "provisioning") {
+                    if (hasAssignments && builder.executionStatus === "provisioning") {
                       displayStatus = builder.status; // Show VM status (provisioned, installing, etc.)
-                    } else if (builder.assignedTask) {
+                    } else if (hasAssignments) {
                       displayStatus = "assigned";
                     } else {
                       displayStatus = builder.status;
@@ -598,12 +600,18 @@ export default function BuildersPage() {
                         break;
                     }
 
+                    const tasks = builder.assignedTasks?.length ? builder.assignedTasks : (builder.assignedTask ? [builder.assignedTask] : []);
                     return (
                       <div className="flex flex-col gap-1">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${statusColor}`}>
                           {displayStatus}
                         </span>
-                        {builder.assignedTask && renderTaskLink(builder.assignedTask)}
+                        {tasks.map((task, i) => (
+                          <React.Fragment key={i}>
+                            {i > 0 && <br />}
+                            {renderTaskLink(task)}
+                          </React.Fragment>
+                        ))}
                       </div>
                     );
                   })()}
@@ -870,18 +878,16 @@ export default function BuildersPage() {
                   <td className="px-4 py-2">{builder.expiresAt ? formatDateTime(builder.expiresAt) : '-'}</td>
                   <td className="px-4 py-2">
                     {(() => {
-                      // Determine the display status
-                      // If execution status is "provisioning", show the VM status instead of "assigned"
+                      const hasAssignments = (builder.assignedTasks?.length ?? 0) > 0 || !!builder.assignedTask;
                       let displayStatus;
-                      if (builder.assignedTask && builder.executionStatus === "provisioning") {
-                        displayStatus = builder.status; // Show VM status (provisioned, installing, etc.)
-                      } else if (builder.assignedTask) {
+                      if (hasAssignments && builder.executionStatus === "provisioning") {
+                        displayStatus = builder.status;
+                      } else if (hasAssignments) {
                         displayStatus = "assigned";
                       } else {
                         displayStatus = builder.status;
                       }
 
-                      // Determine the color based on status
                       let statusColor;
                       switch (displayStatus) {
                         case "running":
@@ -901,12 +907,18 @@ export default function BuildersPage() {
                           break;
                       }
 
+                      const tasks = builder.assignedTasks?.length ? builder.assignedTasks : (builder.assignedTask ? [builder.assignedTask] : []);
                       return (
                         <div className="flex flex-col gap-1">
                           <span className={`px-2 py-1 rounded text-xs font-semibold ${statusColor}`}>
                             {displayStatus}
                           </span>
-                          {builder.assignedTask && renderTaskLink(builder.assignedTask)}
+                          {tasks.map((task, i) => (
+                            <React.Fragment key={i}>
+                              {i > 0 && <br />}
+                              {renderTaskLink(task)}
+                            </React.Fragment>
+                          ))}
                         </div>
                       );
                     })()}

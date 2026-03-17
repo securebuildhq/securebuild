@@ -2882,7 +2882,7 @@ func queueImageBuildForAPKO(ctx context.Context, apkoID string) error {
 	}
 
 	// Assign VM using the shared helper
-	vmID, err := assignVMForImageBuild(ctx, imageBuild.ID, time.Minute*10)
+	vmID, workDir, err := assignVMForImageBuild(ctx, imageBuild.ID)
 	if err != nil {
 		if statusErr := image.UpdateImageBuildStatus(ctx, imageBuild.ID, imagetypes.ImageBuildStatusFailed, err); statusErr != nil {
 			logger.Warn("failed to update image build status to failed", zap.Error(statusErr))
@@ -2899,6 +2899,7 @@ func queueImageBuildForAPKO(ctx context.Context, apkoID string) error {
 	payload := BuildImageWithVMAssignedPayload{
 		VMID:    vmID,
 		BuildID: imageBuild.ID,
+		WorkDir: workDir,
 	}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {

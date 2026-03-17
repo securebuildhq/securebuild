@@ -23,6 +23,7 @@ import (
 	oidc "github.com/securebuildhq/securebuild/pkg/oidc"
 	"google.golang.org/api/option"
 
+	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/builder"
 	buildertypes "github.com/securebuildhq/securebuild/pkg/builder/types"
 	"github.com/securebuildhq/securebuild/pkg/image"
@@ -33,7 +34,6 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/security"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/ssh"
 )
 
 func StartBuildImageStatusChecker(ctx context.Context) error {
@@ -106,8 +106,6 @@ func handleUpdateBuildImageStatus(ctx context.Context, payload string) error {
 }
 
 func updateBuildImageStatus(ctx context.Context, buildID string) error {
-	logger.Debug("updating build image status", zap.String("buildID", buildID))
-
 	imageBuild, err := image.GetImageBuildByID(ctx, buildID)
 	if err != nil {
 		return fmt.Errorf("failed to get image build: %w", err)
@@ -148,14 +146,15 @@ func updateBuildImageStatus(ctx context.Context, buildID string) error {
 		return nil
 	}
 
+	// Capture builder logs before completion handling so the machine assignment still exists
+	// (cleanup deletes the assignment when we mark the build success)
+	if err := captureBuilderLogs(ctx, buildID, &builderVM); err != nil {
+		logger.Warn("failed to capture builder logs", zap.Error(err), zap.String("buildID", buildID))
+	}
+
 	// Check if build has completed and download results if so
 	if err := checkAndHandleBuildCompletion(ctx, buildID, &builderVM); err != nil {
 		logger.Warn("failed to check and handle build completion", zap.Error(err), zap.String("buildID", buildID))
-	}
-
-	// Capture stdout and stderr from build log files
-	if err := captureBuilderLogs(ctx, buildID, &builderVM); err != nil {
-		logger.Warn("failed to capture builder logs", zap.Error(err), zap.String("buildID", buildID))
 	}
 
 	return nil
@@ -163,55 +162,59 @@ func updateBuildImageStatus(ctx context.Context, buildID string) error {
 
 // checkAndHandleBuildCompletion checks if the build has completed and downloads results if so
 func checkAndHandleBuildCompletion(ctx context.Context, buildID string, builderVM *buildertypes.BuilderVM) error {
-	// Get SSH client for the VM
-	client, err := getSSHClientForVM(ctx, *builderVM)
+	runner, err := buildbackend.NewRunner(ctx, *builderVM)
 	if err != nil {
-		return fmt.Errorf("failed to get SSH client: %w", err)
+		return fmt.Errorf("failed to create runner: %w", err)
 	}
-	defer client.Close()
+	defer runner.Close()
 
-	// Find the build directory
-	findDirCmd := "find /home/builder -maxdepth 1 -name 'image-build-*' -type d | head -1"
-	session, err := client.NewSession()
+	// Resolve the work directory (where builder wrote builder-status, SBOMs, etc.)
+	buildDir, err := builder.GetWorkDirForTask(ctx, "build_image", buildID, builderVM.ID)
 	if err != nil {
-		return fmt.Errorf("failed to create SSH session: %w", err)
+		return fmt.Errorf("failed to get work dir for image build %s: %w", buildID, err)
 	}
-	defer session.Close()
-
-	output, err := session.CombinedOutput(findDirCmd)
-	if err != nil {
-		// No build directory found, build might not have started yet
-		return nil
-	}
-
-	buildDir := strings.TrimSpace(string(output))
-	if buildDir == "" {
-		// No build directory found
-		return nil
-	}
-
-	sess, err := client.NewSession()
-	if err != nil {
-		return fmt.Errorf("failed to create SSH session: %w", err)
-	}
-	defer sess.Close()
 
 	// Check for build status by reading the status file written by builder
 	// Status values: building, testing, publishing, success, failed
 	statusFile := filepath.Join(buildDir, "builder-status")
-	checkCmd := fmt.Sprintf(`if [ -f "%s" ]; then cat "%s"; else echo "running"; fi`, statusFile, statusFile)
-
-	statusOutput, err := sess.CombinedOutput(checkCmd)
+	exists, err := runner.FileExists(statusFile)
 	if err != nil {
-		logger.Debug("Failed to check build completion status", zap.Error(err))
 		return nil
 	}
 
-	status := strings.TrimSpace(string(statusOutput))
-	logger.Debug("Read build status from VM",
-		zap.String("buildID", buildID),
-		zap.String("statusFile", statusFile),
-		zap.String("status", status))
+	var status string
+	var statusSource string
+	if !exists {
+		status = "running"
+		statusSource = "defaulted (file missing)"
+	} else {
+		statusContent, err := runner.ReadFile(statusFile)
+		if err != nil {
+			return nil
+		}
+		status = strings.TrimSpace(statusContent)
+		statusSource = "file"
+	}
+
+	// If builder-status file is still missing long after the build started, the builder
+	// likely failed to start (e.g. binary not found). Mark the build failed so it does not stay stuck.
+	// This is an edge case when process fails to start, but the exist code is 0 (because of nohup and shell wrappers). On average, we are not going to be waiting for 5 minutes.
+	if (status == "running" || status == "building") && statusSource == "defaulted (file missing)" {
+		imageBuild, err := image.GetImageBuildByID(ctx, buildID)
+		if err == nil && imageBuild.BuildStartedAt != nil {
+			elapsed := time.Since(*imageBuild.BuildStartedAt)
+			if elapsed > 5*time.Minute {
+				logger.Warn("IMAGE BUILD FAILED: builder-status file still missing 5 minutes after build start — marking build failed.",
+					zap.String("buildID", buildID),
+					zap.String("vmID", builderVM.ID),
+					zap.Duration("elapsed", elapsed))
+				if err := image.UpdateImageBuildStatus(ctx, buildID, imagetypes.ImageBuildStatusFailed, fmt.Errorf("builder did not create status file within 5 minutes (elapsed: %v)", elapsed)); err != nil {
+					logger.Warn("failed to update image build status to failed", zap.Error(err), zap.String("buildID", buildID))
+				}
+				return nil
+			}
+		}
+	}
 
 	// Update database with current status for in-progress builds
 	switch status {
@@ -230,7 +233,11 @@ func checkAndHandleBuildCompletion(ctx context.Context, buildID string, builderV
 		return nil
 	}
 
-	// Build has completed (success or failure) - download results
+	// Build has completed (success or failure) - capture logs now while we still have runner and buildDir
+	if err := captureBuilderLogsWithRunner(ctx, runner, buildID, buildDir); err != nil {
+		logger.Warn("failed to capture builder logs on completion", zap.Error(err), zap.String("buildID", buildID))
+	}
+
 	logger.Info("Build completed, downloading results",
 		zap.String("buildID", buildID),
 		zap.String("vmID", builderVM.ID),
@@ -244,7 +251,7 @@ func checkAndHandleBuildCompletion(ctx context.Context, buildID string, builderV
 	defer os.RemoveAll(tmpDir)
 
 	// Download SBOMs and metadata from VM to host
-	if err := downloadSBOMsAndMetadata(client, builderVM.ID, buildDir, tmpDir); err != nil {
+	if err := downloadSBOMsAndMetadata(ctx, runner, buildDir, tmpDir); err != nil {
 		logger.Warn("failed to download SBOMs and metadata", zap.Error(err))
 		// Don't return error here - we still want to update the build status
 	}
@@ -419,37 +426,25 @@ func processImageBuildResults(ctx context.Context, buildID string, tmpDir string
 	return nil
 }
 
-// captureBuilderLogs captures stdout and stderr from build log files on the VM
+// captureBuilderLogs captures stdout and stderr from build log files on the VM (looks up work dir from assignment).
 func captureBuilderLogs(ctx context.Context, buildID string, builderVM *buildertypes.BuilderVM) error {
-	// Get SSH client for the VM
-	client, err := getSSHClientForVM(ctx, *builderVM)
+	runner, err := buildbackend.NewRunner(ctx, *builderVM)
 	if err != nil {
-		return fmt.Errorf("failed to get SSH client: %w", err)
+		return fmt.Errorf("failed to create runner: %w", err)
 	}
-	defer client.Close()
+	defer runner.Close()
 
-	// Find the build directory - it should be in the format /home/builder/image-build-<apkoID>
-	// For now, we'll use a pattern to find the latest build directory
-	findDirCmd := "find /home/builder -maxdepth 1 -name 'image-build-*' -type d | head -1"
-	session, err := client.NewSession()
+	buildDir, err := builder.GetWorkDirForTask(ctx, "build_image", buildID, builderVM.ID)
 	if err != nil {
-		return fmt.Errorf("failed to create SSH session: %w", err)
-	}
-	defer session.Close()
-
-	output, err := session.CombinedOutput(findDirCmd)
-	if err != nil {
-		// No build directory found, build might not have started yet
-		return nil
+		return fmt.Errorf("failed to get work dir for image build %s: %w", buildID, err)
 	}
 
-	buildDir := strings.TrimSpace(string(output))
-	if buildDir == "" {
-		// No build directory found
-		return nil
-	}
+	return captureBuilderLogsWithRunner(ctx, runner, buildID, buildDir)
+}
 
-	// List of log files to capture
+// captureBuilderLogsWithRunner captures builder log files using an existing runner and build dir.
+// Use this when the assignment may already be gone (e.g. inside completion handling).
+func captureBuilderLogsWithRunner(ctx context.Context, runner buildbackend.Runner, buildID, buildDir string) error {
 	logFiles := []struct {
 		process string
 		stdout  string
@@ -464,28 +459,24 @@ func captureBuilderLogs(ctx context.Context, buildID string, builderVM *buildert
 		{"grype_alternate_x86_64", "", "grype-alternate-scan-x86_64.stderr"},
 	}
 
-	// Add builder output log capture
 	builderOutputFile := filepath.Join(buildDir, "builder-output.log")
-	if err := captureLogFile(ctx, client, buildID, "builder", "stdout", builderOutputFile); err != nil {
+	if err := captureLogFileWithRunner(ctx, runner, buildID, "builder", "stdout", builderOutputFile); err != nil {
 		logger.Debug("failed to capture builder output log",
 			zap.String("buildID", buildID),
 			zap.Error(err))
 	}
 
 	for _, logFile := range logFiles {
-		// Read stdout
 		if logFile.stdout != "" {
-			if err := captureLogFile(ctx, client, buildID, logFile.process, "stdout", filepath.Join(buildDir, logFile.stdout)); err != nil {
+			if err := captureLogFileWithRunner(ctx, runner, buildID, logFile.process, "stdout", filepath.Join(buildDir, logFile.stdout)); err != nil {
 				logger.Debug("failed to capture stdout log",
 					zap.String("buildID", buildID),
 					zap.String("process", logFile.process),
 					zap.Error(err))
 			}
 		}
-
-		// Read stderr
 		if logFile.stderr != "" {
-			if err := captureLogFile(ctx, client, buildID, logFile.process, "stderr", filepath.Join(buildDir, logFile.stderr)); err != nil {
+			if err := captureLogFileWithRunner(ctx, runner, buildID, logFile.process, "stderr", filepath.Join(buildDir, logFile.stderr)); err != nil {
 				logger.Debug("failed to capture stderr log",
 					zap.String("buildID", buildID),
 					zap.String("process", logFile.process),
@@ -497,43 +488,32 @@ func captureBuilderLogs(ctx context.Context, buildID string, builderVM *buildert
 	return nil
 }
 
-// captureLogFile captures a single log file and updates the database
-func captureLogFile(ctx context.Context, client *ssh.Client, buildID, process, logType, filePath string) error {
+// captureLogFileWithRunner captures a single log file using a Runner and updates the database
+func captureLogFileWithRunner(ctx context.Context, runner buildbackend.Runner, buildID, process, logType, filePath string) error {
 	// Handle wildcard files
 	if strings.Contains(filePath, "*") {
-		// Find matching files
 		findCmd := fmt.Sprintf("find %s -name '%s' 2>/dev/null | head -1", filepath.Dir(filePath), filepath.Base(filePath))
-		session, err := client.NewSession()
-		if err != nil {
-			return fmt.Errorf("failed to create SSH session: %w", err)
-		}
-		defer session.Close()
-
-		output, err := session.CombinedOutput(findCmd)
-		if err != nil || strings.TrimSpace(string(output)) == "" {
+		output, err := runner.RunCommand(ctx, findCmd)
+		if err != nil || strings.TrimSpace(output) == "" {
 			// No matching file found
 			return nil
 		}
-		filePath = strings.TrimSpace(string(output))
+		filePath = strings.TrimSpace(output)
 	}
 
-	// Read the file content
-	session, err := client.NewSession()
-	if err != nil {
-		return fmt.Errorf("failed to create SSH session: %w", err)
+	// Check if file exists
+	exists, err := runner.FileExists(filePath)
+	if err != nil || !exists {
+		return nil
 	}
-	defer session.Close()
 
-	// Use cat to read the file, but limit to last 10KB to avoid overwhelming the database
-	readCmd := fmt.Sprintf("if [ -f '%s' ]; then tail -c 10240 '%s'; fi", filePath, filePath)
-	content, err := session.CombinedOutput(readCmd)
+	// Read the last 10KB of the file to avoid overwhelming the database
+	logContent, err := runner.ReadFileTail(filePath, 10240)
 	if err != nil {
 		return fmt.Errorf("failed to read log file: %w", err)
 	}
 
-	logContent := string(content)
 	if logContent == "" {
-		// File doesn't exist or is empty
 		return nil
 	}
 

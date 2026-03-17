@@ -1,0 +1,20 @@
+database: securebuild
+name: machine_assignment
+seedData:
+  rows:
+    - columns:
+        - column: machine_id
+          value:
+            str: "vm001234567890abcdef12345678"
+        - column: assigned_task_type
+          value:
+            str: "build_image"
+        - column: assigned_task_id
+          value:
+            str: "imgbuild01234567890abcdef1234"
+        - column: work_dir
+          value:
+            str: "/home/builder"
+        - column: created_at
+          value:
+            str: "2025-01-07T00:00:00Z"

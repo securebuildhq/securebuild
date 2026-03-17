@@ -18,6 +18,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/builder"
 	cosign "github.com/securebuildhq/securebuild/pkg/cosign"
 	image "github.com/securebuildhq/securebuild/pkg/image"
@@ -36,6 +37,7 @@ type BuildImagePayload struct {
 type BuildImageWithVMAssignedPayload struct {
 	VMID    string `json:"vmId"`
 	BuildID string `json:"buildId"`
+	WorkDir string `json:"workDir,omitempty"`
 }
 
 const (
@@ -100,8 +102,8 @@ func handleBuildImage(ctx context.Context, payload string) error {
 	for i, apko := range img.APKOs {
 		imageBuild := imageBuilds[i]
 
-		// Assign VM for image building (selects best available architecture)
-		vmID, err := assignVMForImageBuild(ctx, imageBuild.ID, time.Minute*10)
+		// Assign VM for image building using the active backend
+		vmID, workDir, err := assignVMForImageBuild(ctx, imageBuild.ID)
 		if err != nil {
 			logger.Warn("IMAGE BUILD FAILED: VM assignment failure - could not assign VM for image build",
 				zap.String("imageApkoVersionID", apko.LatestVersion.ID),
@@ -127,6 +129,7 @@ func handleBuildImage(ctx context.Context, payload string) error {
 		buildImageWithVMAssignedPayload := BuildImageWithVMAssignedPayload{
 			VMID:    vmID,
 			BuildID: imageBuild.ID,
+			WorkDir: workDir,
 		}
 
 		marshalledPayload, err := json.Marshal(buildImageWithVMAssignedPayload)
@@ -150,33 +153,58 @@ func handleBuildImage(ctx context.Context, payload string) error {
 	return nil
 }
 
-func assignVMForImageBuild(ctx context.Context, buildID string, timeout time.Duration) (string, error) {
+func assignVMForImageBuild(ctx context.Context, buildID string) (string, string, error) {
 	logger.Debug("assigning VM for image build",
 		zap.String("buildID", buildID),
-		zap.Duration("timeout", timeout),
 	)
 
-	// Create a context with timeout
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	backend := buildbackend.GetBackend(ctx)
+	if backend == nil {
+		// Fallback: create backend from config
+		var backendErr error
+		backend, backendErr = buildbackend.GetActiveBackend(ctx)
+		if backendErr != nil {
+			logger.Warn("failed to create build backend, falling back to CMX", zap.Error(backendErr))
+			backend, _ = buildbackend.NewCMXBackend(ctx)
+		}
+	}
 
-	// Select the best architecture based on available VM counts
-	selectedArch, err := builder.SelectBestArchitectureForImageBuild(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to select architecture for image build: %w", err)
+	// Select architecture based on backend type
+	var selectedArch string
+	switch backend.Type() {
+	case buildbackend.BackendCMX:
+		// CMX: use existing logic to pick best arch based on pool availability
+		var err error
+		selectedArch, err = builder.SelectBestArchitectureForImageBuild(ctx)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to select architecture for image build: %w", err)
+		}
+	default:
+		// Local/Static: pick the first available architecture
+		arches, err := backend.AvailableArchitectures(ctx)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get available architectures: %w", err)
+		}
+		if len(arches) == 0 {
+			return "", "", fmt.Errorf("no architectures available for image build")
+		}
+		selectedArch = arches[0]
 	}
 
 	logger.Debug("selected architecture for image build",
 		zap.String("buildID", buildID),
 		zap.String("architecture", selectedArch))
 
-	// Take VM with selected architecture for image building (can build both architectures)
-	vm, err := builder.TakeVMWithAssignment(timeoutCtx, selectedArch, "build_image", buildID)
+	machine, err := backend.AcquireBuildMachine(ctx, buildbackend.AcquireOptions{
+		Architecture: selectedArch,
+		TaskType:     "build_image",
+		TaskID:       buildID,
+	})
 	if err != nil {
-		return "", fmt.Errorf("failed to take %s VM for image build: %w", selectedArch, err)
+		return "", "", fmt.Errorf("failed to acquire %s machine for image build: %w", selectedArch, err)
 	}
 
-	return vm.ID, nil
+	return machine.ID, machine.WorkDir, nil
 }
 
 // getAlternateImageRef checks if the alternate image:tag exists and returns its reference string if it does, or an empty string otherwise.

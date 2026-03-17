@@ -1,0 +1,28 @@
+database: securebuild
+name: machine_assignment
+schema:
+  postgres:
+    primaryKey:
+    - machine_id
+    - assigned_task_type
+    - assigned_task_id
+    columns:
+    - name: machine_id
+      type: text
+      constraints:
+        notNull: true
+    - name: assigned_task_type
+      type: text
+      constraints:
+        notNull: true
+    - name: assigned_task_id
+      type: text
+      constraints:
+        notNull: true
+    - name: work_dir
+      type: text
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+      default: "now()"

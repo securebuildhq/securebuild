@@ -3,15 +3,15 @@ package listener
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
-	"time"
 
+	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/builder"
 	buildertypes "github.com/securebuildhq/securebuild/pkg/builder/types"
 	"github.com/securebuildhq/securebuild/pkg/dynamicparam"
@@ -33,6 +33,8 @@ type BuildPackageWithVMsAssignedPayload struct {
 	X86VMID          string `json:"x86VmId"`
 	ARMVMID          string `json:"armVmId"`
 	ExecutionID      string `json:"executionId"`
+	X86WorkDir       string `json:"x86WorkDir,omitempty"`
+	ARMWorkDir       string `json:"armWorkDir,omitempty"`
 }
 
 func handleBuildPackageWithVmsAssigned(ctx context.Context, payload string) error {
@@ -52,44 +54,48 @@ func handleBuildPackageWithVmsAssigned(ctx context.Context, payload string) erro
 		zap.String("armVMID", p.ARMVMID),
 		zap.String("executionID", executionID))
 
-	// Check x86 VM exists
-	_, err := builder.GetBuilderVM(ctx, p.X86VMID)
-	if err != nil {
-		if errors.Is(err, builder.ErrMachineNotFound) {
-			logger.Warn("x86 VM not found for package build, failing task immediately",
-				zap.String("x86VMID", p.X86VMID),
-				zap.String("executionID", executionID),
-				zap.Error(err))
+	// Check x86 VM exists (only if assigned)
+	if p.X86VMID != "" {
+		_, err := builder.GetBuilderVM(ctx, p.X86VMID)
+		if err != nil {
+			if errors.Is(err, builder.ErrMachineNotFound) {
+				logger.Warn("x86 VM not found for package build, failing task immediately",
+					zap.String("x86VMID", p.X86VMID),
+					zap.String("executionID", executionID),
+					zap.Error(err))
 
-			// Mark the execution as failed
-			if statusErr := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusVMDeleted); statusErr != nil {
-				logger.Warn("failed to update execution status to VM deleted", zap.Error(statusErr))
+				// Mark the execution as failed
+				if statusErr := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusVMDeleted); statusErr != nil {
+					logger.Warn("failed to update execution status to VM deleted", zap.Error(statusErr))
+				}
+
+				// Return non-retryable error to prevent endless retries
+				return NewNonRetryableError(fmt.Errorf("x86 VM %s not found (deleted)", p.X86VMID))
 			}
-
-			// Return non-retryable error to prevent endless retries
-			return NewNonRetryableError(fmt.Errorf("x86 VM %s not found (deleted)", p.X86VMID))
+			return fmt.Errorf("failed to get x86 VM: %w", err)
 		}
-		return fmt.Errorf("failed to get x86 VM: %w", err)
 	}
 
-	// Check ARM VM exists
-	_, err = builder.GetBuilderVM(ctx, p.ARMVMID)
-	if err != nil {
-		if errors.Is(err, builder.ErrMachineNotFound) {
-			logger.Warn("ARM VM not found for package build, failing task immediately",
-				zap.String("armVMID", p.ARMVMID),
-				zap.String("executionID", executionID),
-				zap.Error(err))
+	// Check ARM VM exists (only if assigned)
+	if p.ARMVMID != "" {
+		_, err := builder.GetBuilderVM(ctx, p.ARMVMID)
+		if err != nil {
+			if errors.Is(err, builder.ErrMachineNotFound) {
+				logger.Warn("ARM VM not found for package build, failing task immediately",
+					zap.String("armVMID", p.ARMVMID),
+					zap.String("executionID", executionID),
+					zap.Error(err))
 
-			// Mark the execution as failed
-			if statusErr := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusVMDeleted); statusErr != nil {
-				logger.Warn("failed to update execution status to VM deleted", zap.Error(statusErr))
+				// Mark the execution as failed
+				if statusErr := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusVMDeleted); statusErr != nil {
+					logger.Warn("failed to update execution status to VM deleted", zap.Error(statusErr))
+				}
+
+				// Return non-retryable error to prevent endless retries
+				return NewNonRetryableError(fmt.Errorf("ARM VM %s not found (deleted)", p.ARMVMID))
 			}
-
-			// Return non-retryable error to prevent endless retries
-			return NewNonRetryableError(fmt.Errorf("ARM VM %s not found (deleted)", p.ARMVMID))
+			return fmt.Errorf("failed to get ARM VM: %w", err)
 		}
-		return fmt.Errorf("failed to get ARM VM: %w", err)
 	}
 
 	pkgVersion, err := sbpackage.GetPackageVersion(ctx, p.PackageVersionID)
@@ -107,7 +113,7 @@ func handleBuildPackageWithVmsAssigned(ctx context.Context, payload string) erro
 		return fmt.Errorf("failed to get execution use root: %w", err)
 	}
 
-	if err := startBuildPackage(ctx, pkgVersion, pkg, p.ExecutionID, p.X86VMID, p.ARMVMID, useRoot); err != nil {
+	if err := startBuildPackage(ctx, pkgVersion, pkg, p.ExecutionID, p.X86VMID, p.ARMVMID, p.X86WorkDir, p.ARMWorkDir, useRoot); err != nil {
 		logger.Warn("EXECUTION FAILED: startBuildPackage failed - error during build package initialization",
 			zap.String("executionID", p.ExecutionID),
 			zap.String("packageID", p.PackageID),
@@ -182,7 +188,7 @@ func runBackgroundCommand(client *ssh.Client, vmID string, command string) error
 
 var ErrVMNotFound = errors.New("vm not found")
 
-func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVersion, pkg *sbpackagetypes.Package, executionID string, x86VMID string, armVMID string, useRoot bool) error {
+func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVersion, pkg *sbpackagetypes.Package, executionID string, x86VMID string, armVMID string, x86WorkDir string, armWorkDir string, useRoot bool) error {
 	logger.Debug("Building package with VMs assigned",
 		zap.String("pkgVersionID", pkgVersion.ID),
 		zap.String("pkgID", pkg.ID),
@@ -192,6 +198,8 @@ func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVe
 		zap.String("executionID", executionID),
 		zap.String("x86VMID", x86VMID),
 		zap.String("armVMID", armVMID),
+		zap.String("x86WorkDir", x86WorkDir),
+		zap.String("armWorkDir", armWorkDir),
 		zap.Bool("useRoot", useRoot),
 	)
 
@@ -200,22 +208,27 @@ func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVe
 		return fmt.Errorf("failed to get package version additional files: %w", err)
 	}
 
-	arches := map[string]*buildertypes.BuilderVM{
-		"x86_64":  nil,
-		"aarch64": nil,
+	type archEntry struct {
+		vm      *buildertypes.BuilderVM
+		workDir string
+	}
+	arches := map[string]*archEntry{}
+
+	if x86VMID != "" {
+		x86VM, err := builder.GetBuilderVM(ctx, x86VMID)
+		if err != nil {
+			return fmt.Errorf("failed to get vm context: %w", err)
+		}
+		arches["x86_64"] = &archEntry{vm: &x86VM, workDir: x86WorkDir}
 	}
 
-	x86VM, err := builder.GetBuilderVM(ctx, x86VMID)
-	if err != nil {
-		return fmt.Errorf("failed to get vm context: %w", err)
+	if armVMID != "" {
+		armVM, err := builder.GetBuilderVM(ctx, armVMID)
+		if err != nil {
+			return fmt.Errorf("failed to get vm context: %w", err)
+		}
+		arches["aarch64"] = &archEntry{vm: &armVM, workDir: armWorkDir}
 	}
-	arches["x86_64"] = &x86VM
-
-	armVM, err := builder.GetBuilderVM(ctx, armVMID)
-	if err != nil {
-		return fmt.Errorf("failed to get vm context: %w", err)
-	}
-	arches["aarch64"] = &armVM
 
 	wg := sync.WaitGroup{}
 	errChan := make(chan error, len(arches))
@@ -233,31 +246,31 @@ func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVe
 		return fmt.Errorf("failed to set execution status: %w", err)
 	}
 
-	for arch, vm := range arches {
+	for arch, entry := range arches {
 		wg.Add(1)
 
 		// Add VM to results tracking
 		vmResultsMutex.Lock()
-		vmResults = append(vmResults, vmResult{vm: *vm, arch: arch, success: false})
+		vmResults = append(vmResults, vmResult{vm: *entry.vm, arch: arch, success: false})
 		vmResultsMutex.Unlock()
 
-		go func(arch string, vm *buildertypes.BuilderVM) {
+		go func(arch string, entry *archEntry) {
 			defer wg.Done()
 
 			if err := execution.SetExecutionBuildStartedAt(ctx, executionID, arch); err != nil {
 				logger.Warn("failed to set execution build started at", zap.Error(err))
 			}
 
-			if err := execution.SetExecutionBuilderID(ctx, executionID, arch, vm.ID); err != nil {
+			if err := execution.SetExecutionBuilderID(ctx, executionID, arch, entry.vm.ID); err != nil {
 				logger.Warn("failed to set execution builder ID", zap.Error(err))
 			}
 
-			if err := startBuildPackageForArch(ctx, *vm, pkgVersion, pkg, arch, additionalFiles, executionID, useRoot); err != nil {
+			if err := startBuildPackageForArch(ctx, *entry.vm, pkgVersion, pkg, arch, additionalFiles, executionID, entry.workDir, useRoot); err != nil {
 				logger.Warn("failed to start build package for arch", zap.Error(err))
 				errChan <- err
 				return
 			}
-		}(arch, vm)
+		}(arch, entry)
 	}
 
 	wg.Wait()
@@ -286,7 +299,7 @@ func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVe
 	return nil
 }
 
-func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pkgVersion *sbpackagetypes.PackageVersion, pkg *sbpackagetypes.Package, arch string, additionalFiles []sbpackagetypes.AdditionalFile, executionID string, useRoot bool) error {
+func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pkgVersion *sbpackagetypes.PackageVersion, pkg *sbpackagetypes.Package, arch string, additionalFiles []sbpackagetypes.AdditionalFile, executionID string, workDir string, useRoot bool) error {
 	logger.Debug("Building package for arch",
 		zap.String("pkgVersionID", pkgVersion.ID),
 		zap.String("pkgID", pkg.ID),
@@ -294,77 +307,24 @@ func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pk
 		zap.String("pkgVersion", pkgVersion.Version),
 		zap.Int("apkRelease", pkgVersion.APKRelease),
 		zap.String("arch", arch),
+		zap.String("workDir", workDir),
 		zap.Bool("useRoot", useRoot),
 	)
 
-	privateKeyBytes, err := base64.StdEncoding.DecodeString(vm.PrivateKey)
+	runner, err := buildbackend.NewRunner(ctx, vm)
 	if err != nil {
-		return fmt.Errorf("failed to base64 decode private key: %w", err)
+		return fmt.Errorf("failed to create runner for VM %s: %w", vm.ID, err)
 	}
-	key, err := ssh.ParsePrivateKey(privateKeyBytes)
-	if err != nil {
-		return fmt.Errorf("failed to parse private key: %w", err)
-	}
+	defer runner.Close()
 
-	config := &ssh.ClientConfig{
-		User: vm.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(key),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         30 * time.Second, // Increased from 10 seconds
+	// Ensure work dir exists on the build machine (required for SSH/remote; no-op for local)
+	if err := runner.MkdirAll(workDir); err != nil {
+		return fmt.Errorf("failed to create work dir: %w", err)
 	}
 
-	addr := fmt.Sprintf("%s:%d", vm.IPAddress, vm.Port)
-
-	// SSH connection with exponential backoff retry logic
-	var client *ssh.Client
-	maxRetries := 3
-	baseDelay := time.Second * 2
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		client, err = ssh.Dial("tcp", addr, config)
-		if err == nil {
-			break // Connection successful
-		}
-
-		if attempt < maxRetries-1 {
-			// Calculate exponential backoff delay: 2s, 4s, 8s
-			delay := baseDelay * time.Duration(1<<attempt)
-			logger.Warn("SSH connection failed during package build setup, retrying",
-				zap.String("vmID", vm.ID),
-				zap.String("addr", addr),
-				zap.String("executionID", executionID),
-				zap.String("arch", arch),
-				zap.String("package", pkg.Name),
-				zap.Int("attempt", attempt+1),
-				zap.Int("maxRetries", maxRetries),
-				zap.Duration("retryDelay", delay),
-				zap.Error(err))
-
-			// Add debug info about VM status
-			builder.DebugVMStatus(ctx, vm.ID)
-
-			// Wait before retry
-			select {
-			case <-ctx.Done():
-				return fmt.Errorf("context cancelled during SSH retry: %w", ctx.Err())
-			case <-time.After(delay):
-				// Continue to next attempt
-			}
-		} else {
-			// Final attempt failed, log as error
-			logger.Error(fmt.Errorf("SSH connection failed after all retries during package build setup: vmID=%s, addr=%s, executionID=%s, arch=%s, package=%s, totalAttempts=%d, error=%w", vm.ID, addr, executionID, arch, pkg.Name, maxRetries, err))
-			builder.DebugVMStatus(ctx, vm.ID)
-			return fmt.Errorf("failed to dial ssh after %d attempts: %w", maxRetries, err)
-		}
-	}
-
-	defer client.Close()
-
-	// write the excution id and arch to the remote filesystem
-	logger.Debug("writing execution id and arch to remote filesystem", zap.String("vmID", vm.ID), zap.String("executionID", executionID), zap.String("arch", arch))
-	if err := builder.CreateRemoteTextFile(client, "/home/builder/execution_id", executionID); err != nil {
+	// write the execution id to the filesystem
+	logger.Debug("writing execution id to filesystem", zap.String("vmID", vm.ID), zap.String("executionID", executionID), zap.String("arch", arch))
+	if err := runner.WriteFile(filepath.Join(workDir, "execution_id"), executionID); err != nil {
 		return fmt.Errorf("failed to create execution id file: %w", err)
 	}
 
@@ -373,20 +333,20 @@ func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pk
 
 		for _, additionalFile := range additionalFiles {
 			remotePaths := []string{
-				fmt.Sprintf("/home/builder/patches/%s", additionalFile.Path),
-				fmt.Sprintf("/home/builder/%s", additionalFile.Path),
+				filepath.Join(workDir, "patches", additionalFile.Path),
+				filepath.Join(workDir, additionalFile.Path),
 			}
 
 			for _, remotePath := range remotePaths {
 				dir := filepath.Dir(remotePath)
 
 				// Create directory for each path
-				if err := builder.CreateRemoteDirectory(ctx, client, vm.ID, dir); err != nil {
+				if err := runner.MkdirAll(dir); err != nil {
 					return fmt.Errorf("failed to create directory: %w", err)
 				}
 
-				logger.Debug("creating remote text file", zap.String("vmID", vm.ID), zap.String("path", remotePath))
-				if err := builder.CreateRemoteTextFile(client, remotePath, additionalFile.Content); err != nil {
+				logger.Debug("creating text file", zap.String("vmID", vm.ID), zap.String("path", remotePath))
+				if err := runner.WriteFile(remotePath, additionalFile.Content); err != nil {
 					return fmt.Errorf("failed to create additional file: %w", err)
 				}
 			}
@@ -403,41 +363,50 @@ func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pk
 		melangeWithCorrectEpoch = pkgVersion.MelangeYaml
 	}
 
-	if err := builder.CreateRemoteTextFile(client, "/home/builder/melange.yaml", melangeWithCorrectEpoch); err != nil {
+	if err := runner.WriteFile(filepath.Join(workDir, "melange.yaml"), melangeWithCorrectEpoch); err != nil {
 		return err
 	}
 
-	if err := pipeline.CopyAllPipelinesToVM(ctx, client, &vm); err != nil {
-		return fmt.Errorf("failed to get and write pipelines to builder tree: %w", err)
+	if sshRunner, ok := runner.(*buildbackend.SSHRunner); ok {
+		if err := pipeline.CopyAllPipelinesToVM(ctx, sshRunner.SSHClient(), &vm, workDir); err != nil {
+			return fmt.Errorf("failed to copy pipelines: %w", err)
+		}
+	} else {
+		if err := pipeline.CopyAllPipelinesLocal(ctx, workDir); err != nil {
+			return fmt.Errorf("failed to copy pipelines: %w", err)
+		}
 	}
 
-	// Verify connection stability
-	{
-		logger.Debug("Verifying SSH connection stability", zap.String("vmID", vm.ID), zap.String("arch", arch))
-		stdoutCh := make(chan string)
-		stderrCh := make(chan string)
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			for line := range stdoutCh {
-				logger.Debug("connection test stdout", zap.String("vmID", vm.ID), zap.String("output", line))
+	// Builder binary path: CMX runs in HOME where builder is already installed; others copy into work dir.
+	builderBin := filepath.Join(workDir, "builder")
+	if vm.Type != "cmx" {
+		// Copy the builder binary into the work dir so the build command can run it.
+		// Local runner (Mac/Linux host): use binary for current runtime. Remote (static): use Linux for VM arch.
+		var builderData []byte
+		if _, isLocal := runner.(*buildbackend.LocalRunner); isLocal {
+			if !builder.IsBuilderEmbeddedForRuntime() {
+				return fmt.Errorf("builder binary is not embedded for current runtime (GOOS=%s GOARCH=%s)", runtime.GOOS, runtime.GOARCH)
 			}
-		}()
-		go func() {
-			defer wg.Done()
-			for line := range stderrCh {
-				logger.Debug("connection test stderr", zap.String("vmID", vm.ID), zap.String("output", line))
+			builderData = builder.GetEmbeddedBuilderForRuntime()
+		} else {
+			if !builder.IsBuilderEmbedded(vm.Architecture) {
+				return fmt.Errorf("builder binary is not embedded for architecture %s", vm.Architecture)
 			}
-		}()
-
-		testCmd := "echo 'Connection test successful'; whoami; pwd; df -h /tmp; free -h"
-		err := builder.RunCommand(ctx, client, vm.ID, testCmd, stdoutCh, stderrCh)
-		wg.Wait()
-		if err != nil {
-			return fmt.Errorf("SSH connection verification failed before build: %w", err)
+			builderData = builder.GetEmbeddedBuilder(vm.Architecture)
 		}
-		logger.Debug("SSH connection verification successful", zap.String("vmID", vm.ID), zap.String("arch", arch))
+		if len(builderData) == 0 {
+			return fmt.Errorf("embedded builder binary is empty")
+		}
+		if err := runner.WriteBinaryFile(builderBin, builderData); err != nil {
+			return fmt.Errorf("failed to copy builder binary to work dir: %w", err)
+		}
+		if _, err := runner.RunCommand(ctx, fmt.Sprintf("chmod +x %s", builderBin)); err != nil {
+			return fmt.Errorf("failed to make builder binary executable: %w", err)
+		}
+
+		if err := runner.RunSetup(ctx, workDir, builderBin, arch); err != nil {
+			return fmt.Errorf("failed to run runner setup: %w", err)
+		}
 	}
 
 	// 4. Run builder build
@@ -534,7 +503,11 @@ func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pk
 			}
 		}
 
+		builderBin := filepath.Join(workDir, "builder")
+		builderLog := filepath.Join(workDir, fmt.Sprintf("builder_output_%s.log", arch))
+		workDirEscaped := strings.ReplaceAll(workDir, "'", "'\\''")
 		cmd = fmt.Sprintf(`set -euo pipefail
+cd '%s'
 echo "Starting builder build for %s architecture at $(date)";
 echo "BOOTSTRAP DEBUG: Bootstrap mode enabled";
 echo "BOOTSTRAP DEBUG: APK Repositories: %s";
@@ -543,7 +516,7 @@ echo "BOOTSTRAP DEBUG: Use Root Mode: %t";
 echo "BOOTSTRAP DEBUG: Bootstrap Flags: --empty-workspace --strip-origin-name --runner bubblewrap";
 echo "BOOTSTRAP DEBUG: About to execute builder binary with flags";
 nohup bash -c '
-/home/builder/builder build \
+%s build --work-dir '%s' \
 %s  --cloudflare-zone-id %s \
   --cloudflare-cache-purge-token %s \
   --r2-bucket-name %s \
@@ -554,19 +527,23 @@ nohup bash -c '
   --enable-root-mode %t%s \
   --bootstrap-mode \
   %s
-' > ./builder_output_%s.log 2>&1 &
+' > %s 2>&1 &
 echo "Builder build backgrounded for %s architecture at $(date)";
-echo "Builder output will be written to ./builder_output_%s.log";
-`, arch, debugApkRepos, debugKeyrings, useRoot, flagsSection,
+echo "Builder output will be written to %s";
+`, workDirEscaped, arch, debugApkRepos, debugKeyrings, useRoot, builderBin, workDirEscaped, flagsSection,
 			param.GetParam(ctx).CloudflareZoneID, param.GetParam(ctx).CloudflareCachePurgeToken,
 			param.GetParam(ctx).R2BucketName, param.GetParam(ctx).R2AccessKey, param.GetParam(ctx).R2SecretKey, param.GetParam(ctx).R2Endpoint, "auto",
-			useRoot, r2DirectoryFlag, arch, arch, arch, arch)
+			useRoot, r2DirectoryFlag, arch, builderLog, arch, builderLog)
 	} else {
 		// Standard mode: no debug logging
+		builderBin := filepath.Join(workDir, "builder")
+		builderLog := filepath.Join(workDir, fmt.Sprintf("builder_output_%s.log", arch))
+		workDirEscaped := strings.ReplaceAll(workDir, "'", "'\\''")
 		cmd = fmt.Sprintf(`set -euo pipefail
+cd '%s'
 echo "Starting builder build for %s architecture at $(date)";
 nohup bash -c '
-/home/builder/builder build \
+%s build --work-dir '%s' \
   %s \
   %s \
   --cloudflare-zone-id %s \
@@ -578,14 +555,14 @@ nohup bash -c '
   --r2-region %s \
   --enable-root-mode %t%s \
   %s
-' > ./builder_output_%s.log 2>&1 &
+' > %s 2>&1 &
 echo "Builder build backgrounded for %s architecture at $(date)";
-echo "Builder output will be written to ./builder_output_%s.log";
-`, arch,
+echo "Builder output will be written to %s";
+`, workDirEscaped, arch, builderBin, workDirEscaped,
 			apkRepositoryFlags, keyringAppendFlags,
 			param.GetParam(ctx).CloudflareZoneID, param.GetParam(ctx).CloudflareCachePurgeToken,
 			param.GetParam(ctx).R2BucketName, param.GetParam(ctx).R2AccessKey, param.GetParam(ctx).R2SecretKey, param.GetParam(ctx).R2Endpoint, "auto",
-			useRoot, r2DirectoryFlag, arch, arch, arch, arch)
+			useRoot, r2DirectoryFlag, arch, builderLog, arch, builderLog)
 	}
 
 	if err := execution.SetExecutionBuildCommand(ctx, executionID, arch, cmd, pkgVersion.BootstrapEnabled); err != nil {
@@ -629,7 +606,7 @@ echo "Builder output will be written to ./builder_output_%s.log";
 		vmCtx.UpdateLastCommand("build command")
 	}
 
-	if err := runBackgroundCommand(client, vm.ID, cmd); err != nil {
+	if err := runner.RunBackgroundCommand(ctx, cmd, executionID); err != nil {
 		return fmt.Errorf("failed to start background builder build: %w", err)
 	}
 

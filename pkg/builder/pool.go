@@ -17,6 +17,8 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -534,7 +536,7 @@ func checkAndUpdateVMStatus(ctx context.Context, vmID string) error {
 			}
 
 			go func() {
-				if err := installBuildEnv(ctx, vmID); err != nil {
+				if err := InstallBuildEnv(ctx, vmID); err != nil {
 					logger.Error(fmt.Errorf("build environment setup failed for VM %s, deleting for reprovisioning: %w", vmID, err))
 
 					// Delete the VM so it gets reprovisioned automatically
@@ -592,7 +594,9 @@ func checkAndUpdateVMStatus(ctx context.Context, vmID string) error {
 	return nil
 }
 
-func installBuildEnv(ctx context.Context, vmID string) error {
+// InstallBuildEnv installs required build tools on a VM (melange, apko, grype, syft, docker, signing keys, builder binary, etc.).
+// The machine must exist in machine_pool with status "installing". Used by CMX (after provision) and static backend (on seed).
+func InstallBuildEnv(ctx context.Context, vmID string) error {
 	logger.Trace("installing build env", zap.String("vmID", vmID))
 
 	vm, err := getMachine(ctx, vmID)
@@ -604,9 +608,14 @@ func installBuildEnv(ctx context.Context, vmID string) error {
 		return fmt.Errorf("machine %s is not in installing state, current status: %s", vmID, vm.Status)
 	}
 
+	homeDir, err := GetRemoteHome(ctx, vm)
+	if err != nil {
+		return fmt.Errorf("failed to get remote home for VM %s: %w", vmID, err)
+	}
+
 	// Put the cve0 signing key in the machine
 	{
-		if err := getSigningKeys(ctx, vm); err != nil {
+		if err := getSigningKeys(ctx, vm, homeDir); err != nil {
 			return fmt.Errorf("failed to put signing keys on VM %s: %w", vmID, err)
 		}
 	}
@@ -662,13 +671,13 @@ func installBuildEnv(ctx context.Context, vmID string) error {
 
 	// copy the builder binary
 	{
-		if err := copyBuilderBinary(ctx, vm); err != nil {
+		if err := copyBuilderBinary(ctx, vm, homeDir); err != nil {
 			return fmt.Errorf("failed to copy builder binary to VM %s: %w", vmID, err)
 		}
 	}
 
 	// Copy build env files
-	if err := copyBuildEnvFiles(ctx, vm); err != nil {
+	if err := copyBuildEnvFiles(ctx, vm, homeDir); err != nil {
 		return fmt.Errorf("failed to copy build env files to VM %s: %w", vmID, err)
 	}
 
@@ -762,7 +771,7 @@ func installBuildEnv(ctx context.Context, vmID string) error {
 	return nil
 }
 
-func copyBuilderBinary(ctx context.Context, vm types.BuilderVM) error {
+func copyBuilderBinary(ctx context.Context, vm types.BuilderVM, homeDir string) error {
 	logger.Trace("copying builder binary", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port), zap.String("architecture", vm.Architecture))
 
 	// Check if builder is embedded for this architecture
@@ -789,8 +798,9 @@ func copyBuilderBinary(ctx context.Context, vm types.BuilderVM) error {
 	defer client.Close()
 
 	// Check if builder already exists and remove it
+	builderPath := homeDir + "/builder"
 	logger.Debug("Checking for existing builder binary", zap.String("vmID", vm.ID))
-	existingCheckCmd := `ls -la /home/builder/builder || echo "No existing builder found"`
+	existingCheckCmd := fmt.Sprintf("ls -la %q || echo \"No existing builder found\"", builderPath)
 
 	existingStdoutCh := make(chan string)
 	existingStderrCh := make(chan string)
@@ -815,7 +825,7 @@ func copyBuilderBinary(ctx context.Context, vm types.BuilderVM) error {
 	existingWg.Wait()
 
 	// Remove existing builder to ensure clean deployment
-	removeCmd := `rm -f /home/builder/builder`
+	removeCmd := fmt.Sprintf("rm -f %q", builderPath)
 	removeStdoutCh := make(chan string)
 	removeStderrCh := make(chan string)
 	var removeWg sync.WaitGroup
@@ -840,12 +850,12 @@ func copyBuilderBinary(ctx context.Context, vm types.BuilderVM) error {
 
 	// Copy the builder binary to the remote machine
 	logger.Debug("Deploying new builder binary", zap.String("vmID", vm.ID), zap.Int("size", len(builderData)))
-	if err := CreateRemoteBinaryFile(client.Client, "/home/builder/builder", builderData); err != nil {
+	if err := CreateRemoteBinaryFile(client.Client, builderPath, builderData); err != nil {
 		return fmt.Errorf("failed to copy builder binary to VM %s: %w", vm.ID, err)
 	}
 
 	// Make the binary executable
-	cmd := `chmod +x /home/builder/builder`
+	cmd := fmt.Sprintf("chmod +x %q", builderPath)
 
 	stdoutCh := make(chan string)
 	stderrCh := make(chan string)
@@ -872,7 +882,7 @@ func copyBuilderBinary(ctx context.Context, vm types.BuilderVM) error {
 	}
 
 	// Verify the deployment by checking the new file
-	verifyCmd := `ls -la /home/builder/builder && echo "--- Builder Help ---" && /home/builder/builder --help | head -10`
+	verifyCmd := fmt.Sprintf("ls -la %q && echo \"--- Builder Help ---\" && %q --help | head -10", builderPath, builderPath)
 	verifyStdoutCh := make(chan string)
 	verifyStderrCh := make(chan string)
 	var verifyWg sync.WaitGroup
@@ -977,15 +987,15 @@ func installBasicDeps(ctx context.Context, vm types.BuilderVM) error {
 	return nil
 }
 
-func getSigningKeys(ctx context.Context, vm types.BuilderVM) error {
-	if err := getCve0SigningKey(ctx, vm); err != nil {
+func getSigningKeys(ctx context.Context, vm types.BuilderVM, homeDir string) error {
+	if err := getCve0SigningKey(ctx, vm, homeDir); err != nil {
 		return fmt.Errorf("failed to get cve0 signing key for VM %s: %w", vm.ID, err)
 	}
 
 	return nil
 }
 
-func getCve0SigningKey(ctx context.Context, vm types.BuilderVM) error {
+func getCve0SigningKey(ctx context.Context, vm types.BuilderVM, homeDir string) error {
 	logger.Trace("getting cve0 signing key", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
 
 	decodedSigningPublicKey, err := base64.StdEncoding.DecodeString(param.GetParam(ctx).APKPublicKeyData)
@@ -999,7 +1009,8 @@ func getCve0SigningKey(ctx context.Context, vm types.BuilderVM) error {
 	}
 	defer client.Close()
 
-	if err := CreateRemoteTextFile(client.Client, "/home/builder/cve0-signing.rsa.pub", string(decodedSigningPublicKey)); err != nil {
+	path := homeDir + "/cve0-signing.rsa.pub"
+	if err := CreateRemoteTextFile(client.Client, path, string(decodedSigningPublicKey)); err != nil {
 		return fmt.Errorf("failed to create remote text file on VM %s: %w", vm.ID, err)
 	}
 
@@ -1221,17 +1232,21 @@ func installDocker(ctx context.Context, vm types.BuilderVM) error {
 	}
 	defer client.Close()
 
-	// Install Docker using the official installation script
-	// This installs Docker Engine, CLI, and containerd
+	// Install Docker using the official installation script.
+	// Add the current SSH user ($USER) to the docker group, not hardcoded "builder", so static VMs work.
 	cmd := `
 set -e
+if docker version; then
+  echo "Docker already installed, skipping."
+  exit 0
+fi
 
 echo "Installing Docker..."
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
 
-echo "Adding builder user to docker group..."
-sudo usermod -aG docker builder
+echo "Adding current user to docker group..."
+sudo usermod -aG docker "$USER"
 
 echo "Starting Docker service..."
 sudo systemctl start docker
@@ -1423,8 +1438,8 @@ func provisionVM(ctx context.Context, machineID string, architecture string, dis
 			zap.Duration("ttl", vmTTLDuration))
 	}
 
-	query := `insert into machine_pool (id, machine_id, created_at, expires_at, private_key, username, status, architecture, is_on_demand) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-	_, err = conn.Exec(ctx, query, vm.ID, machineID, time.Now().UTC(), expiresAt, privateKeyEncoded, "builder", vm.Status, architecture, isOnDemand)
+	query := `insert into machine_pool (id, machine_id, created_at, expires_at, private_key, username, status, architecture, is_on_demand, type) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	_, err = conn.Exec(ctx, query, vm.ID, machineID, time.Now().UTC(), expiresAt, privateKeyEncoded, "builder", vm.Status, architecture, isOnDemand, "cmx")
 	if err != nil {
 		return types.BuilderVM{}, fmt.Errorf("failed to insert machine into database: %w", err)
 	}
@@ -1546,9 +1561,8 @@ func archiveMachineToHistory(ctx context.Context, vmID string, terminationReason
 
 	// Get additional fields from machine_pool table
 	var machineID string
-	var assignedTaskType, assignedTaskID sql.NullString
-	query := `SELECT machine_id, assigned_task_type, assigned_task_id FROM machine_pool WHERE id = $1`
-	err = conn.QueryRow(ctx, query, vmID).Scan(&machineID, &assignedTaskType, &assignedTaskID)
+	query := `SELECT machine_id FROM machine_pool WHERE id = $1`
+	err = conn.QueryRow(ctx, query, vmID).Scan(&machineID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			logger.Debug("machine not found in machine_pool when archiving (likely already processed)", zap.String("vmID", vmID))
@@ -1585,12 +1599,19 @@ func archiveMachineToHistory(ctx context.Context, vmID string, terminationReason
 			failure_details = COALESCE(EXCLUDED.failure_details, machine_pool_history.failure_details)
 	`
 
+	// Get assignment from machine_assignment table
 	var assignedTaskTypeStr, assignedTaskIDStr string
-	if assignedTaskType.Valid {
-		assignedTaskTypeStr = assignedTaskType.String
+	assignment, assignErr := GetMachineAssignment(ctx, vmID)
+	if assignErr != nil {
+		logger.Warn("failed to get machine assignment for archiving", zap.String("vmID", vmID), zap.Error(assignErr))
+	} else if assignment != nil {
+		assignedTaskTypeStr = assignment.AssignedTaskType
+		assignedTaskIDStr = assignment.AssignedTaskID
 	}
-	if assignedTaskID.Valid {
-		assignedTaskIDStr = assignedTaskID.String
+
+	// Clean up machine_assignment when archiving
+	if delErr := DeleteAllMachineAssignments(ctx, vmID); delErr != nil {
+		logger.Warn("failed to delete machine assignments during archive", zap.String("vmID", vmID), zap.Error(delErr))
 	}
 
 	result, err := conn.Exec(ctx, historyQuery,
@@ -1778,6 +1799,45 @@ func DeleteVMWithReason(ctx context.Context, vmID string, terminationReason stri
 	return nil
 }
 
+// resolveWorkDirForAssignment returns the work dir for a machine assignment by runner type.
+// Local: subdirectory under os.TempDir()/securebuild (same pattern as LocalBackend.createWorkDir).
+// CMX: remote $HOME (single build at a time).
+// Static: remote $HOME/builds/{taskID}-{architecture} (same pattern as static backend).
+func resolveWorkDirForAssignment(ctx context.Context, vm types.BuilderVM, taskType, taskID, architecture string) (string, error) {
+	switch vm.Type {
+	case "local":
+		var dirName string
+		switch taskType {
+		case "build_package":
+			dirName = fmt.Sprintf("execution-%s-%s", taskID, architecture)
+		case "build_image":
+			dirName = fmt.Sprintf("build-%s", taskID)
+		default:
+			dirName = fmt.Sprintf("task-%s-%s", taskType, taskID)
+		}
+		return filepath.Join(os.TempDir(), "securebuild", dirName), nil
+	case "cmx":
+		home, err := GetRemoteHome(ctx, vm)
+		if err != nil {
+			return "", err
+		}
+		return home, nil
+	case "static":
+		home, err := GetRemoteHome(ctx, vm)
+		if err != nil {
+			return "", err
+		}
+		return home + "/builds/" + taskID + "-" + architecture, nil
+	default:
+		// Backward compat: treat as cmx
+		home, err := GetRemoteHome(ctx, vm)
+		if err != nil {
+			return "", err
+		}
+		return home, nil
+	}
+}
+
 // tryTakeVMWithAssignment attempts to take a VM from the pool without blocking.
 // Returns nil if no VM is available, or the assigned VM if successful.
 // This function holds the architecture-specific mutex for the duration of the assignment.
@@ -1793,22 +1853,20 @@ func tryTakeVMWithAssignment(ctx context.Context, architecture string, taskType 
 	}
 	defer tx.Rollback(ctx)
 
-	// Find and lock an available VM atomically
+	// Find an available VM: running, not locked, not on-demand, and has capacity
+	// (fewer than MAX_PARALLEL_BUILDS assignments in machine_assignment)
+	maxParallel := getMaxParallelBuilds(ctx)
 	query := `
-		UPDATE machine_pool
-		SET assigned_task_type = $1, assigned_task_id = $2
-		WHERE id = (
-			SELECT id FROM machine_pool
-			WHERE architecture = $3
-			AND status = 'running'
-			AND (assigned_task_id IS NULL OR assigned_task_id = '')
-			AND cleanup_locked_at IS NULL
-			AND is_on_demand = false
-			ORDER BY created_at ASC
-			FOR UPDATE SKIP LOCKED
-			LIMIT 1
-		)
-		RETURNING id, created_at, expires_at, private_key, username, status, ip_address, port, architecture
+		SELECT id, created_at, expires_at, private_key, username, status, ip_address, port, architecture, type
+		FROM machine_pool
+		WHERE architecture = $1
+		AND status = 'running'
+		AND cleanup_locked_at IS NULL
+		AND is_on_demand = false
+		AND (SELECT COUNT(*) FROM machine_assignment WHERE machine_id = machine_pool.id) < $2
+		ORDER BY created_at ASC
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1
 	`
 
 	var vm types.BuilderVM
@@ -1816,9 +1874,9 @@ func tryTakeVMWithAssignment(ctx context.Context, architecture string, taskType 
 	var port sql.NullInt32
 	var arch sql.NullString
 
-	err = tx.QueryRow(ctx, query, taskType, taskID, architecture).Scan(
+	err = tx.QueryRow(ctx, query, architecture, maxParallel).Scan(
 		&vm.ID, &vm.CreatedAt, &vm.ExpiresAt, &vm.PrivateKey,
-		&vm.Username, &vm.Status, &ipAddress, &port, &arch,
+		&vm.Username, &vm.Status, &ipAddress, &port, &arch, &vm.Type,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -1826,15 +1884,10 @@ func tryTakeVMWithAssignment(ctx context.Context, architecture string, taskType 
 			logger.Trace("no available machines in database", zap.String("architecture", architecture))
 			return nil, nil
 		}
-		return nil, fmt.Errorf("failed to assign VM: %w", err)
+		return nil, fmt.Errorf("failed to find available VM: %w", err)
 	}
 
-	// Successfully assigned VM, commit transaction
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit VM assignment: %w", err)
-	}
-
-	// Set optional fields
+	// Set optional fields so resolveWorkDirForAssignment can use them (e.g. GetRemoteHome for cmx/static)
 	if ipAddress.Valid {
 		vm.IPAddress = ipAddress.String
 	}
@@ -1843,6 +1896,27 @@ func tryTakeVMWithAssignment(ctx context.Context, architecture string, taskType 
 	}
 	if arch.Valid {
 		vm.Architecture = arch.String
+	}
+	vm.AssignedTaskType = taskType
+	vm.AssignedTaskID = taskID
+
+	// Resolve work_dir in the same transaction so we insert it with the assignment
+	workDir, err := resolveWorkDirForAssignment(ctx, vm, taskType, taskID, architecture)
+	if err != nil {
+		return nil, fmt.Errorf("resolve work dir for assignment: %w", err)
+	}
+
+	assignQuery := `INSERT INTO machine_assignment (machine_id, assigned_task_type, assigned_task_id, work_dir, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (machine_id, assigned_task_type, assigned_task_id) DO UPDATE SET work_dir = EXCLUDED.work_dir`
+	_, err = tx.Exec(ctx, assignQuery, vm.ID, taskType, taskID, workDir, time.Now().UTC())
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert machine assignment: %w", err)
+	}
+
+	// Successfully assigned VM, commit transaction
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit VM assignment: %w", err)
 	}
 
 	// Extend the VM TTL to the configured value when assigned to a build
@@ -1857,6 +1931,19 @@ func tryTakeVMWithAssignment(ctx context.Context, architecture string, taskType 
 		zap.String("taskID", taskID))
 
 	return &vm, nil
+}
+
+// getMaxParallelBuilds returns the configured max parallel builds, defaulting to 1.
+// CMX is hardcoded to 1 (builds run in HOME; single build at a time).
+func getMaxParallelBuilds(ctx context.Context) int {
+	p := param.TryGetParam(ctx)
+	if p != nil && p.BuildBackend == "cmx" {
+		return 1
+	}
+	if p != nil && p.MaxParallelBuilds > 0 {
+		return p.MaxParallelBuilds
+	}
+	return 1
 }
 
 // TakeVMWithAssignment atomically takes a VM from the pool and assigns it to a task
@@ -1919,7 +2006,7 @@ func getMachine(ctx context.Context, machineID string) (types.BuilderVM, error) 
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `select id, created_at, expires_at, private_key, username, status, ip_address, port, architecture, last_uptime, last_uptime_updated_at, cleanup_locked_at, is_on_demand, assigned_task_type, assigned_task_id from machine_pool where id = $1`
+	query := `select id, created_at, expires_at, private_key, username, status, ip_address, port, architecture, last_uptime, last_uptime_updated_at, cleanup_locked_at, is_on_demand, type from machine_pool where id = $1`
 	row := conn.QueryRow(ctx, query, machineID)
 
 	var machine types.BuilderVM
@@ -1930,9 +2017,8 @@ func getMachine(ctx context.Context, machineID string) (types.BuilderVM, error) 
 	var lastUptimeUpdatedAt sql.NullTime
 	var cleanupLockedAt sql.NullTime
 	var isOnDemand sql.NullBool
-	var assignedTaskType sql.NullString
-	var assignedTaskID sql.NullString
-	err := row.Scan(&machine.ID, &machine.CreatedAt, &machine.ExpiresAt, &machine.PrivateKey, &machine.Username, &machine.Status, &ipAddress, &port, &architecture, &lastUptime, &lastUptimeUpdatedAt, &cleanupLockedAt, &isOnDemand, &assignedTaskType, &assignedTaskID)
+	var machineType sql.NullString
+	err := row.Scan(&machine.ID, &machine.CreatedAt, &machine.ExpiresAt, &machine.PrivateKey, &machine.Username, &machine.Status, &ipAddress, &port, &architecture, &lastUptime, &lastUptimeUpdatedAt, &cleanupLockedAt, &isOnDemand, &machineType)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return types.BuilderVM{}, ErrMachineNotFound
@@ -1961,11 +2047,17 @@ func getMachine(ctx context.Context, machineID string) (types.BuilderVM, error) 
 	if isOnDemand.Valid {
 		machine.IsOnDemand = isOnDemand.Bool
 	}
-	if assignedTaskType.Valid {
-		machine.AssignedTaskType = assignedTaskType.String
+	if machineType.Valid {
+		machine.Type = machineType.String
 	}
-	if assignedTaskID.Valid {
-		machine.AssignedTaskID = assignedTaskID.String
+
+	// Populate assignment from machine_assignment table
+	assignment, err := GetMachineAssignment(ctx, machineID)
+	if err != nil {
+		logger.Warn("failed to get machine assignment", zap.String("machineID", machineID), zap.Error(err))
+	} else if assignment != nil {
+		machine.AssignedTaskType = assignment.AssignedTaskType
+		machine.AssignedTaskID = assignment.AssignedTaskID
 	}
 
 	return machine, nil
@@ -1979,11 +2071,11 @@ func deleteExpiredMachines(ctx context.Context) error {
 	}
 	defer conn.Release()
 
-	// First get the expired machines to archive them
+	// First get the expired machines to archive them (use machine_assignment to check if assigned)
 	selectQuery := `SELECT id FROM machine_pool
                     WHERE expires_at < now()
-                    AND (assigned_task_id IS NULL OR assigned_task_id = '')
-                    AND cleanup_locked_at IS NULL`
+                    AND cleanup_locked_at IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM machine_assignment WHERE machine_id = machine_pool.id)`
 	rows, err := conn.Query(ctx, selectQuery)
 	if err != nil {
 		return fmt.Errorf("failed to query expired machines: %w", err)
@@ -2007,11 +2099,11 @@ func deleteExpiredMachines(ctx context.Context) error {
 		}
 	}
 
-	// Now delete the expired machines
+	// Now delete the expired machines (use machine_assignment to check if assigned)
 	deleteQuery := `DELETE FROM machine_pool
                     WHERE expires_at < now()
-                    AND (assigned_task_id IS NULL OR assigned_task_id = '')
-                    AND cleanup_locked_at IS NULL`
+                    AND cleanup_locked_at IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM machine_assignment WHERE machine_id = machine_pool.id)`
 	result, err := conn.Exec(ctx, deleteQuery)
 	if err != nil {
 		return fmt.Errorf("failed to delete expired machines: %w", err)
@@ -2033,6 +2125,13 @@ func getVMsWithAssignmentStatus(ctx context.Context, vmIDs []string) (map[string
 		return make(map[string]bool), nil
 	}
 
+	// Initialize all VMs as unassigned
+	result := make(map[string]bool)
+	for _, id := range vmIDs {
+		result[id] = false
+	}
+
+	// Query machine_assignment to find which VMs have assignments
 	placeholders := make([]string, len(vmIDs))
 	args := make([]interface{}, len(vmIDs))
 	for i, id := range vmIDs {
@@ -2041,9 +2140,9 @@ func getVMsWithAssignmentStatus(ctx context.Context, vmIDs []string) (map[string
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, (assigned_task_id IS NOT NULL AND assigned_task_id != '') as is_assigned
-		FROM machine_pool
-		WHERE id IN (%s)
+		SELECT DISTINCT machine_id
+		FROM machine_assignment
+		WHERE machine_id IN (%s)
 	`, strings.Join(placeholders, ","))
 
 	rows, err := conn.Query(ctx, query, args...)
@@ -2052,14 +2151,12 @@ func getVMsWithAssignmentStatus(ctx context.Context, vmIDs []string) (map[string
 	}
 	defer rows.Close()
 
-	result := make(map[string]bool)
 	for rows.Next() {
 		var vmID string
-		var isAssigned bool
-		if err := rows.Scan(&vmID, &isAssigned); err != nil {
+		if err := rows.Scan(&vmID); err != nil {
 			return nil, fmt.Errorf("failed to scan VM assignment status: %w", err)
 		}
-		result[vmID] = isAssigned
+		result[vmID] = true
 	}
 
 	return result, nil
@@ -2069,10 +2166,11 @@ func unassignVM(ctx context.Context, vmID string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `UPDATE machine_pool SET assigned_task_type = NULL, assigned_task_id = NULL WHERE id = $1`
-	_, err := conn.Exec(ctx, query, vmID)
+	// Delete all assignments from machine_assignment (primary source of truth)
+	assignQuery := `DELETE FROM machine_assignment WHERE machine_id = $1`
+	_, err := conn.Exec(ctx, assignQuery, vmID)
 	if err != nil {
-		return fmt.Errorf("failed to unassign VM: %w", err)
+		return fmt.Errorf("failed to delete machine assignments: %w", err)
 	}
 
 	return nil
@@ -2082,7 +2180,7 @@ func listMachines(ctx context.Context, machineID string) ([]types.BuilderVM, err
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `select id, created_at, expires_at, private_key, username, status, ip_address, port, architecture, last_uptime, last_uptime_updated_at, cleanup_locked_at, is_on_demand, assigned_task_type, assigned_task_id from machine_pool where machine_id = $1 and expires_at > now() OR expires_at is NULL`
+	query := `select id, created_at, expires_at, private_key, username, status, ip_address, port, architecture, last_uptime, last_uptime_updated_at, cleanup_locked_at, is_on_demand, type from machine_pool where machine_id = $1 and (expires_at > now() OR expires_at is NULL)`
 	rows, err := conn.Query(ctx, query, machineID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query machines: %w", err)
@@ -2099,9 +2197,8 @@ func listMachines(ctx context.Context, machineID string) ([]types.BuilderVM, err
 		var lastUptimeUpdatedAt sql.NullTime
 		var cleanupLockedAt sql.NullTime
 		var isOnDemand sql.NullBool
-		var assignedTaskType sql.NullString
-		var assignedTaskID sql.NullString
-		err := rows.Scan(&machine.ID, &machine.CreatedAt, &machine.ExpiresAt, &machine.PrivateKey, &machine.Username, &machine.Status, &ipAddress, &port, &architecture, &lastUptime, &lastUptimeUpdatedAt, &cleanupLockedAt, &isOnDemand, &assignedTaskType, &assignedTaskID)
+		var machineType sql.NullString
+		err := rows.Scan(&machine.ID, &machine.CreatedAt, &machine.ExpiresAt, &machine.PrivateKey, &machine.Username, &machine.Status, &ipAddress, &port, &architecture, &lastUptime, &lastUptimeUpdatedAt, &cleanupLockedAt, &isOnDemand, &machineType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan machine in listMachines: %w", err)
 		}
@@ -2127,12 +2224,19 @@ func listMachines(ctx context.Context, machineID string) ([]types.BuilderVM, err
 		if isOnDemand.Valid {
 			machine.IsOnDemand = isOnDemand.Bool
 		}
-		if assignedTaskType.Valid {
-			machine.AssignedTaskType = assignedTaskType.String
+		if machineType.Valid {
+			machine.Type = machineType.String
 		}
-		if assignedTaskID.Valid {
-			machine.AssignedTaskID = assignedTaskID.String
+
+		// Populate assignment from machine_assignment table
+		assignment, assignErr := GetMachineAssignment(ctx, machine.ID)
+		if assignErr != nil {
+			logger.Warn("failed to get machine assignment in listMachines", zap.String("machineID", machine.ID), zap.Error(assignErr))
+		} else if assignment != nil {
+			machine.AssignedTaskType = assignment.AssignedTaskType
+			machine.AssignedTaskID = assignment.AssignedTaskID
 		}
+
 		machines = append(machines, machine)
 	}
 
@@ -2155,11 +2259,46 @@ func GetMachineID() (string, error) {
 	return "", fmt.Errorf("no suitable network interface found")
 }
 
-func GetSSHClient(ctx context.Context, vm types.BuilderVM) (*KeepAliveSSHClient, error) {
-	// Parse the private key (base64 decode first)
-	privateKeyBytes, err := base64.StdEncoding.DecodeString(vm.PrivateKey)
+// getPrivateKeyBytes resolves vm.PrivateKey: "file:<path>" reads from disk (static backend), else base64-encoded (CMX).
+func getPrivateKeyBytes(vm types.BuilderVM) ([]byte, error) {
+	if strings.HasPrefix(vm.PrivateKey, "file:") {
+		keyPath := strings.TrimPrefix(vm.PrivateKey, "file:")
+		b, err := os.ReadFile(keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read SSH key file %s: %w", keyPath, err)
+		}
+		return b, nil
+	}
+	return base64.StdEncoding.DecodeString(vm.PrivateKey)
+}
+
+// GetRemoteHome returns the remote VM's $HOME via SSH (works for static and CMX).
+func GetRemoteHome(ctx context.Context, vm types.BuilderVM) (string, error) {
+	client, err := GetSSHClient(ctx, vm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to base64 decode private key for VM %s: %w", vm.ID, err)
+		return "", err
+	}
+	defer client.Close()
+	sess, err := client.Client.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("new session: %w", err)
+	}
+	defer sess.Close()
+	out, err := sess.CombinedOutput("echo $HOME")
+	if err != nil {
+		return "", fmt.Errorf("echo $HOME: %w", err)
+	}
+	home := strings.TrimSpace(string(out))
+	if home == "" {
+		home = "/home/" + vm.Username
+	}
+	return home, nil
+}
+
+func GetSSHClient(ctx context.Context, vm types.BuilderVM) (*KeepAliveSSHClient, error) {
+	privateKeyBytes, err := getPrivateKeyBytes(vm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve private key for VM %s: %w", vm.ID, err)
 	}
 	key, err := ssh.ParsePrivateKey(privateKeyBytes)
 	if err != nil {
@@ -2214,7 +2353,7 @@ func GetSSHClient(ctx context.Context, vm types.BuilderVM) (*KeepAliveSSHClient,
 	}, nil
 }
 
-func copyBuildEnvFiles(ctx context.Context, vm types.BuilderVM) error {
+func copyBuildEnvFiles(ctx context.Context, vm types.BuilderVM, homeDir string) error {
 	logger.Trace("copying build env files", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
 
 	client, err := GetSSHClient(ctx, vm)
@@ -2231,9 +2370,9 @@ func copyBuildEnvFiles(ctx context.Context, vm types.BuilderVM) error {
 		if d.IsDir() {
 			return nil
 		}
-		// Compute the destination path
+		// Compute the destination path under VM's $HOME
 		relPath := strings.TrimPrefix(path, "filesystem/")
-		destPath := "/home/builder/" + relPath
+		destPath := homeDir + "/" + relPath
 		// Ensure parent directory exists
 		lastSlash := strings.LastIndex(destPath, "/")
 		if lastSlash > 0 {
@@ -2428,13 +2567,10 @@ func getUptimeViaSSH(ctx context.Context, vm types.BuilderVM) (string, error) {
 		return "", fmt.Errorf("incomplete VM connection info")
 	}
 
-	// Decode the private key
-	privateKeyBytes, err := base64.StdEncoding.DecodeString(vm.PrivateKey)
+	privateKeyBytes, err := getPrivateKeyBytes(vm)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode private key: %w", err)
+		return "", fmt.Errorf("failed to resolve private key: %w", err)
 	}
-
-	// Parse the private key
 	signer, err := ssh.ParsePrivateKey(privateKeyBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse private key: %w", err)
@@ -2525,7 +2661,7 @@ func countAvailableVMsByArchitecture(ctx context.Context, machineID string, arch
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `SELECT COUNT(*) FROM machine_pool WHERE machine_id = $1 AND architecture = $2 AND status = 'running' AND (assigned_task_id IS NULL OR assigned_task_id = '') AND cleanup_locked_at IS NULL AND (expires_at > now() OR expires_at IS NULL)`
+	query := `SELECT COUNT(*) FROM machine_pool WHERE machine_id = $1 AND architecture = $2 AND status = 'running' AND cleanup_locked_at IS NULL AND (expires_at > now() OR expires_at IS NULL) AND NOT EXISTS (SELECT 1 FROM machine_assignment WHERE machine_id = machine_pool.id)`
 	var count int
 	err := conn.QueryRow(ctx, query, machineID, architecture).Scan(&count)
 	if err != nil {
@@ -2583,11 +2719,11 @@ func getVMsByArchitectureForDeletion(ctx context.Context, machineID string, arch
 	query := `
 		SELECT id, created_at, expires_at, private_key, username, status, ip_address, port, architecture,
 		       last_uptime, last_uptime_updated_at, cleanup_locked_at,
-		       (assigned_task_id IS NOT NULL AND assigned_task_id != '') as is_assigned
+		       EXISTS(SELECT 1 FROM machine_assignment WHERE machine_id = machine_pool.id) as is_assigned
 		FROM machine_pool
 		WHERE machine_id = $1 AND architecture = $2 AND (expires_at > now() OR expires_at IS NULL) AND cleanup_locked_at IS NULL
 		ORDER BY
-			CASE WHEN (assigned_task_id IS NULL OR assigned_task_id = '') THEN 0 ELSE 1 END,
+			CASE WHEN NOT EXISTS(SELECT 1 FROM machine_assignment WHERE machine_id = machine_pool.id) THEN 0 ELSE 1 END,
 			CASE status
 				WHEN 'queued' THEN 1
 					WHEN 'provisioning' THEN 1
@@ -2661,16 +2797,21 @@ func ProvisionVMForBuild(ctx context.Context, machineID string, architecture str
 	return provisionVM(ctx, machineID, architecture, diskSizeGB, isOnDemand)
 }
 
-// AssignVMToTask assigns a VM to a specific task
-func AssignVMToTask(ctx context.Context, vmID string, taskType string, taskID string) error {
-	conn := persistence.MustGetPooledPostgresSession(ctx)
-	defer conn.Release()
-
-	query := `UPDATE machine_pool SET assigned_task_type = $1, assigned_task_id = $2 WHERE id = $3`
-	_, err := conn.Exec(ctx, query, taskType, taskID, vmID)
-	if err != nil {
-		return fmt.Errorf("failed to assign VM to task: %w", err)
+// AssignVMToTask assigns a VM to a specific task by inserting into machine_assignment.
+// workDir is optional; CMX uses the VM's $HOME (see GetRemoteHome).
+func AssignVMToTask(ctx context.Context, vmID string, taskType string, taskID string, workDir string) error {
+	if workDir != "" {
+		return InsertMachineAssignmentWithWorkDir(ctx, vmID, taskType, taskID, workDir)
 	}
 
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+	assignQuery := `INSERT INTO machine_assignment (machine_id, assigned_task_type, assigned_task_id, created_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (machine_id, assigned_task_type, assigned_task_id) DO NOTHING`
+	_, err := conn.Exec(ctx, assignQuery, vmID, taskType, taskID, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("failed to insert machine assignment: %w", err)
+	}
 	return nil
 }

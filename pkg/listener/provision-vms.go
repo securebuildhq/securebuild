@@ -48,9 +48,13 @@ func handleProvisionVMs(ctx context.Context, payload string) error {
 		return fmt.Errorf("failed to provision x86_64 VM: %w", err)
 	}
 
-	// Assign VM to this execution BEFORE provisioning completes
-	// This allows installBuildEnv to know what to do when VM becomes ready
-	if err := builder.AssignVMToTask(ctx, vmx86.ID, "build_package", p.ExecutionID); err != nil {
+	// Assign VM to this execution BEFORE provisioning completes (work dir = remote $HOME)
+	x86Home, err := builder.GetRemoteHome(ctx, vmx86)
+	if err != nil {
+		builder.DeleteVM(ctx, vmx86.ID)
+		return fmt.Errorf("failed to get x86_64 VM home: %w", err)
+	}
+	if err := builder.AssignVMToTask(ctx, vmx86.ID, "build_package", p.ExecutionID, x86Home); err != nil {
 		builder.DeleteVM(ctx, vmx86.ID)
 		return fmt.Errorf("failed to assign x86_64 VM to task: %w", err)
 	}
@@ -72,8 +76,14 @@ func handleProvisionVMs(ctx context.Context, payload string) error {
 		return fmt.Errorf("failed to provision aarch64 VM: %w", err)
 	}
 
-	// Assign VM to this execution
-	if err := builder.AssignVMToTask(ctx, vmaarch64.ID, "build_package", p.ExecutionID); err != nil {
+	// Assign VM to this execution (work dir = remote $HOME)
+	armHome, err := builder.GetRemoteHome(ctx, vmaarch64)
+	if err != nil {
+		builder.DeleteVM(ctx, vmx86.ID)
+		builder.DeleteVM(ctx, vmaarch64.ID)
+		return fmt.Errorf("failed to get aarch64 VM home: %w", err)
+	}
+	if err := builder.AssignVMToTask(ctx, vmaarch64.ID, "build_package", p.ExecutionID, armHome); err != nil {
 		builder.DeleteVM(ctx, vmx86.ID)
 		builder.DeleteVM(ctx, vmaarch64.ID)
 		return fmt.Errorf("failed to assign aarch64 VM to task: %w", err)

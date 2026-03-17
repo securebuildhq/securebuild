@@ -13,6 +13,7 @@ func RootCmd() *cobra.Command {
 
 	rootCmd.AddCommand(BuildCmd())
 	rootCmd.AddCommand(BuildImageCmd())
+	rootCmd.AddCommand(SetupCmd())
 
 	return &rootCmd
 }

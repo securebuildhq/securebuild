@@ -419,6 +419,32 @@ func SetExecutionBuildStartedAt(ctx context.Context, executionID string, arch st
 	return nil
 }
 
+// GetExecution returns the execution by ID, including build_started_at fields for timeout checks.
+func GetExecution(ctx context.Context, executionID string) (*types.Execution, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	query := `
+		SELECT id, status, created_at,
+		       x86_64_build_started_at, aarch64_build_started_at
+		FROM execution WHERE id = $1
+	`
+	row := conn.QueryRow(ctx, query, executionID)
+	var exec types.Execution
+	var x86Started, aarch64Started sql.NullTime
+	err := row.Scan(&exec.ID, &exec.Status, &exec.CreatedAt, &x86Started, &aarch64Started)
+	if err != nil {
+		return nil, err
+	}
+	if x86Started.Valid {
+		exec.X86_64BuildStartedAt = &x86Started.Time
+	}
+	if aarch64Started.Valid {
+		exec.Aarch64BuildStartedAt = &aarch64Started.Time
+	}
+	return &exec, nil
+}
+
 func GetExecutionBuildFinishedAt(ctx context.Context, executionID string, arch string) (*time.Time, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
