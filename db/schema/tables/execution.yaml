@@ -94,9 +94,3 @@ schema:
       - name: cause_id
         type: text
 
-      # flag to indicate if this execution is for a custom package
-      - name: is_custom_package
-        type: boolean
-        constraints:
-          notNull: true
-        default: false
