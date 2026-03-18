@@ -215,7 +215,7 @@
               # Install grype-db if not already installed
               if ! command -v grype-db &> /dev/null; then
                 echo "📦 Installing grype-db..."
-                GOBIN=$GOBIN go install github.com/anchore/grype-db@latest
+                GOBIN=$GOBIN go install github.com/anchore/grype-db/cmd/grype-db@latest
               fi
               
               # Helper function to check and display tool status
