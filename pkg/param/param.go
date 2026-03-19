@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -159,6 +160,28 @@ const (
 	InitSourceYAMLFile    InitSource = "yaml_file"
 )
 
+// ResolveInitSource reads SECUREBUILD_CONFIG_SOURCE from the environment and
+// returns the corresponding InitSource:
+//
+//	missing / "doppler" → InitSourceDoppler
+//	"env"              → InitSourceEnvironment
+//	*.yaml / *.yml     → InitSourceYAMLFile
+func ResolveInitSource() (InitSource, error) {
+	configSource := os.Getenv("SECUREBUILD_CONFIG_SOURCE")
+	switch {
+	case configSource == "" || configSource == "doppler":
+		return InitSourceDoppler, nil
+	case configSource == "env":
+		return InitSourceEnvironment, nil
+	default:
+		ext := filepath.Ext(configSource)
+		if ext == ".yaml" || ext == ".yml" {
+			return InitSourceYAMLFile, nil
+		}
+		return "", fmt.Errorf("invalid SECUREBUILD_CONFIG_SOURCE: %s (expected 'doppler', 'env', or path to .yaml/.yml file)", configSource)
+	}
+}
+
 // Init initializes param and returns a context with the param embedded
 // overrides is optional - used in tests to override specific values
 // Base values always loaded from environment, then overrides applied on top
@@ -193,6 +216,11 @@ func Init(source InitSource, overrides map[string]string) (context.Context, erro
 			return nil, err
 		}
 
+		// Overlay environment variables on top so they take precedence over the file.
+		if err = overlayFromEnvironment(p); err != nil {
+			return nil, err
+		}
+
 		// Apply overrides if provided (for tests)
 		if overrides != nil {
 			applyOverrides(p, overrides)
@@ -223,6 +251,28 @@ func Init(source InitSource, overrides map[string]string) (context.Context, erro
 // yamlTagToEnvVar converts a yaml tag value to the UPPER_SNAKE_CASE env var name.
 func yamlTagToEnvVar(yamlTag string) string {
 	return strings.ToUpper(yamlTag)
+}
+
+// overlayFromEnvironment applies any set environment variables on top of p,
+// letting env vars take precedence over values already loaded (e.g. from a YAML file).
+func overlayFromEnvironment(p *Param) error {
+	v := reflect.ValueOf(p).Elem()
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := t.Field(i)
+		yamlTag := field.Tag.Get("yaml")
+		if yamlTag == "" {
+			continue
+		}
+		envVarValue := os.Getenv(yamlTagToEnvVar(yamlTag))
+		if envVarValue == "" {
+			continue
+		}
+		if err := setFieldValue(v.Field(i), field, envVarValue); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // loadFromEnvironment loads all params from actual environment variables.

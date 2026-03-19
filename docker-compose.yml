@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: securebuild
+    ports:
+      - "15432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  migrations:
+    image: securebuild-migrations:latest
+    environment:
+      DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
+    depends_on:
+      - postgres
+    deploy:
+      restart_policy:
+        condition: none
+
+  worker:
+    image: securebuild-worker:latest
+    command: ["run"]
+    environment:
+      DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
+      SECUREBUILD_CONFIG_SOURCE: /config-cmx.yaml
+    volumes:
+      - ${REPO_ROOT}/config-cmx.yaml:/config-cmx.yaml:ro
+    ports:
+      - "50000:50000"
+    depends_on:
+      - postgres
+
+  app:
+    image: securebuild-app:latest
+    env_file:
+      - ./securebuild-app/.env.local
+    environment:
+      DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
+      HOSTNAME: "0.0.0.0"
+    volumes:
+      - ${REPO_ROOT}/securebuild-app/.env.local:/app/.env.local:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+
+  apk-proxy:
+    image: securebuild-worker:latest
+    command: ["apk-proxy"]
+    environment:
+      DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
+      SECUREBUILD_CONFIG_SOURCE: /config-cmx.yaml
+    volumes:
+      - ${REPO_ROOT}/config-cmx.yaml:/config-cmx.yaml:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+  oci-proxy:
+    image: securebuild-worker:latest
+    command: ["oci-proxy"]
+    environment:
+      DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
+      SECUREBUILD_CONFIG_SOURCE: /config-cmx.yaml
+    volumes:
+      - ${REPO_ROOT}/config-cmx.yaml:/config-cmx.yaml:ro
+    ports:
+      - "8081:8081"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data: {}
