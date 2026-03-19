@@ -176,7 +176,7 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 			logger.Debug("update-build-package-status: checking x86_64 build status",
 				zap.String("executionID", executionID),
 				zap.String("x86WorkDir", x86WorkDir))
-			x86BuildComplete, buildErr := checkBuildStatus(ctx, x86Builder, executionID, "x86_64", pkgVersion, x86WorkDir)
+			x86BuildComplete, buildErr := isBuildStatusComplete(ctx, x86Builder, executionID, "x86_64", pkgVersion, x86WorkDir)
 			if buildErr != nil && buildErr != ErrBuildFailed {
 				return fmt.Errorf("failed to check x86_64 build status: %w", buildErr)
 			}
@@ -202,7 +202,7 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 			logger.Debug("update-build-package-status: checking aarch64 build status",
 				zap.String("executionID", executionID),
 				zap.String("aarch64WorkDir", aarch64WorkDir))
-			aarch64BuildComplete, buildErr := checkBuildStatus(ctx, aarch64Builder, executionID, "aarch64", pkgVersion, aarch64WorkDir)
+			aarch64BuildComplete, buildErr := isBuildStatusComplete(ctx, aarch64Builder, executionID, "aarch64", pkgVersion, aarch64WorkDir)
 			if buildErr != nil && buildErr != ErrBuildFailed {
 				return fmt.Errorf("failed to check aarch64 build status: %w", buildErr)
 			}
@@ -458,7 +458,7 @@ func earliestBuildStartedAt(exe *executiontypes.Execution) *time.Time {
 }
 
 // returns true if build is complete, false if not, and an error if there is an error
-func checkBuildStatus(ctx context.Context, vm buildertypes.BuilderVM, exeID string, arch string, pkgVersion *sbpackagetypes.PackageVersion, workDir string) (bool, error) {
+func isBuildStatusComplete(ctx context.Context, vm buildertypes.BuilderVM, exeID string, arch string, pkgVersion *sbpackagetypes.PackageVersion, workDir string) (bool, error) {
 	// Resolve work directory: use provided value, fall back to assignment lookup
 	if workDir == "" {
 		wd, err := builder.GetWorkDirForTask(ctx, "build_package", exeID, vm.ID)
@@ -470,13 +470,13 @@ func checkBuildStatus(ctx context.Context, vm buildertypes.BuilderVM, exeID stri
 
 	runner, err := buildbackend.NewRunner(ctx, vm)
 	if err != nil {
-		logger.Warn("EXECUTION FAILED: failed to create runner for build status check - marking as VM deleted",
+		logger.Warn("EXECUTION FAILED: failed to create runner for build status check",
 			zap.String("executionID", exeID),
 			zap.String("arch", arch),
 			zap.String("vmID", vm.ID),
 			zap.Error(err))
 
-		if updateErr := execution.UpdateExecutionStatus(ctx, exeID, executiontypes.ExecutionStatusVMDeleted); updateErr != nil {
+		if updateErr := execution.UpdateExecutionStatus(ctx, exeID, executiontypes.ExecutionStatusFailed); updateErr != nil {
 			logger.Warn("failed to update execution status", zap.Error(updateErr))
 		}
 

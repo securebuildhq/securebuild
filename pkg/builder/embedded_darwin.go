@@ -11,6 +11,7 @@ import (
 )
 
 // Linux builder binaries — always included so remote VMs (SSH) get the correct Linux builder.
+//
 //go:embed builder-linux-amd64
 var embeddedBuilderLinuxAMD64 []byte
 
@@ -18,6 +19,7 @@ var embeddedBuilderLinuxAMD64 []byte
 var embeddedBuilderLinuxARM64 []byte
 
 // Darwin builder binaries — only for local backend when building and running on Mac.
+//
 //go:embed builder-darwin-amd64
 var embeddedBuilderDarwinAMD64 []byte
 

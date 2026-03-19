@@ -154,8 +154,16 @@ func ReleaseMachine(ctx context.Context, machineID, taskType, taskID, machineTyp
 					stderrCh := make(chan string)
 					var wg sync.WaitGroup
 					wg.Add(2)
-					go func() { defer wg.Done(); for range stdoutCh {} }()
-					go func() { defer wg.Done(); for range stderrCh {} }()
+					go func() {
+						defer wg.Done()
+						for range stdoutCh {
+						}
+					}()
+					go func() {
+						defer wg.Done()
+						for range stderrCh {
+						}
+					}()
 					if runErr := RunCommand(ctx, client.Client, machineID, cmd, stdoutCh, stderrCh); runErr != nil {
 						logger.Warn("failed to delete remote work dir",
 							zap.String("machineID", machineID),

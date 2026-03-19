@@ -183,23 +183,23 @@ func checkAndHandleBuildCompletion(ctx context.Context, buildID string, builderV
 	}
 
 	var status string
-	var statusSource string
+	var isStatusFileMissing bool
 	if !exists {
-		status = "running"
-		statusSource = "defaulted (file missing)"
+		status = "building"
+		isStatusFileMissing = true
 	} else {
 		statusContent, err := runner.ReadFile(statusFile)
 		if err != nil {
 			return nil
 		}
 		status = strings.TrimSpace(statusContent)
-		statusSource = "file"
+		isStatusFileMissing = false
 	}
 
 	// If builder-status file is still missing long after the build started, the builder
 	// likely failed to start (e.g. binary not found). Mark the build failed so it does not stay stuck.
 	// This is an edge case when process fails to start, but the exist code is 0 (because of nohup and shell wrappers). On average, we are not going to be waiting for 5 minutes.
-	if (status == "running" || status == "building") && statusSource == "defaulted (file missing)" {
+	if status == "building" && isStatusFileMissing {
 		imageBuild, err := image.GetImageBuildByID(ctx, buildID)
 		if err == nil && imageBuild.BuildStartedAt != nil {
 			elapsed := time.Since(*imageBuild.BuildStartedAt)
@@ -218,7 +218,7 @@ func checkAndHandleBuildCompletion(ctx context.Context, buildID string, builderV
 
 	// Update database with current status for in-progress builds
 	switch status {
-	case "running", "building":
+	case "building":
 		// Already in building status, nothing to update
 		return nil
 	case "testing":

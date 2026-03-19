@@ -123,4 +123,3 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 
 	return nil
 }
-

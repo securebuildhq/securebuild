@@ -120,9 +120,9 @@ type Param struct {
 	RemoveCommitSHAPins bool `yaml:"remove_commit_sha_pins"`
 
 	// Build backend configuration
-	BuildBackend    string     `yaml:"build_backend"`
-	MaxParallelBuilds int      `yaml:"max_parallel_builds"`
-	StaticVMs       []StaticVM `yaml:"static_vms"`
+	BuildBackend      string     `yaml:"build_backend"`
+	MaxParallelBuilds int        `yaml:"max_parallel_builds"`
+	StaticVMs         []StaticVM `yaml:"static_vms"`
 }
 
 // Use a simple string as context key to avoid type compatibility issues

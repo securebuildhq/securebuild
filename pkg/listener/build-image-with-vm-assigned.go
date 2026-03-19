@@ -570,4 +570,3 @@ func storeMultiArchIndexManifest(ctx context.Context, ociPathWithoutTag string, 
 
 	return nil
 }
-

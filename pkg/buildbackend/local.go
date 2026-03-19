@@ -51,15 +51,15 @@ func (b *LocalBackend) SeedMachinePool(ctx context.Context) error {
 			type = EXCLUDED.type
 	`
 	_, err := conn.Exec(ctx, query,
-		localMachineID,    // id
-		localMachineID,    // machine_id
-		time.Now().UTC(),  // created_at
-		"",                // private_key (not needed for local)
-		"",                // username (not needed for local)
-		"running",         // status
-		b.architecture,    // architecture
-		false,             // is_on_demand
-		"local",           // type
+		localMachineID,   // id
+		localMachineID,   // machine_id
+		time.Now().UTC(), // created_at
+		"",               // private_key (not needed for local)
+		"",               // username (not needed for local)
+		"running",        // status
+		b.architecture,   // architecture
+		false,            // is_on_demand
+		"local",          // type
 	)
 	if err != nil {
 		return fmt.Errorf("failed to seed local machine in pool: %w", err)
