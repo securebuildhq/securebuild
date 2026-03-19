@@ -351,21 +351,12 @@ func processImageBuildResults(ctx context.Context, buildID string, tmpDir string
 
 	// Process each tag
 	scanAt := time.Now()
-	var readme *string
-	if apko.Readme != "" {
-		readme = &apko.Readme
-	} else if img.Readme != "" {
-		readme = &img.Readme
-	}
 
 	for _, actualTag := range actualTags {
-		// Pass STANDARD database scan results (includes SecureOS provider) for WWW display
-		// and CUSTOM database scan results (without SecureOS provider) for record-keeping
 		imageCatalogID, err := processImageTag(ctx, img, apko, actualTag, ociPathWithoutTag, scanAt,
 			scanResults.GrypeScanStandardX86, scanResults.GrypeScanStandardAarch64,
-			scanResults.GrypeScanCustomX86, scanResults.GrypeScanCustomAarch64,
 			scanResults.AlternateScanX86, scanResults.AlternateScanAarch64,
-			readme, tmpDir)
+			tmpDir)
 		if err != nil {
 			return fmt.Errorf("failed to process image tag %s: %w", actualTag, err)
 		}
@@ -528,7 +519,7 @@ func captureLogFileWithRunner(ctx context.Context, runner buildbackend.Runner, b
 }
 
 // processImageTag processes a single image tag and creates catalog entries
-func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetypes.ImageAPKO, actualTag string, ociPathWithoutTag string, scanAt time.Time, scanResultX86Raw, scanResultAarch64Raw, customScanResultX86Raw, customScanResultAarch64Raw, alternateScanResultX86Raw, alternateScanResultAarch64Raw string, readme *string, tmpDir string) (string, error) {
+func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetypes.ImageAPKO, actualTag string, ociPathWithoutTag string, scanAt time.Time, scanResultX86Raw, scanResultAarch64Raw, alternateScanResultX86Raw, alternateScanResultAarch64Raw string, tmpDir string) (string, error) {
 	// ----------------------------------------------------
 	// Resolve digest for the just-pushed image tag FIRST
 	// ----------------------------------------------------
@@ -556,11 +547,9 @@ func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetype
 
 	imageCatalogID, err := image.CreateCatalogImage(ctx,
 		img.Name, actualTag, img.ID, apko.ID, apko.LatestVersion.ID,
-		0, 0, "", "", digest, // include index digest
+		"", "", digest,
 		scanAt, scanResultX86Raw, scanResultAarch64Raw,
-		customScanResultX86Raw, customScanResultAarch64Raw,
-		alternateScanResultX86Raw, alternateScanResultAarch64Raw,
-		readme)
+		alternateScanResultX86Raw, alternateScanResultAarch64Raw)
 	if err != nil {
 		return "", fmt.Errorf("failed to create catalog image: %w", err)
 	}

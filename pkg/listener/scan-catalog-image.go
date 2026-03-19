@@ -76,7 +76,7 @@ func handleScanCatalogImage(ctx context.Context, payload string) error {
 	// Update image_catalog with both STANDARD and CUSTOM scan results
 	// Standard results (with SecureOS provider) for WWW display
 	// Custom results (without SecureOS provider) for record-keeping
-	if err := updateCatalogScanResults(ctx, scanPayload.CatalogImageID, standardScanResults, customScanResults); err != nil {
+	if err := updateCatalogScanResults(ctx, scanPayload.CatalogImageID, standardScanResults); err != nil {
 		return fmt.Errorf("failed to update scan results: %w", err)
 	}
 
@@ -178,7 +178,7 @@ func getCatalogImageForScan(ctx context.Context, catalogImageID string) (*catalo
 	return result, nil
 }
 
-func updateCatalogScanResults(ctx context.Context, catalogImageID string, standardScanResults, customScanResults map[string]string) error {
+func updateCatalogScanResults(ctx context.Context, catalogImageID string, standardScanResults map[string]string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -211,24 +211,20 @@ func updateCatalogScanResults(ctx context.Context, catalogImageID string, standa
 			continue
 		}
 
-		// Calculate fixed CVE count and get alternate scan result from last_image_scan table
-		fixedCVECount := 0
+		// Get alternate scan result from last_image_scan table
 		alternateScanResult := ""
 		if alternateImageName != "" {
-			fixedCVECount, alternateScanResult, err = image.GetFixedCVEsFromLastScan(ctx, alternateImageName, imageTag, arch, standardScanResult)
+			_, alternateScanResult, err = image.GetFixedCVEsFromLastScan(ctx, alternateImageName, imageTag, arch, standardScanResult)
 			if err != nil {
-				logger.Warn("failed to calculate fixed CVE count",
+				logger.Warn("failed to get alternate scan result",
 					zap.String("catalogImageID", catalogImageID),
 					zap.String("arch", arch),
 					zap.String("alternateImage", alternateImageName),
 					zap.String("imageTag", imageTag),
 					zap.Error(err))
-				// Continue with fixedCVECount = 0 and empty alternate result if calculation fails
+				// Continue with empty alternate result if retrieval fails
 			}
 		}
-
-		// Get custom scan result for this architecture
-		customScanResult := customScanResults[arch]
 
 		// Update the appropriate architecture-specific fields
 		// Use CASE to only update scan results when non-empty (preserves existing data on partial failures)
@@ -238,26 +234,22 @@ func updateCatalogScanResults(ctx context.Context, catalogImageID string, standa
 			updateQuery = `
 				UPDATE image_catalog
 				SET last_scan_result_x86 = CASE WHEN $2 != '' THEN $2 ELSE last_scan_result_x86 END,
-				    last_scan_result_custom_x86 = CASE WHEN $3 != '' THEN $3 ELSE last_scan_result_custom_x86 END,
-				    last_scan_result_alternate_x86 = CASE WHEN $4 != '' THEN $4 ELSE last_scan_result_alternate_x86 END,
-				    fixed_cve_count_x86 = $5,
-				    last_scanned_at = $6
+				    last_scan_result_alternate_x86 = CASE WHEN $3 != '' THEN $3 ELSE last_scan_result_alternate_x86 END,
+				    last_scanned_at = $4
 				WHERE id = $1`
 		case "aarch64":
 			updateQuery = `
 				UPDATE image_catalog
 				SET last_scan_result_aarch64 = CASE WHEN $2 != '' THEN $2 ELSE last_scan_result_aarch64 END,
-				    last_scan_result_custom_aarch64 = CASE WHEN $3 != '' THEN $3 ELSE last_scan_result_custom_aarch64 END,
-				    last_scan_result_alternate_aarch64 = CASE WHEN $4 != '' THEN $4 ELSE last_scan_result_alternate_aarch64 END,
-				    fixed_cve_count_aarch64 = $5,
-				    last_scanned_at = $6
+				    last_scan_result_alternate_aarch64 = CASE WHEN $3 != '' THEN $3 ELSE last_scan_result_alternate_aarch64 END,
+				    last_scanned_at = $4
 				WHERE id = $1`
 		default:
 			logger.Warn("Unknown architecture", zap.String("arch", arch), zap.String("catalogImageID", catalogImageID))
 			continue
 		}
 
-		_, err = conn.Exec(ctx, updateQuery, catalogImageID, standardScanResult, customScanResult, alternateScanResult, fixedCVECount, now)
+		_, err = conn.Exec(ctx, updateQuery, catalogImageID, standardScanResult, alternateScanResult, now)
 		if err != nil {
 			logger.Warn("failed to update scan results",
 				zap.String("catalogImageID", catalogImageID),
@@ -269,8 +261,7 @@ func updateCatalogScanResults(ctx context.Context, catalogImageID string, standa
 		logger.Info("Updated catalog scan results",
 			zap.String("catalogImageID", catalogImageID),
 			zap.String("arch", arch),
-			zap.Int("totalCVEs", parsedResults.Counts.TotalCount),
-			zap.Int("fixedCVEs", fixedCVECount))
+			zap.Int("totalCVEs", parsedResults.Counts.TotalCount))
 	}
 
 	// Update next_scan_at for next scanning cycle with randomness to distribute load
