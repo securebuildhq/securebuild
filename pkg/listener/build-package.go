@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/securebuildhq/securebuild/pkg/builder"
+	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/execution"
 	executiontypes "github.com/securebuildhq/securebuild/pkg/execution/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
@@ -108,40 +108,44 @@ func HandleBuildPackage(ctx context.Context, payload string) error {
 		return fmt.Errorf("failed to create execution: %w", err)
 	}
 
-	// Check if custom disk size is specified
-	if pkgVersion.CustomDiskSize != nil && *pkgVersion.CustomDiskSize > 0 {
-		// Set status to "provisioning" for on-demand VMs
-		if err := execution.UpdateExecutionStatus(ctx, exe.ID, executiontypes.ExecutionStatusProvisioning); err != nil {
-			return fmt.Errorf("failed to set execution status to provisioning: %w", err)
+	// Get the active backend to determine architecture behavior
+	backend := buildbackend.GetBackend(ctx)
+	if backend == nil {
+		// Fallback: create backend from config (handles tests and legacy code paths)
+		var backendErr error
+		backend, backendErr = buildbackend.GetActiveBackend(ctx)
+		if backendErr != nil {
+			logger.Warn("failed to create build backend, falling back to CMX", zap.Error(backendErr))
+			backend, _ = buildbackend.NewCMXBackend(ctx)
 		}
-
-		// Queue provision_vms event for custom disk size
-		provisionVMsPayload := ProvisionVMsPayload{
-			PackageID:        pkg.ID,
-			PackageVersionID: pkgVersion.ID,
-			ExecutionID:      exe.ID,
-			DiskSizeGB:       *pkgVersion.CustomDiskSize,
-		}
-
-		marshalledPayload, err := json.Marshal(provisionVMsPayload)
-		if err != nil {
-			return fmt.Errorf("failed to marshal provision vms payload: %w", err)
-		}
-
-		if err := persistence.EnqueueWork(ctx, "provision_vms", string(marshalledPayload)); err != nil {
-			return fmt.Errorf("failed to enqueue provision vms: %w", err)
-		}
-
-		return nil
 	}
 
-	// Use pool VMs for standard disk size
+	// On-demand VMs (custom disk size) are only supported for CMX backend
+	if pkgVersion.CustomDiskSize != nil && *pkgVersion.CustomDiskSize > 0 {
+		if backend == nil || backend.Type() == buildbackend.BackendCMX {
+			return handleOnDemandProvision(ctx, exe, pkg, pkgVersion)
+		}
+		// For non-CMX backends, ignore custom disk size and proceed normally
+		logger.Warn("custom disk size requested but backend does not support on-demand VMs, using standard build",
+			zap.String("backend", string(backend.Type())),
+			zap.String("executionID", exe.ID))
+	}
+
 	// Set status to "queued" for pool VM builds
 	if err := execution.UpdateExecutionStatus(ctx, exe.ID, executiontypes.ExecutionStatusQueued); err != nil {
 		return fmt.Errorf("failed to set execution status: %w", err)
 	}
 
-	x86VMID, armVMID, err := assignVMsWithTimeout(ctx, exe.ID, time.Minute*10)
+	// Determine which architectures to build based on backend
+	arches, err := getPackageBuildArchitectures(ctx, backend)
+	if err != nil {
+		if statusErr := execution.UpdateExecutionStatus(ctx, exe.ID, executiontypes.ExecutionStatusFailed); statusErr != nil {
+			logger.Warn("failed to set execution status to failed", zap.Error(statusErr))
+		}
+		return fmt.Errorf("failed to determine build architectures: %w", err)
+	}
+
+	x86VMID, armVMID, x86WorkDir, armWorkDir, err := assignVMsForArchitectures(ctx, backend, exe.ID, arches)
 	if err != nil {
 		logger.Warn("EXECUTION FAILED: VM assignment failure - could not assign required VMs for build",
 			zap.String("executionID", exe.ID),
@@ -168,6 +172,8 @@ func HandleBuildPackage(ctx context.Context, payload string) error {
 		X86VMID:          x86VMID,
 		ARMVMID:          armVMID,
 		ExecutionID:      exe.ID,
+		X86WorkDir:       x86WorkDir,
+		ARMWorkDir:       armWorkDir,
 	}
 
 	marshalledPayload, err := json.Marshal(buildPackageWithVmsAssignedPayload)
@@ -182,27 +188,71 @@ func HandleBuildPackage(ctx context.Context, payload string) error {
 	return nil
 }
 
-func assignVMsWithTimeout(ctx context.Context, executionID string, timeout time.Duration) (string, string, error) {
-	logger.Debug("assigning VMs",
+// handleOnDemandProvision handles the on-demand VM provisioning path (CMX only).
+func handleOnDemandProvision(ctx context.Context, exe *executiontypes.Execution, pkg *sbpackagetypes.Package, pkgVersion *sbpackagetypes.PackageVersion) error {
+	if err := execution.UpdateExecutionStatus(ctx, exe.ID, executiontypes.ExecutionStatusProvisioning); err != nil {
+		return fmt.Errorf("failed to set execution status to provisioning: %w", err)
+	}
+
+	provisionVMsPayload := ProvisionVMsPayload{
+		PackageID:        pkg.ID,
+		PackageVersionID: pkgVersion.ID,
+		ExecutionID:      exe.ID,
+		DiskSizeGB:       *pkgVersion.CustomDiskSize,
+	}
+
+	marshalledPayload, err := json.Marshal(provisionVMsPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal provision vms payload: %w", err)
+	}
+
+	if err := persistence.EnqueueWork(ctx, "provision_vms", string(marshalledPayload)); err != nil {
+		return fmt.Errorf("failed to enqueue provision vms: %w", err)
+	}
+
+	return nil
+}
+
+// getPackageBuildArchitectures returns the architectures to build for package builds.
+func getPackageBuildArchitectures(ctx context.Context, backend buildbackend.Backend) ([]string, error) {
+	if backend == nil {
+		// Fallback: always both (legacy CMX behavior)
+		return []string{"x86_64", "aarch64"}, nil
+	}
+	return backend.AvailableArchitectures(ctx)
+}
+
+// assignVMsForArchitectures assigns VMs for the given architectures using the active backend.
+// Returns x86VMID, armVMID, x86WorkDir, armWorkDir; either pair may be empty if that arch is not in the list.
+func assignVMsForArchitectures(ctx context.Context, backend buildbackend.Backend, executionID string, arches []string) (string, string, string, string, error) {
+	logger.Debug("assigning VMs for architectures",
 		zap.String("executionID", executionID),
-		zap.Duration("timeout", timeout),
+		zap.Strings("architectures", arches),
 	)
 
-	// Create a context with timeout
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	var x86VMID, armVMID, x86WorkDir, armWorkDir string
 
-	vmx86, err := builder.TakeVMWithAssignment(timeoutCtx, "x86_64", "build_package", executionID)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to take vm for x86_64: %w", err)
+	for _, arch := range arches {
+		machine, err := backend.AcquireBuildMachine(ctx, buildbackend.AcquireOptions{
+			Architecture: arch,
+			TaskType:     "build_package",
+			TaskID:       executionID,
+		})
+		if err != nil {
+			return "", "", "", "", fmt.Errorf("failed to acquire build machine for %s: %w", arch, err)
+		}
+
+		switch arch {
+		case "x86_64":
+			x86VMID = machine.ID
+			x86WorkDir = machine.WorkDir
+		case "aarch64":
+			armVMID = machine.ID
+			armWorkDir = machine.WorkDir
+		}
 	}
 
-	vmaarch64, err := builder.TakeVMWithAssignment(timeoutCtx, "aarch64", "build_package", executionID)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to take vm for aarch64: %w", err)
-	}
-
-	return vmx86.ID, vmaarch64.ID, nil
+	return x86VMID, armVMID, x86WorkDir, armWorkDir, nil
 }
 
 func updateDependenciesForPackageVersion(ctx context.Context, pkgVersion *sbpackagetypes.PackageVersion) error {

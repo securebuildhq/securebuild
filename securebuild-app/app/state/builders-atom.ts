@@ -7,6 +7,8 @@ export interface Builder {
   expiresAt: string;
   status: string;
   assignedTask: string;
+  /** All assigned tasks for display with line breaks in Status column */
+  assignedTasks?: string[];
   architecture?: string;
   lastUptime?: string;
   lastUptimeUpdatedAt?: string;

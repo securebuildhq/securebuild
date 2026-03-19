@@ -51,3 +51,7 @@ schema:
       constraints:
         notNull: true
       default: "false"
+    - name: type
+      type: text
+      constraints:
+        notNull: true

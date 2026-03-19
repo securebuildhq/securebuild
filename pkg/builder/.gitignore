@@ -1,2 +1,4 @@
 builder-linux-amd64
 builder-linux-arm64
+builder-darwin-amd64
+builder-darwin-arm64

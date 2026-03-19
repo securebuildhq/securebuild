@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	image "github.com/securebuildhq/securebuild/pkg/image"
 	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
@@ -65,7 +64,7 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 	}
 
 	// Assign VM for image building
-	vmID, err := assignVMForImageBuild(ctx, imageBuild.ID, time.Minute*10)
+	vmID, workDir, err := assignVMForImageBuild(ctx, imageBuild.ID)
 	if err != nil {
 		logger.Warn("IMAGE BUILD FAILED: VM assignment failure - could not assign VM for image build",
 			zap.String("imageApkoVersionID", targetAPKO.LatestVersion.ID),
@@ -91,6 +90,7 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 	buildImageWithVMAssignedPayload := BuildImageWithVMAssignedPayload{
 		VMID:    vmID,
 		BuildID: imageBuild.ID,
+		WorkDir: workDir,
 	}
 
 	marshalledPayload, err := json.Marshal(buildImageWithVMAssignedPayload)

@@ -40,15 +40,18 @@ func BuildCmd() *cobra.Command {
 
 	useRoot := false
 	bootstrapMode := false
+	workDir := ""
 
 	buildCmd := cobra.Command{
 		Use:   "build",
 		Short: "Build and test a package",
 		Long:  `Build and test a package`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBuildAndTestPackage(cmd.Context(), apkRepositories, keyringAppends, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, zoneID, cachePurgeToken, useRoot, bootstrapMode)
+			return runBuildAndTestPackage(cmd.Context(), workDir, apkRepositories, keyringAppends, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, zoneID, cachePurgeToken, useRoot, bootstrapMode)
 		},
 	}
+
+	buildCmd.Flags().StringVar(&workDir, "work-dir", "", "Working directory (default: current directory). All paths (output/, pkginfo/, packages/) are relative to this.")
 
 	buildCmd.Flags().StringSliceVar(&apkRepositories, "apk-repository", []string{}, "APK repositories to use (can be specified multiple times)")
 	buildCmd.Flags().StringSliceVar(&keyringAppends, "keyring-append", []string{}, "Keyrings to append (can be specified multiple times)")
@@ -69,8 +72,18 @@ func BuildCmd() *cobra.Command {
 	return &buildCmd
 }
 
-func runBuildAndTestPackage(ctx context.Context, apkRepositories []string, keyringAppends []string, r2BucketName string, r2AccessKey string, r2SecretKey string, r2Endpoint string, r2Region string, r2Directory string, zoneID string, cachePurgeToken string, useRoot bool, bootstrapMode bool) error {
-	logger.Info("Building package")
+func runBuildAndTestPackage(ctx context.Context, workDir string, apkRepositories []string, keyringAppends []string, r2BucketName string, r2AccessKey string, r2SecretKey string, r2Endpoint string, r2Region string, r2Directory string, zoneID string, cachePurgeToken string, useRoot bool, bootstrapMode bool) error {
+	if workDir != "" {
+		if err := os.Chdir(workDir); err != nil {
+			return fmt.Errorf("failed to chdir to work-dir %s: %w", workDir, err)
+		}
+	}
+	return runBuildAndTestPackageInCwd(ctx, apkRepositories, keyringAppends, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, zoneID, cachePurgeToken, useRoot, bootstrapMode)
+}
+
+func runBuildAndTestPackageInCwd(ctx context.Context, apkRepositories []string, keyringAppends []string, r2BucketName string, r2AccessKey string, r2SecretKey string, r2Endpoint string, r2Region string, r2Directory string, zoneID string, cachePurgeToken string, useRoot bool, bootstrapMode bool) error {
+	// Log actual value so we can confirm whether root/sudo is in use (value comes from execution.use_root via --enable-root-mode).
+	logger.Info("Building package", zap.Bool("useRoot", useRoot))
 
 	// determine my own machine architecture
 	arch := ""
@@ -81,17 +94,20 @@ func runBuildAndTestPackage(ctx context.Context, apkRepositories []string, keyri
 		arch = "aarch64"
 	}
 
-	// pkginfo directory
-	pkgInfoDir := "/home/builder/pkginfo"
-	os.MkdirAll(pkgInfoDir, 0o755)
-
-	// create a file that show the status
-	outputDir := "/home/builder/output"
-	os.MkdirAll(outputDir, 0o755)
+	// Paths are relative to current working directory (set via --work-dir when run by the worker)
+	outputDir := "output"
+	pkgInfoDir := "pkginfo"
+	if err := os.MkdirAll(pkgInfoDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create pkginfo dir: %w", err)
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create output dir: %w", err)
+	}
 	statusFile := filepath.Join(outputDir, "status")
 	if err := WriteStatus(statusFile, types.ImageBuildStatusBuilding); err != nil {
 		return err
 	}
+	logger.Info("Wrote status=building; preparing melange command")
 
 	sudoOrNot := ""
 	if useRoot {
@@ -137,20 +153,28 @@ func runBuildAndTestPackage(ctx context.Context, apkRepositories []string, keyri
 
 	// Join with space and line continuation for readability
 	melangeCmd := strings.Join(cmdArgs, " \\\n\t")
+	logger.Info("Melange command", zap.String("melangeCmd", melangeCmd))
 
 	// Phase 1: Build
 	buildCmd := fmt.Sprintf(`set -euo pipefail
 mkdir -p packages;
 mkdir -p output;
 mkdir -p /tmp/melange-cache;
+echo "DEBUG: pwd=$(pwd)";
+echo "DEBUG: ls -la:";
+ls -la;
+echo "DEBUG: ls -la build-*.env 2>&1:";
+ls -la build-*.env 2>&1 || true;
 echo "Starting melange build for %s architecture at $(date)";
-%s%s > /home/builder/output/melange_stdout_%s.log 2> /home/builder/output/melange_stderr_%s.log;
+%s%s > output/melange_stdout_%s.log 2> output/melange_stderr_%s.log;
 MELANGE_EXIT_CODE=$?;
-echo $MELANGE_EXIT_CODE > /home/builder/output/melange_done_%s.txt;
+echo $MELANGE_EXIT_CODE > output/melange_done_%s.txt;
 echo "Melange build completed for %s architecture at $(date) with exit code $MELANGE_EXIT_CODE";
 	`, arch, sudoOrNot, melangeCmd, arch, arch, arch, arch)
 
+	logger.Info("Running melange build (blocking until complete); melange stdout/stderr go to output/melange_stdout_*.log and output/melange_stderr_*.log")
 	output, err := exec.CommandContext(ctx, "bash", "-c", buildCmd).CombinedOutput()
+	logger.Info("Melange build command finished", zap.Int("outputLen", len(output)), zap.Error(err))
 	logger.Debug("build command terminated", zap.String("output", string(output)), zap.Error(err))
 	if err != nil {
 		WriteStatus(statusFile, types.ImageBuildStatusFailed)
@@ -172,14 +196,14 @@ echo "Starting melange test for %s architecture at $(date)";
 	--arch %s \
 	--source-dir . \
 	--pipeline-dirs ./pipelines/packages/ \
-	--repository-append /home/builder/packages \
+	--repository-append packages \
 	--repository-append https://apk.cve0.io \
-	--keyring-append /home/builder/local-melange.rsa.pub \
+	--keyring-append local-melange.rsa.pub \
 	--keyring-append https://apk.cve0.io/key/cve0-signing.rsa.pub \
 	--test-package-append "busybox" \
-	>> /home/builder/output/melange_stdout_%s.log 2>> /home/builder/output/melange_stderr_%s.log;
+	>> output/melange_stdout_%s.log 2>> output/melange_stderr_%s.log;
 MELANGE_TEST_EXIT_CODE=$?;
-echo $MELANGE_TEST_EXIT_CODE > /home/builder/output/melange_test_done_%s.txt;
+echo $MELANGE_TEST_EXIT_CODE > output/melange_test_done_%s.txt;
 echo "Melange test completed for %s architecture at $(date) with exit code $MELANGE_TEST_EXIT_CODE";
 exit $MELANGE_TEST_EXIT_CODE;
 	`, arch, sudoOrNot, arch, arch, arch, arch, arch)
@@ -207,7 +231,7 @@ exit $MELANGE_TEST_EXIT_CODE;
 	}
 
 	// upload all packages
-	archPackagesDir := "/home/builder/packages/" + arch
+	archPackagesDir := filepath.Join("packages", arch)
 	apkFilenames, err := listAPKs(ctx, archPackagesDir)
 	if err != nil {
 		WriteStatus(statusFile, types.ImageBuildStatusFailed)
@@ -216,7 +240,7 @@ exit $MELANGE_TEST_EXIT_CODE;
 	logToFile(publishingLogFile, "uploading all packages to r2")
 
 	// Read execution ID once before uploading packages
-	executionIDFile := filepath.Join("/home/builder", "execution_id")
+	executionIDFile := "execution_id"
 	executionIDBytes, err := os.ReadFile(executionIDFile)
 	if err != nil {
 		return fmt.Errorf("failed to read execution id file: %w", err)

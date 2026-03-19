@@ -20,10 +20,10 @@ import (
 // information for vulnerability feed generation.
 //
 // Process:
-// 1. Extract package -> dependency relationships from SBOM
-// 2. For each CVE in the database with artifact_fixed_version set:
-//    a. Check if the scanned artifact version >= any fixed version (using Grype's version comparison)
-//    b. If yes, record the package version as containing the fix
+//  1. Extract package -> dependency relationships from SBOM
+//  2. For each CVE in the database with artifact_fixed_version set:
+//     a. Check if the scanned artifact version >= any fixed version (using Grype's version comparison)
+//     b. If yes, record the package version as containing the fix
 //
 // Parameters:
 //   - ctx: Context for database operations

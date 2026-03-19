@@ -25,7 +25,7 @@ type attemptInfoKey struct{}
 
 // AttemptInfo holds attempt count and max attempts for a work queue message.
 type AttemptInfo struct {
-	Attempt    int
+	Attempt     int
 	MaxAttempts int
 }
 

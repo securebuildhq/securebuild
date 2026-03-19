@@ -7,8 +7,10 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
+	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/builder"
 	"github.com/securebuildhq/securebuild/pkg/buildqueue"
 	"github.com/securebuildhq/securebuild/pkg/datadog"
@@ -49,10 +51,25 @@ func RunCmd() *cobra.Command {
 			stopTracer := datadog.Start("securebuild-worker")
 			defer stopTracer()
 
-			// Check if we should use environment-based configuration for testing
+			// Determine configuration source:
+			// SECUREBUILD_CONFIG_SOURCE can be:
+			//   - missing or "doppler" → load from Doppler (default)
+			//   - "env" → load from environment variables
+			//   - path to a .yaml/.yml file → load from YAML config file
 			var initSource param.InitSource = param.InitSourceDoppler
-			if os.Getenv("SECUREBUILD_USE_ENV_CONFIG") == "true" {
+			configSource := os.Getenv("SECUREBUILD_CONFIG_SOURCE")
+			switch {
+			case configSource == "" || configSource == "doppler":
+				// default: Doppler
+			case configSource == "env":
 				initSource = param.InitSourceEnvironment
+			default:
+				ext := filepath.Ext(configSource)
+				if ext == ".yaml" || ext == ".yml" {
+					initSource = param.InitSourceYAMLFile
+				} else {
+					return fmt.Errorf("invalid SECUREBUILD_CONFIG_SOURCE: %s (expected 'doppler', 'env', or path to .yaml/.yml file)", configSource)
+				}
 			}
 
 			ctx, err := param.Init(initSource, nil)
@@ -113,8 +130,29 @@ func runWorker(ctx context.Context) error {
 		return fmt.Errorf("failed to setup pipelines: %w", err)
 	}
 
-	if err := builder.CreatePool(ctx); err != nil {
-		return fmt.Errorf("failed to create pool: %w", err)
+	// Migrate machine_pool schema and backfill machine_assignment (idempotent)
+	if err := builder.MigrateMachinePool(ctx); err != nil {
+		return fmt.Errorf("failed to migrate machine pool: %w", err)
+	}
+
+	// Initialize the build backend and seed machine pool (async; slow and should not block startup)
+	backend, err := buildbackend.GetActiveBackend(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize build backend: %w", err)
+	}
+	go func() {
+		if err := backend.SeedMachinePool(ctx); err != nil {
+			logger.Error(fmt.Errorf("failed to seed machine pool for backend %s: %w", backend.Type(), err))
+		}
+	}()
+
+	// Store backend in context for use by listeners
+	ctx = buildbackend.WithBackend(ctx, backend)
+
+	if backend.Type() == buildbackend.BackendCMX {
+		if err := builder.CreatePool(ctx); err != nil {
+			return fmt.Errorf("failed to create pool: %w", err)
+		}
 	}
 
 	go func() {

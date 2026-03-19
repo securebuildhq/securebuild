@@ -1,30 +1,14 @@
+// Package builder embeds builder binaries and provides access by architecture or runtime.
+// Linux binaries are always embedded (for remote VMs over SSH, which are assumed to be Linux).
+// Darwin binaries are only embedded when building for darwin (for local backend on Mac).
 package builder
 
 import (
-	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 )
-
-//go:embed builder-linux-amd64
-var embeddedBuilderBinaryAMD64 []byte
-
-//go:embed builder-linux-arm64
-var embeddedBuilderBinaryARM64 []byte
-
-// GetEmbeddedBuilder returns the embedded builder binary for the specified architecture as bytes
-func GetEmbeddedBuilder(architecture string) []byte {
-	switch architecture {
-	case "x86_64", "amd64":
-		return embeddedBuilderBinaryAMD64
-	case "aarch64", "arm64":
-		return embeddedBuilderBinaryARM64
-	default:
-		return nil
-	}
-}
 
 // ExtractBuilderBinary extracts the embedded builder binary for the specified architecture to a temporary file
 // and returns the path to that file. The caller is responsible for cleaning up the file.
@@ -34,18 +18,14 @@ func ExtractBuilderBinary(architecture string) (string, error) {
 		return "", fmt.Errorf("embedded builder binary is empty for architecture %s", architecture)
 	}
 
-	// Create a temporary file
 	tmpDir := os.TempDir()
 	builderPath := filepath.Join(tmpDir, fmt.Sprintf("securebuild-builder-%s", architecture))
 
-	// On Windows, add .exe extension (though this shouldn't happen since we build for Linux)
 	if runtime.GOOS == "windows" {
 		builderPath += ".exe"
 	}
 
-	// Write the binary to the temporary file
-	err := os.WriteFile(builderPath, builderData, 0o755)
-	if err != nil {
+	if err := os.WriteFile(builderPath, builderData, 0o755); err != nil {
 		return "", fmt.Errorf("failed to write builder binary to temp file: %w", err)
 	}
 
@@ -59,15 +39,12 @@ func ExtractBuilderBinaryToPath(targetPath string, architecture string) error {
 		return fmt.Errorf("embedded builder binary is empty for architecture %s", architecture)
 	}
 
-	// Ensure the directory exists
 	dir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
-	// Write the binary to the target path
-	err := os.WriteFile(targetPath, builderData, 0o755)
-	if err != nil {
+	if err := os.WriteFile(targetPath, builderData, 0o755); err != nil {
 		return fmt.Errorf("failed to write builder binary to %s: %w", targetPath, err)
 	}
 
@@ -79,24 +56,9 @@ func GetBuilderBinarySize(architecture string) int {
 	return len(GetEmbeddedBuilder(architecture))
 }
 
-// IsBuilderEmbedded returns true if the builder binary is embedded for the specified architecture
+// IsBuilderEmbedded returns true if the builder binary is embedded for the specified architecture (Linux)
 func IsBuilderEmbedded(architecture string) bool {
 	return len(GetEmbeddedBuilder(architecture)) > 0
-}
-
-// GetSupportedArchitectures returns a list of architectures for which builder binaries are embedded
-func GetSupportedArchitectures() []string {
-	var supported []string
-
-	if len(embeddedBuilderBinaryAMD64) > 0 {
-		supported = append(supported, "x86_64")
-	}
-
-	if len(embeddedBuilderBinaryARM64) > 0 {
-		supported = append(supported, "aarch64")
-	}
-
-	return supported
 }
 
 // Legacy functions for backward compatibility - these use x86_64 as default

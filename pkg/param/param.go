@@ -10,6 +10,9 @@ import (
 	"strings"
 
 	"github.com/dilutedev/doppler"
+	"github.com/securebuildhq/securebuild/pkg/logger"
+	"go.uber.org/zap"
+	"gopkg.in/yaml.v3"
 )
 
 // camelToSnake converts UpperCamelCase to UPPER_SNAKE_CASE
@@ -24,87 +27,102 @@ func camelToSnake(s string) string {
 	return strings.ToUpper(result.String())
 }
 
+// StaticVM represents a statically configured VM for the static build backend.
+// Architecture is detected at startup via SSH (uname -m), not configured here.
+type StaticVM struct {
+	Host       string `yaml:"host" json:"host"`
+	User       string `yaml:"user" json:"user"`
+	Port       int    `yaml:"port" json:"port"`
+	SSHKeyPath string `yaml:"ssh_key_path" json:"ssh_key_path"`
+	SSHKey     string `yaml:"ssh_key" json:"ssh_key"`
+}
+
 type Param struct {
-	DBURI string `doppler:"DB_URI"`
+	DBURI string `yaml:"db_uri"`
 
-	SecureBuildApkRepository string `doppler:"SECUREBUILD_APK_REPOSITORY"`
+	SecureBuildApkRepository string `yaml:"securebuild_apk_repository"`
 
-	ReplicatedAPIToken     string `doppler:"REPLICATED_API_TOKEN"`
-	ReplicatedAPIOrigin    string `doppler:"REPLICATED_API_ORIGIN"`
-	OCIRegistryBase        string `doppler:"OCI_REGISTRY_BASE"`
-	ReplicatedAppSlug      string `doppler:"REPLICATED_APP_SLUG"`
-	ReplicatedRegistryHost string `doppler:"REPLICATED_REGISTRY_HOST"`
+	ReplicatedAPIToken     string `yaml:"replicated_api_token"`
+	ReplicatedAPIOrigin    string `yaml:"replicated_api_origin"`
+	OCIRegistryBase        string `yaml:"oci_registry_base"`
+	ReplicatedAppSlug      string `yaml:"replicated_app_slug"`
+	ReplicatedRegistryHost string `yaml:"replicated_registry_host"`
 
-	AnthropicAPIKey string `doppler:"ANTHROPIC_API_KEY"`
-	OpenAIAPIKey    string `doppler:"OPENAI_API_KEY"`
+	AnthropicAPIKey string `yaml:"anthropic_api_key"`
+	OpenAIAPIKey    string `yaml:"openai_api_key"`
 
-	PoolSize int `doppler:"POOL_SIZE"`
+	PoolSize int `yaml:"pool_size"`
 
-	APKPublicKeyName  string `doppler:"APK_PUBLIC_KEY_NAME"`
-	APKPublicKeyData  string `doppler:"APK_PUBLIC_KEY_DATA"`
-	APKSigningKeyName string `doppler:"APK_SIGNING_KEY_NAME"`
-	APKSigningKeyData string `doppler:"APK_SIGNING_KEY_DATA"`
+	APKPublicKeyName  string `yaml:"apk_public_key_name"`
+	APKPublicKeyData  string `yaml:"apk_public_key_data"`
+	APKSigningKeyName string `yaml:"apk_signing_key_name"`
+	APKSigningKeyData string `yaml:"apk_signing_key_data"`
 
-	CVE0OCIHost string `doppler:"CVE0_OCI_HOST"`
+	CVE0OCIHost string `yaml:"cve0_oci_host"`
 
-	CosignKey      string `doppler:"COSIGN_KEY"`
-	CosignPub      string `doppler:"COSIGN_PUB"`
-	CosignPassword string `doppler:"COSIGN_PASSWORD"`
+	CosignKey      string `yaml:"cosign_key"`
+	CosignPub      string `yaml:"cosign_pub"`
+	CosignPassword string `yaml:"cosign_password"`
 
 	// OIDC params for keyless signing
-	OIDCGCPProjectID       string `doppler:"OIDC_GCP_PROJECT_ID"`
-	OIDCGCPAttestorAccount string `doppler:"OIDC_GCP_ATTESTOR_ACCOUNT"`
-	OIDCGCPAttestorKeyJSON string `doppler:"OIDC_GCP_ATTESTOR_KEY_JSON"`
+	OIDCGCPProjectID       string `yaml:"oidc_gcp_project_id"`
+	OIDCGCPAttestorAccount string `yaml:"oidc_gcp_attestor_account"`
+	OIDCGCPAttestorKeyJSON string `yaml:"oidc_gcp_attestor_key_json"`
 
-	R2BucketName       string `doppler:"R2_BUCKET_NAME"`
-	R2FeedBucketName   string `doppler:"R2_FEED_BUCKET_NAME"`
-	R2AccessKey        string `doppler:"R2_ACCESS_KEY"`
-	R2SecretKey        string `doppler:"R2_SECRET_KEY"`
-	R2Endpoint         string `doppler:"R2_ENDPOINT"`
-	R2UseDynamicFolder bool   `doppler:"R2_USE_DYNAMIC_FOLDER"`
-	R2UsePathStyle     bool   `doppler:"R2_USE_PATH_STYLE"`
+	R2BucketName       string `yaml:"r2_bucket_name"`
+	R2FeedBucketName   string `yaml:"r2_feed_bucket_name"`
+	R2AccessKey        string `yaml:"r2_access_key"`
+	R2SecretKey        string `yaml:"r2_secret_key"`
+	R2Endpoint         string `yaml:"r2_endpoint"`
+	R2UseDynamicFolder bool   `yaml:"r2_use_dynamic_folder"`
+	R2UsePathStyle     bool   `yaml:"r2_use_path_style"`
 
-	CloudflareAccountID       string `doppler:"CLOUDFLARE_ACCOUNT_ID"`
-	CloudflareQueueName       string `doppler:"CLOUDFLARE_QUEUE_NAME"`
-	CloudflareAPIKey          string `doppler:"CLOUDFLARE_API_KEY"`
-	CloudflareZoneID          string `doppler:"CLOUDFLARE_ZONE_ID"`
-	CloudflareCachePurgeToken string `doppler:"CLOUDFLARE_CACHE_PURGE_TOKEN"`
+	CloudflareAccountID       string `yaml:"cloudflare_account_id"`
+	CloudflareQueueName       string `yaml:"cloudflare_queue_name"`
+	CloudflareAPIKey          string `yaml:"cloudflare_api_key"`
+	CloudflareZoneID          string `yaml:"cloudflare_zone_id"`
+	CloudflareCachePurgeToken string `yaml:"cloudflare_cache_purge_token"`
 
-	PostmarkServerToken string `doppler:"POSTMARK_SERVER_TOKEN"`
+	PostmarkServerToken string `yaml:"postmark_server_token"`
 
-	UpdaterGithubAPIToken string `doppler:"UPDATER_GITHUB_API_TOKEN"`
+	UpdaterGithubAPIToken string `yaml:"updater_github_api_token"`
 
-	ReleaseMonitorAPIToken string `doppler:"RELEASE_MONITOR_API_TOKEN"`
+	ReleaseMonitorAPIToken string `yaml:"release_monitor_api_token"`
 
-	ExternalRegistryEncryptionSecret string `doppler:"EXTERNAL_REGISTRY_ENCRYPTION_SECRET"`
+	ExternalRegistryEncryptionSecret string `yaml:"external_registry_encryption_secret"`
 
 	// JWT signing secret for OCI proxy tokens (can reuse existing secret if needed)
-	OCIProxyJWTSecret     string `doppler:"OCI_PROXY_JWT_SECRET"`
-	OCIProxySkipTLSVerify bool   `doppler:"OCI_PROXY_SKIP_TLS_VERIFY"`
+	OCIProxyJWTSecret     string `yaml:"oci_proxy_jwt_secret"`
+	OCIProxySkipTLSVerify bool   `yaml:"oci_proxy_skip_tls_verify"`
 
 	// Instance type configuration for VM provisioning
-	InstanceTypeX86   string `doppler:"INSTANCE_TYPE_X86"`
-	InstanceTypeARM64 string `doppler:"INSTANCE_TYPE_ARM64"`
+	InstanceTypeX86   string `yaml:"instance_type_x86"`
+	InstanceTypeARM64 string `yaml:"instance_type_arm64"`
 
 	// Spec Sync Configuration
-	SpecSyncEnabled bool   `doppler:"SPECSYNC_ENABLED"`
-	SpecSyncToken   string `doppler:"SPECSYNC_GITHUB_TOKEN"`
-	SpecSyncBranch  string `doppler:"SPECSYNC_GITHUB_BRANCH"`
+	SpecSyncEnabled bool   `yaml:"specsync_enabled"`
+	SpecSyncToken   string `yaml:"specsync_github_token"`
+	SpecSyncBranch  string `yaml:"specsync_github_branch"`
 
 	// Pipeline Directory Configuration
-	PipelineDir string `doppler:"PIPELINE_DIR"`
+	PipelineDir string `yaml:"pipeline_dir"`
 
 	// Logging Configuration
-	LogLevel string `doppler:"LOG_LEVEL"`
+	LogLevel string `yaml:"log_level"`
 
 	// Vulnerability Database Configuration
-	GrypeDBRoot string `doppler:"GRYPE_DATABASE_ROOT"`
+	GrypeDBRoot string `yaml:"grype_database_root"`
 
 	// PProf Configuration
-	PProfEnabled bool `doppler:"PPROF_ENABLED"`
+	PProfEnabled bool `yaml:"pprof_enabled"`
 
 	// Melange YAML Configuration
-	RemoveCommitSHAPins bool `doppler:"REMOVE_COMMIT_SHA_PINS"`
+	RemoveCommitSHAPins bool `yaml:"remove_commit_sha_pins"`
+
+	// Build backend configuration
+	BuildBackend      string     `yaml:"build_backend"`
+	MaxParallelBuilds int        `yaml:"max_parallel_builds"`
+	StaticVMs         []StaticVM `yaml:"static_vms"`
 }
 
 // Use a simple string as context key to avoid type compatibility issues
@@ -138,6 +156,7 @@ type InitSource string
 const (
 	InitSourceDoppler     InitSource = "doppler"
 	InitSourceEnvironment InitSource = "environment"
+	InitSourceYAMLFile    InitSource = "yaml_file"
 )
 
 // Init initializes param and returns a context with the param embedded
@@ -167,8 +186,32 @@ func Init(source InitSource, overrides map[string]string) (context.Context, erro
 			applyOverrides(p, overrides)
 		}
 
+	case InitSourceYAMLFile:
+		configPath := os.Getenv("SECUREBUILD_CONFIG_SOURCE")
+		p, err = loadFromYAMLFile(configPath)
+		if err != nil {
+			return nil, err
+		}
+
+		// Apply overrides if provided (for tests)
+		if overrides != nil {
+			applyOverrides(p, overrides)
+		}
+
 	default:
 		return nil, fmt.Errorf("invalid init source: %s", source)
+	}
+
+	// Apply defaults
+	if p.MaxParallelBuilds <= 0 {
+		p.MaxParallelBuilds = 1
+	}
+
+	// CMX is limited to 1 build at a time (runs in HOME; no per-build work dirs).
+	if p.BuildBackend == "cmx" && p.MaxParallelBuilds > 1 {
+		logger.Warn("CMX backend limits MaxParallelBuilds to 1; overriding config",
+			zap.Int("configured", p.MaxParallelBuilds))
+		p.MaxParallelBuilds = 1
 	}
 
 	// Return context with param embedded
@@ -177,62 +220,87 @@ func Init(source InitSource, overrides map[string]string) (context.Context, erro
 	return ctx, nil
 }
 
-// loadFromEnvironment loads all params from actual environment variables
+// yamlTagToEnvVar converts a yaml tag value to the UPPER_SNAKE_CASE env var name.
+func yamlTagToEnvVar(yamlTag string) string {
+	return strings.ToUpper(yamlTag)
+}
+
+// loadFromEnvironment loads all params from actual environment variables.
+// It reads the `yaml` tag on each field and uppercases it to derive the env var name.
 func loadFromEnvironment() (*Param, error) {
 	p := &Param{}
 	v := reflect.ValueOf(p).Elem()
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
 		field := t.Field(i)
-		envVarName := field.Tag.Get("doppler") // Using the same tag for convenience
-		if envVarName == "" {
+		yamlTag := field.Tag.Get("yaml")
+		if yamlTag == "" {
 			continue
 		}
 
+		envVarName := yamlTagToEnvVar(yamlTag)
 		envVarValue := os.Getenv(envVarName)
 		if envVarValue == "" {
 			continue // Don't error if an env var is not set, just skip it
 		}
 
-		structField := v.Field(i)
-		if structField.CanSet() {
-			switch structField.Kind() {
-			case reflect.String:
-				structField.SetString(envVarValue)
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				intValue, err := strconv.ParseInt(envVarValue, 10, 64)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse int for field %s from env var %s: %w", field.Name, envVarName, err)
-				}
-				structField.SetInt(intValue)
-			case reflect.Bool:
-				boolValue, err := strconv.ParseBool(envVarValue)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse bool for field %s from env var %s: %w", field.Name, envVarName, err)
-				}
-				structField.SetBool(boolValue)
-			default:
-				return nil, fmt.Errorf("unsupported field type %s for field %s", structField.Kind(), field.Name)
-			}
+		if err := setFieldValue(v.Field(i), field, envVarValue); err != nil {
+			return nil, err
 		}
 	}
 
 	return p, nil
 }
 
-// applyOverrides applies test overrides to param
-// Only overrides fields that are present in the overrides map
+// setFieldValue sets a struct field from a string value, handling scalar types and
+// complex types (structs, slices) via YAML unmarshaling.
+func setFieldValue(structField reflect.Value, field reflect.StructField, value string) error {
+	if !structField.CanSet() {
+		return nil
+	}
+
+	switch structField.Kind() {
+	case reflect.String:
+		structField.SetString(value)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		intValue, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return fmt.Errorf("failed to parse int for field %s: %w", field.Name, err)
+		}
+		structField.SetInt(intValue)
+	case reflect.Bool:
+		boolValue, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("failed to parse bool for field %s: %w", field.Name, err)
+		}
+		structField.SetBool(boolValue)
+	case reflect.Slice, reflect.Struct, reflect.Map:
+		// For complex types, unmarshal the string value as YAML
+		target := reflect.New(structField.Type()).Interface()
+		if err := yaml.Unmarshal([]byte(value), target); err != nil {
+			return fmt.Errorf("failed to unmarshal YAML for field %s: %w", field.Name, err)
+		}
+		structField.Set(reflect.ValueOf(target).Elem())
+	default:
+		return fmt.Errorf("unsupported field type %s for field %s", structField.Kind(), field.Name)
+	}
+	return nil
+}
+
+// applyOverrides applies test overrides to param.
+// Override keys use UPPER_SNAKE_CASE (matching env var names).
 func applyOverrides(p *Param, overrides map[string]string) {
 	v := reflect.ValueOf(p).Elem()
 	t := v.Type()
 
 	for i := 0; i < v.NumField(); i++ {
 		field := t.Field(i)
-		envVarName := field.Tag.Get("doppler")
-		if envVarName == "" {
+		yamlTag := field.Tag.Get("yaml")
+		if yamlTag == "" {
 			continue
 		}
 
+		envVarName := yamlTagToEnvVar(yamlTag)
 		overrideValue, ok := overrides[envVarName]
 		if !ok {
 			continue
@@ -251,12 +319,33 @@ func applyOverrides(p *Param, overrides map[string]string) {
 				if boolValue, err := strconv.ParseBool(overrideValue); err == nil {
 					structField.SetBool(boolValue)
 				}
+			case reflect.Slice, reflect.Struct, reflect.Map:
+				target := reflect.New(structField.Type()).Interface()
+				if err := yaml.Unmarshal([]byte(overrideValue), target); err == nil {
+					structField.Set(reflect.ValueOf(target).Elem())
+				}
 			}
 		}
 	}
 }
 
-// loadFromDoppler loads from Doppler (existing production logic)
+// loadFromYAMLFile loads params from a YAML config file.
+func loadFromYAMLFile(path string) (*Param, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
+	}
+
+	p := &Param{}
+	if err := yaml.Unmarshal(data, p); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML config file %s: %w", path, err)
+	}
+
+	return p, nil
+}
+
+// loadFromDoppler loads from Doppler (existing production logic).
+// Reads the `yaml` tag, uppercases it to find the Doppler secret name in the nameMapping.
 func loadFromDoppler() (*Param, error) {
 	dp, err := doppler.NewFromEnv()
 	if err != nil {
@@ -319,45 +408,31 @@ func loadFromDoppler() (*Param, error) {
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
 		field := t.Field(i)
-		secretName := field.Tag.Get("doppler")
-		if secretName == "" {
+		yamlTag := field.Tag.Get("yaml")
+		if yamlTag == "" {
 			continue
 		}
+
+		// Convert yaml tag (lowercase) to UPPER_SNAKE for Doppler lookup
+		secretName := yamlTagToEnvVar(yamlTag)
 
 		// Use the name mapping to find the transformed secret name
 		transformedName, hasMapped := nameMapping[secretName]
 		if !hasMapped {
-			return nil, fmt.Errorf("failed to find name mapping for secret %s", secretName)
+			// Secret not found in Doppler - skip silently (new fields may not exist in Doppler yet)
+			continue
 		}
 
 		secretValue, exists := secrets[transformedName]
 		if !exists {
-			return nil, fmt.Errorf("failed to get doppler secret %s (transformed to %s)", secretName, transformedName)
+			continue
 		}
 
 		// Convert interface{} to string
 		secretValueStr := fmt.Sprintf("%v", secretValue)
 
-		structField := v.Field(i)
-		if structField.CanSet() {
-			switch structField.Kind() {
-			case reflect.String:
-				structField.SetString(secretValueStr)
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				intValue, err := strconv.ParseInt(secretValueStr, 10, 64)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse int for field %s: %w", field.Name, err)
-				}
-				structField.SetInt(intValue)
-			case reflect.Bool:
-				boolValue, err := strconv.ParseBool(secretValueStr)
-				if err != nil {
-					return nil, fmt.Errorf("failed to parse bool for field %s: %w", field.Name, err)
-				}
-				structField.SetBool(boolValue)
-			default:
-				return nil, fmt.Errorf("unsupported field type %s for field %s", structField.Kind(), field.Name)
-			}
+		if err := setFieldValue(v.Field(i), field, secretValueStr); err != nil {
+			return nil, err
 		}
 	}
 

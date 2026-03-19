@@ -2,15 +2,16 @@ package listener
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/builder"
 	buildertypes "github.com/securebuildhq/securebuild/pkg/builder/types"
 	"github.com/securebuildhq/securebuild/pkg/execution"
@@ -22,13 +23,16 @@ import (
 	sbpackagetypes "github.com/securebuildhq/securebuild/pkg/package/types"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/ssh"
 )
 
 const (
 	// DefaultPublishingTimeout is the maximum time allowed for publishing packages to R2
 	// This prevents stuck uploads from blocking the system indefinitely
 	DefaultPublishingTimeout = 30 * time.Minute
+
+	// StatusFileTimeout is the maximum time to wait for the builder to create output/status.
+	// If the file does not appear within this duration after build start, the execution is marked failed and logs are collected.
+	StatusFileTimeout = 60 * time.Second
 )
 
 func StartBuildPackageStatusChecker(ctx context.Context) error {
@@ -109,6 +113,12 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 	if err != nil && !errors.Is(err, builder.ErrMachineNotFound) {
 		return fmt.Errorf("failed to get x86_64 builder: %w", err)
 	}
+	logger.Debug("update-build-package-status: x86 builder lookup",
+		zap.String("executionID", executionID),
+		zap.String("x86BuilderID", x86BuilderID),
+		zap.String("x86BuilderType", x86Builder.Type),
+		zap.Bool("x86PrivateKeyEmpty", x86Builder.PrivateKey == ""),
+		zap.Bool("x86ErrMachineNotFound", errors.Is(err, builder.ErrMachineNotFound)))
 
 	aarch64BuilderID, err := execution.GetExecutionVMIDForArch(ctx, executionID, "aarch64")
 	if err != nil {
@@ -118,6 +128,12 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 	if err != nil && !errors.Is(err, builder.ErrMachineNotFound) {
 		return fmt.Errorf("failed to get aarch64 builder: %w", err)
 	}
+	logger.Debug("update-build-package-status: aarch64 builder lookup",
+		zap.String("executionID", executionID),
+		zap.String("aarch64BuilderID", aarch64BuilderID),
+		zap.String("aarch64BuilderType", aarch64Builder.Type),
+		zap.Bool("aarch64PrivateKeyEmpty", aarch64Builder.PrivateKey == ""),
+		zap.Bool("aarch64ErrMachineNotFound", errors.Is(err, builder.ErrMachineNotFound)))
 
 	x86BuildStatus, err := execution.GetExecutionBuildStatus(ctx, executionID, "x86_64")
 	if err != nil {
@@ -129,14 +145,38 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 		return fmt.Errorf("failed to get aarch64 build status: %w", err)
 	}
 
-	if x86BuildStatus != "success" {
-		// Skip status check if VM doesn't have a private key yet (still provisioning)
-		if x86Builder.PrivateKey == "" {
+	// Look up work dirs from machine assignments for each arch
+	assignments, err := builder.GetAssignmentsByTask(ctx, "build_package", executionID)
+	if err != nil {
+		logger.Warn("failed to get machine assignments for execution", zap.String("executionID", executionID), zap.Error(err))
+	}
+	assignmentWorkDirs := map[string]string{}
+	for _, a := range assignments {
+		assignmentWorkDirs[a.MachineID] = a.WorkDir
+	}
+	logger.Debug("update-build-package-status: assignments and work dirs",
+		zap.String("executionID", executionID),
+		zap.Int("assignmentCount", len(assignments)),
+		zap.Any("assignmentWorkDirs", assignmentWorkDirs),
+		zap.String("x86BuildStatus", x86BuildStatus),
+		zap.String("aarch64BuildStatus", aarch64BuildStatus))
+
+	// Only run build status checks for architectures that are actually assigned to this execution.
+	// Local backend may have only one arch (e.g. aarch64); static may have one or two; CMX has both.
+	if x86BuilderID != "" && x86BuildStatus != "success" {
+		// Skip status check only for CMX VMs that don't have a private key yet (still provisioning).
+		// Local and static VMs have no SSH key or use key path; they are ready immediately.
+		if (x86Builder.Type == "cmx" || x86Builder.Type == "") && x86Builder.PrivateKey == "" {
 			logger.Debug("skipping x86_64 build status check - VM still provisioning",
 				zap.String("executionID", executionID),
-				zap.String("vmID", x86BuilderID))
+				zap.String("vmID", x86BuilderID),
+				zap.String("vmType", x86Builder.Type))
 		} else {
-			x86BuildComplete, buildErr := checkBuildStatus(ctx, x86Builder, executionID, "x86_64", pkgVersion)
+			x86WorkDir := assignmentWorkDirs[x86BuilderID]
+			logger.Debug("update-build-package-status: checking x86_64 build status",
+				zap.String("executionID", executionID),
+				zap.String("x86WorkDir", x86WorkDir))
+			x86BuildComplete, buildErr := isBuildStatusComplete(ctx, x86Builder, executionID, "x86_64", pkgVersion, x86WorkDir)
 			if buildErr != nil && buildErr != ErrBuildFailed {
 				return fmt.Errorf("failed to check x86_64 build status: %w", buildErr)
 			}
@@ -149,14 +189,20 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 		}
 	}
 
-	if aarch64BuildStatus != "success" {
-		// Skip status check if VM doesn't have a private key yet (still provisioning)
-		if aarch64Builder.PrivateKey == "" {
+	if aarch64BuilderID != "" && aarch64BuildStatus != "success" {
+		// Skip status check only for CMX VMs that don't have a private key yet (still provisioning).
+		// Local and static VMs have no SSH key or use key path; they are ready immediately.
+		if (aarch64Builder.Type == "cmx" || aarch64Builder.Type == "") && aarch64Builder.PrivateKey == "" {
 			logger.Debug("skipping aarch64 build status check - VM still provisioning",
 				zap.String("executionID", executionID),
-				zap.String("vmID", aarch64BuilderID))
+				zap.String("vmID", aarch64BuilderID),
+				zap.String("vmType", aarch64Builder.Type))
 		} else {
-			aarch64BuildComplete, buildErr := checkBuildStatus(ctx, aarch64Builder, executionID, "aarch64", pkgVersion)
+			aarch64WorkDir := assignmentWorkDirs[aarch64BuilderID]
+			logger.Debug("update-build-package-status: checking aarch64 build status",
+				zap.String("executionID", executionID),
+				zap.String("aarch64WorkDir", aarch64WorkDir))
+			aarch64BuildComplete, buildErr := isBuildStatusComplete(ctx, aarch64Builder, executionID, "aarch64", pkgVersion, aarch64WorkDir)
 			if buildErr != nil && buildErr != ErrBuildFailed {
 				return fmt.Errorf("failed to check aarch64 build status: %w", buildErr)
 			}
@@ -225,7 +271,10 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 		}
 	}
 
-	if updatedX86BuildStatus == "success" && updatedAarch64BuildStatus == "success" {
+	// All assigned arches must be success. Unassigned arch (no VM for that arch) counts as done.
+	x86Done := x86BuilderID == "" || updatedX86BuildStatus == "success"
+	aarch64Done := aarch64BuilderID == "" || updatedAarch64BuildStatus == "success"
+	if x86Done && aarch64Done && (x86BuilderID != "" || aarch64BuilderID != "") {
 		if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusSuccess); err != nil {
 			return fmt.Errorf("failed to set execution status: %w", err)
 		}
@@ -391,116 +440,102 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 
 var ErrBuildFailed = errors.New("build failed")
 
+// earliestBuildStartedAt returns the earlier of x86_64 and aarch64 build started at, or nil if both are nil.
+func earliestBuildStartedAt(exe *executiontypes.Execution) *time.Time {
+	if exe == nil {
+		return nil
+	}
+	if exe.X86_64BuildStartedAt != nil && exe.Aarch64BuildStartedAt != nil {
+		if exe.X86_64BuildStartedAt.Before(*exe.Aarch64BuildStartedAt) {
+			return exe.X86_64BuildStartedAt
+		}
+		return exe.Aarch64BuildStartedAt
+	}
+	if exe.X86_64BuildStartedAt != nil {
+		return exe.X86_64BuildStartedAt
+	}
+	return exe.Aarch64BuildStartedAt
+}
+
 // returns true if build is complete, false if not, and an error if there is an error
-func checkBuildStatus(ctx context.Context, vm buildertypes.BuilderVM, exeID string, arch string, pkgVersion *sbpackagetypes.PackageVersion) (bool, error) {
-	privateKeyBytes, err := base64.StdEncoding.DecodeString(vm.PrivateKey)
+func isBuildStatusComplete(ctx context.Context, vm buildertypes.BuilderVM, exeID string, arch string, pkgVersion *sbpackagetypes.PackageVersion, workDir string) (bool, error) {
+	// Resolve work directory: use provided value, fall back to assignment lookup
+	if workDir == "" {
+		wd, err := builder.GetWorkDirForTask(ctx, "build_package", exeID, vm.ID)
+		if err != nil {
+			return false, fmt.Errorf("failed to get work dir for build %s: %w", exeID, err)
+		}
+		workDir = wd
+	}
+
+	runner, err := buildbackend.NewRunner(ctx, vm)
 	if err != nil {
-		return false, fmt.Errorf("failed to base64 decode private key: %w", err)
-	}
-	key, err := ssh.ParsePrivateKey(privateKeyBytes)
-	if err != nil {
-		return false, fmt.Errorf("failed to parse private key: %w", err)
-	}
+		logger.Warn("EXECUTION FAILED: failed to create runner for build status check",
+			zap.String("executionID", exeID),
+			zap.String("arch", arch),
+			zap.String("vmID", vm.ID),
+			zap.Error(err))
 
-	config := &ssh.ClientConfig{
-		User: vm.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(key),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         30 * time.Second, // Increased from 10 seconds
-	}
-
-	addr := fmt.Sprintf("%s:%d", vm.IPAddress, vm.Port)
-
-	// SSH connection with exponential backoff retry logic
-	var client *ssh.Client
-	maxRetries := 3
-	baseDelay := time.Second * 2
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		client, err = ssh.Dial("tcp", addr, config)
-		if err == nil {
-			break // Connection successful
+		if updateErr := execution.UpdateExecutionStatus(ctx, exeID, executiontypes.ExecutionStatusFailed); updateErr != nil {
+			logger.Warn("failed to update execution status", zap.Error(updateErr))
 		}
 
-		if attempt < maxRetries-1 {
-			// Calculate exponential backoff delay: 2s, 4s, 8s
-			delay := baseDelay * time.Duration(1<<attempt)
-			logger.Warn("SSH connection failed during build status check, retrying",
-				zap.String("vmID", vm.ID),
-				zap.String("addr", addr),
-				zap.String("executionID", exeID),
-				zap.String("arch", arch),
-				zap.Int("attempt", attempt+1),
-				zap.Int("maxRetries", maxRetries),
-				zap.Duration("retryDelay", delay),
-				zap.Error(err))
-
-			// Add debug info about VM status
-			builder.DebugVMStatus(ctx, vm.ID)
-
-			// Wait before retry
-			select {
-			case <-ctx.Done():
-				return false, fmt.Errorf("context cancelled during SSH retry: %w", ctx.Err())
-			case <-time.After(delay):
-				// Continue to next attempt
-			}
-		} else {
-			// Final attempt failed, log as error
-			logger.Error(fmt.Errorf("SSH connection failed after all retries during build status check: vmID=%s, addr=%s, executionID=%s, arch=%s, totalAttempts=%d, error=%w", vm.ID, addr, exeID, arch, maxRetries, err))
-			builder.DebugVMStatus(ctx, vm.ID)
-
-			logger.Warn("EXECUTION FAILED: SSH connection failed after all retries - marking as VM deleted",
-				zap.String("executionID", exeID),
-				zap.String("arch", arch),
-				zap.String("vmID", vm.ID),
-				zap.String("vmAddr", addr),
-				zap.Int("totalAttempts", maxRetries),
-				zap.Error(err))
-
-			if err := execution.UpdateExecutionStatus(ctx, exeID, executiontypes.ExecutionStatusVMDeleted); err != nil {
-				logger.Warn("failed to update execution status", zap.Error(err))
-			}
-
-			return false, fmt.Errorf("failed to dial ssh after %d attempts: %w", maxRetries, err)
-		}
+		return false, fmt.Errorf("failed to create runner: %w", err)
 	}
+	defer runner.Close()
 
-	defer client.Close()
-
-	statusFile, err := readRemoteFileContent(client, "/home/builder/output/status")
+	statusFilePath := filepath.Join(workDir, "output", "status")
+	statusContent, err := runner.ReadFile(statusFilePath)
 	if err != nil {
+		// If status file has not appeared after StatusFileTimeout, abort and collect logs
+		exe, getErr := execution.GetExecution(ctx, exeID)
+		earliestStarted := earliestBuildStartedAt(exe)
+		if getErr == nil && exe != nil && earliestStarted != nil && time.Since(*earliestStarted) >= StatusFileTimeout {
+			logger.Warn("EXECUTION FAILED: status file did not appear within timeout - aborting and collecting logs",
+				zap.String("executionID", exeID),
+				zap.String("arch", arch),
+				zap.String("statusFilePath", statusFilePath),
+				zap.Duration("timeout", StatusFileTimeout),
+				zap.Time("buildStartedAt", *earliestStarted))
+
+			collectBuildOutput(ctx, runner, arch, exeID, workDir)
+			collectPublishOutput(ctx, runner, arch, exeID, workDir)
+			_ = execution.SetArchStatus(ctx, exeID, arch, "failed")
+			_ = execution.SetExecutionBuildExitCode(ctx, exeID, arch, 1)
+			if updateErr := execution.UpdateExecutionStatus(ctx, exeID, executiontypes.ExecutionStatusFailed); updateErr != nil {
+				logger.Warn("failed to update execution status to failed after status file timeout", zap.Error(updateErr))
+			}
+			return false, nil
+		}
 		return false, fmt.Errorf("failed to read status file: %w", err)
 	}
 
 	// Trim whitespace for status comparisons
-	statusFile = strings.TrimSpace(statusFile)
+	statusContent = strings.TrimSpace(statusContent)
 
-	collectBuildOutput(ctx, client, arch, exeID)
+	collectBuildOutput(ctx, runner, arch, exeID, workDir)
 
-	collectPublishOutput(ctx, client, arch, exeID)
+	collectPublishOutput(ctx, runner, arch, exeID, workDir)
 
 	// Update arch status immediately after reading the status file
-	if err := execution.SetArchStatus(ctx, exeID, arch, statusFile); err != nil {
+	if err := execution.SetArchStatus(ctx, exeID, arch, statusContent); err != nil {
 		logger.Warn("failed to set arch status", zap.Error(err))
 	}
 
-	if statusFile == "" || statusFile == "building" || statusFile == "testing" || statusFile == "publishing" {
+	if statusContent == "" || statusContent == "building" || statusContent == "testing" || statusContent == "publishing" {
 		return false, nil
 	}
 
-	completionFile := fmt.Sprintf("/home/builder/output/melange_done_%s.txt", arch)
-	exitCode, err := checkBuildCompletion(client, completionFile)
+	completionFile := filepath.Join(workDir, "output", fmt.Sprintf("melange_done_%s.txt", arch))
+	exitCode, err := checkBuildCompletion(runner, completionFile)
 	if err != nil {
 		return false, fmt.Errorf("failed to check build completion: %w", err)
 	}
 
 	// Check test completion file if build succeeded
 	if exitCode == 0 {
-		testCompletionFile := fmt.Sprintf("/home/builder/output/melange_test_done_%s.txt", arch)
-		testExitCode, testErr := checkBuildCompletion(client, testCompletionFile)
+		testCompletionFile := filepath.Join(workDir, "output", fmt.Sprintf("melange_test_done_%s.txt", arch))
+		testExitCode, testErr := checkBuildCompletion(runner, testCompletionFile)
 		if testErr != nil {
 			return false, fmt.Errorf("failed to check test completion: %w", testErr)
 		}
@@ -511,36 +546,30 @@ func checkBuildStatus(ctx context.Context, vm buildertypes.BuilderVM, exeID stri
 	}
 
 	// Collect final output
-	collectBuildOutput(ctx, client, arch, exeID)
+	collectBuildOutput(ctx, runner, arch, exeID, workDir)
 
-	collectPublishOutput(ctx, client, arch, exeID)
+	collectPublishOutput(ctx, runner, arch, exeID, workDir)
 
 	if err := execution.SetExecutionBuildExitCode(ctx, exeID, arch, exitCode); err != nil {
 		logger.Warn("failed to set execution build exit code", zap.Error(err))
 	}
 
-	if exitCode != 0 || statusFile == "failed" {
+	if exitCode != 0 || statusContent == "failed" {
 		return true, ErrBuildFailed
 	}
 
 	return true, nil
 }
 
-func checkBuildCompletion(client *ssh.Client, completionFile string) (int, error) {
-	sess, err := client.NewSession()
-	if err != nil {
-		return 0, fmt.Errorf("failed to create session: %w", err)
-	}
-	defer sess.Close()
-
-	output, err := sess.CombinedOutput(fmt.Sprintf("cat %s 2>/dev/null || echo ''", completionFile))
+func checkBuildCompletion(runner buildbackend.Runner, completionFile string) (int, error) {
+	content, err := runner.ReadFile(completionFile)
 	if err != nil {
 		return 0, nil // File doesn't exist yet
 	}
 
-	outputStr := strings.TrimSpace(string(output))
+	outputStr := strings.TrimSpace(content)
 	if outputStr == "" {
-		return 0, nil // File doesn't exist or is empty
+		return 0, nil // File is empty
 	}
 
 	exitCode, err := strconv.Atoi(outputStr)
@@ -551,9 +580,9 @@ func checkBuildCompletion(client *ssh.Client, completionFile string) (int, error
 	return exitCode, nil
 }
 
-func collectBuildOutput(ctx context.Context, client *ssh.Client, arch string, executionID string) {
-	bootstrapLogFile := fmt.Sprintf("/home/builder/builder_output_%s.log", arch)
-	if content, err := readRemoteFileContent(client, bootstrapLogFile); err == nil && content != "" {
+func collectBuildOutput(ctx context.Context, runner buildbackend.Runner, arch string, executionID string, workDir string) {
+	bootstrapLogFile := filepath.Join(workDir, fmt.Sprintf("builder_output_%s.log", arch))
+	if content, err := runner.ReadFileTail(bootstrapLogFile, 10240); err == nil && content != "" {
 		// Bootstrap build: use the combined output from builder_output_{arch}.log
 		// This contains both the melange stdout and stderr combined
 		content = strings.TrimRight(content, "\n\r")
@@ -572,8 +601,8 @@ func collectBuildOutput(ctx context.Context, client *ssh.Client, arch string, ex
 		logger.Warn("failed to read bootstrap build output", zap.String("bootstrapLogFile", bootstrapLogFile), zap.Error(err))
 	}
 
-	stdoutFile := fmt.Sprintf("/home/builder/output/melange_stdout_%s.log", arch)
-	if content, err := readRemoteFileContent(client, stdoutFile); err == nil && content != "" {
+	stdoutFile := filepath.Join(workDir, "output", fmt.Sprintf("melange_stdout_%s.log", arch))
+	if content, err := runner.ReadFileTail(stdoutFile, 10240); err == nil && content != "" {
 		// Only trim trailing newlines from build logs to preserve internal formatting
 		content = strings.TrimRight(content, "\n\r")
 		if err := execution.SetExecutionBuildStdout(ctx, executionID, arch, content); err != nil {
@@ -583,8 +612,8 @@ func collectBuildOutput(ctx context.Context, client *ssh.Client, arch string, ex
 		logger.Warn("failed to read melange stdout file", zap.String("stdoutFile", stdoutFile), zap.Error(err))
 	}
 
-	stderrFile := fmt.Sprintf("/home/builder/output/melange_stderr_%s.log", arch)
-	if content, err := readRemoteFileContent(client, stderrFile); err == nil && content != "" {
+	stderrFile := filepath.Join(workDir, "output", fmt.Sprintf("melange_stderr_%s.log", arch))
+	if content, err := runner.ReadFileTail(stderrFile, 10240); err == nil && content != "" {
 		// Only trim trailing newlines from build logs to preserve internal formatting
 		content = strings.TrimRight(content, "\n\r")
 		if err := execution.SetExecutionBuildStderr(ctx, executionID, arch, content); err != nil {
@@ -595,28 +624,13 @@ func collectBuildOutput(ctx context.Context, client *ssh.Client, arch string, ex
 	}
 }
 
-func collectPublishOutput(ctx context.Context, client *ssh.Client, arch string, executionID string) {
-	combinedFile := "/home/builder/output/publishing-log.txt"
-	if content, err := readRemoteFileContent(client, combinedFile); err == nil && content != "" {
+func collectPublishOutput(ctx context.Context, runner buildbackend.Runner, arch string, executionID string, workDir string) {
+	combinedFile := filepath.Join(workDir, "output", "publishing-log.txt")
+	if content, err := runner.ReadFile(combinedFile); err == nil && content != "" {
 		if err := execution.SetExecutionPublishOutput(ctx, executionID, arch, content); err != nil {
 			logger.Warn("failed to append publish stdout", zap.Error(err))
 		}
 	}
-}
-
-func readRemoteFileContent(client *ssh.Client, filePath string) (string, error) {
-	sess, err := client.NewSession()
-	if err != nil {
-		return "", fmt.Errorf("failed to create session: %w", err)
-	}
-	defer sess.Close()
-
-	output, err := sess.CombinedOutput(fmt.Sprintf("cat %s 2>/dev/null || echo ''", filePath))
-	if err != nil {
-		return "", err
-	}
-
-	return string(output), nil
 }
 
 // queueBuildApkoEventsForPackage enqueues build_apko events for APKOs that depend on the given package.
@@ -716,46 +730,18 @@ func triggerCustomImageBuild(ctx context.Context, customBuildRequestID string) e
 			logger.Warn("failed to update image build status to queued", zap.Error(err))
 		}
 
-		// Assign VM for image building (selects best available architecture)
+		// Assign VM for image building using the build backend
 		logger.Debug("assigning VM for custom image build",
 			zap.String("buildID", imageBuild.ID),
-			zap.String("apkoVersionID", apkoVersion.ID),
-			zap.Duration("timeout", time.Minute*10))
+			zap.String("apkoVersionID", apkoVersion.ID))
 
-		// Create a context with timeout
-		timeoutCtx, cancel := context.WithTimeout(ctx, time.Minute*10)
-		defer cancel()
-
-		// Select the best architecture based on available VM counts
-		selectedArch, err := builder.SelectBestArchitectureForImageBuild(ctx)
-		if err != nil {
-			logger.Warn("IMAGE BUILD FAILED: architecture selection failure",
-				zap.String("buildID", imageBuild.ID),
-				zap.String("apkoVersionID", apkoVersion.ID),
-				zap.String("customBuildRequestID", customBuildRequestID),
-				zap.Error(fmt.Errorf("failed to select architecture for image build: %w", err)))
-
-			// Mark build as failed
-			if statusErr := image.UpdateImageBuildStatus(ctx, imageBuild.ID, imagetypes.ImageBuildStatusFailed, fmt.Errorf("architecture selection failure: %w", err)); statusErr != nil {
-				logger.Warn("failed to update image build status to failed", zap.Error(statusErr))
-			}
-			continue
-		}
-
-		logger.Debug("selected architecture for custom image build",
-			zap.String("buildID", imageBuild.ID),
-			zap.String("apkoVersionID", apkoVersion.ID),
-			zap.String("architecture", selectedArch))
-
-		// Take VM with selected architecture for image building
-		vm, err := builder.TakeVMWithAssignment(timeoutCtx, selectedArch, "build_image", imageBuild.ID)
+		vmID, _, err := assignVMForImageBuild(ctx, imageBuild.ID)
 		if err != nil {
 			logger.Warn("IMAGE BUILD FAILED: VM assignment failure - could not assign VM for custom image build",
 				zap.String("buildID", imageBuild.ID),
 				zap.String("apkoVersionID", apkoVersion.ID),
 				zap.String("customBuildRequestID", customBuildRequestID),
-				zap.String("architecture", selectedArch),
-				zap.Error(fmt.Errorf("failed to take %s VM for image build: %w", selectedArch, err)))
+				zap.Error(err))
 
 			// Mark build as failed
 			if statusErr := image.UpdateImageBuildStatus(ctx, imageBuild.ID, imagetypes.ImageBuildStatusFailed, fmt.Errorf("VM assignment failure: %w", err)); statusErr != nil {
@@ -763,8 +749,6 @@ func triggerCustomImageBuild(ctx context.Context, customBuildRequestID string) e
 			}
 			continue
 		}
-
-		vmID := vm.ID
 
 		// Update build record with VM ID
 		if err := image.SetImageBuildBuilderID(ctx, imageBuild.ID, vmID); err != nil {

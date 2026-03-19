@@ -39,6 +39,9 @@ seedData:
         - column: is_on_demand
           value:
             str: "false"
+        - column: type
+          value:
+            str: "cmx"
     - columns:
         - column: id
           value:
@@ -73,6 +76,9 @@ seedData:
         - column: is_on_demand
           value:
             str: "false"
+        - column: type
+          value:
+            str: "cmx"
     - columns:
         - column: id
           value:
@@ -107,6 +113,9 @@ seedData:
         - column: is_on_demand
           value:
             str: "false"
+        - column: type
+          value:
+            str: "cmx"
     - columns:
         - column: id
           value:
@@ -141,3 +150,6 @@ seedData:
         - column: is_on_demand
           value:
             str: "false"
+        - column: type
+          value:
+            str: "cmx"
