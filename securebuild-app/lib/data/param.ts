@@ -1,12 +1,19 @@
 interface Params {
   isLoaded: boolean;
   DBUri: string;
-  authMethod?: string;
   DB_URI: string;
   REPLICATED_API_ORIGIN: string;
   REPLICATED_API_TOKEN: string;
   CVE0_OCI_HOST: string;
   PIPELINE_DIR: string;
+  AUTH_METHOD?: string;
+  ADMIN_GITHUB_ORG?: string;
+  APP_ORIGIN?: string;
+  SMTP_HOST?: string;
+  SMTP_PORT?: string;
+  SMTP_USER?: string;
+  SMTP_PASSWORD?: string;
+  SMTP_FROM?: string;
 }
 
 const params: Params = {
@@ -17,6 +24,14 @@ const params: Params = {
   REPLICATED_API_TOKEN: process.env["REPLICATED_API_TOKEN"]!,
   CVE0_OCI_HOST: process.env["CVE0_OCI_HOST"]!,
   PIPELINE_DIR: process.env["PIPELINE_DIR"]!,
+  AUTH_METHOD: process.env["AUTH_METHOD"],
+  ADMIN_GITHUB_ORG: process.env["ADMIN_GITHUB_ORG"] || "",
+  APP_ORIGIN: process.env["APP_ORIGIN"] || "",
+  SMTP_HOST: process.env["SMTP_HOST"] || "",
+  SMTP_PORT: process.env["SMTP_PORT"] || "587",
+  SMTP_USER: process.env["SMTP_USER"] || "",
+  SMTP_PASSWORD: process.env["SMTP_PASSWORD"] || "",
+  SMTP_FROM: process.env["SMTP_FROM"] || "",
 };
 
 export async function loadParams() {
@@ -40,6 +55,20 @@ export async function getParam(key: keyof Params): Promise<string> {
       return params.CVE0_OCI_HOST;
     case "PIPELINE_DIR":
       return params.PIPELINE_DIR;
+    case "ADMIN_GITHUB_ORG":
+      return params.ADMIN_GITHUB_ORG!;
+    case "APP_ORIGIN":
+      return params.APP_ORIGIN!;
+    case "SMTP_HOST":
+      return params.SMTP_HOST!;
+    case "SMTP_PORT":
+      return params.SMTP_PORT!;
+    case "SMTP_USER":
+      return params.SMTP_USER!;
+    case "SMTP_PASSWORD":
+      return params.SMTP_PASSWORD!;
+    case "SMTP_FROM":
+      return params.SMTP_FROM!;
     default:
       throw new Error(`unknown param ${key}`);
   }

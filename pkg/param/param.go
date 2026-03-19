@@ -123,6 +123,11 @@ type Param struct {
 	BuildBackend      string     `yaml:"build_backend"`
 	MaxParallelBuilds int        `yaml:"max_parallel_builds"`
 	StaticVMs         []StaticVM `yaml:"static_vms"`
+
+	// Authentication configuration
+	AuthMethod        string `yaml:"auth_method"`
+	AdminUserEmail    string `yaml:"admin_user_email"`
+	AdminUserPassword string `yaml:"admin_user_password"`
 }
 
 // Use a simple string as context key to avoid type compatibility issues

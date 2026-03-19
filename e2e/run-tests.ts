@@ -131,6 +131,7 @@ async function startServer(config: TestConfig, dbUri: string): Promise<ChildProc
           PORT: port.toString(),
           DB_URI: dbUri, // Pass database URI from setup
           HMAC_SECRET: 'e2e-test-secret-key-for-jwt-signing',
+          AUTH_METHOD: 'github',
         },
         stdio: 'inherit',
         detached: true, // Create new process group for clean kill

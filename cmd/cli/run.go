@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/securebuildhq/securebuild/pkg/adminuser"
 	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/builder"
 	"github.com/securebuildhq/securebuild/pkg/buildqueue"
@@ -95,6 +96,10 @@ func RunCmd() *cobra.Command {
 func runWorker(ctx context.Context) error {
 	if err := persistence.InitPostgres(ctx); err != nil {
 		return fmt.Errorf("failed to initialize postgres connection: %w", err)
+	}
+
+	if err := adminuser.EnsureInitialAdminUser(ctx); err != nil {
+		logger.Warnf("failed to ensure initial admin user: %v", err)
 	}
 
 	// Start pprof server if enabled

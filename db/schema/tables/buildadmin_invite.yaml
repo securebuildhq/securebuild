@@ -1,9 +1,14 @@
 database: securebuild
-name: buildadmin_user
+name: buildadmin_invite
 schema:
   postgres:
     primaryKey:
     - id
+    indexes:
+    - columns:
+      - invite_token
+      name: idx_buildadmin_invite_invite_token
+      isUnique: true
     columns:
     - name: id
       type: text
@@ -13,11 +18,11 @@ schema:
       type: text
       constraints:
         notNull: true
-    - name: name
+    - name: invite_token
       type: text
       constraints:
         notNull: true
-    - name: image_url
+    - name: invited_by_user_id
       type: text
       constraints:
         notNull: true
@@ -25,18 +30,9 @@ schema:
       type: timestamp with time zone
       constraints:
         notNull: true
-    - name: last_login_at
+    - name: expires_at
       type: timestamp with time zone
-    - name: last_active_at
-      type: timestamp with time zone
-    - name: is_admin
-      type: boolean
       constraints:
         notNull: true
-      default: "true" # support migrating existing envs
-    - name: password_hash
-      type: text
-    - name: password_reset_nonce
-      type: text
-    - name: password_reset_nonce_expires_at
+    - name: accepted_at
       type: timestamp with time zone
