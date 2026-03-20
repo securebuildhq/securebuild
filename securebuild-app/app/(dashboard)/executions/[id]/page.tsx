@@ -476,7 +476,7 @@ export default function ExecutionDetailPage() {
             <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-md">
               <strong className="text-gray-800 dark:text-gray-200">Package Build Configuration:</strong>
               <div className="mt-2 text-sm space-y-1">
-                <div><strong>Repository:</strong> SecureBuild Repository (https://apk.cve0.io)</div>
+                <div><strong>Repository:</strong> SecureBuild Repository ({process.env.NEXT_PUBLIC_APK_REPOSITORY || 'NEXT_PUBLIC_APK_REPOSITORY is not configured'})</div>
                 <div><strong>Bootstrap Mode:</strong> {execution.bootstrapEnabled ? '✅ Enabled' : '❌ Disabled'}</div>
                 {execution.bootstrapEnabled && execution.bootstrapApkRepository && (
                   <div><strong>Bootstrap APK Repository:</strong> {execution.bootstrapApkRepository}</div>

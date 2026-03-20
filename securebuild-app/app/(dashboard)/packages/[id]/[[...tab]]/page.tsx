@@ -119,22 +119,28 @@ export default function PackageDetailPage() {
   const allRepositories = [...new Set([...melangeRepos, ...bootstrapRepos])];
   const allKeyrings = [...new Set([...melangeKeyrings, ...bootstrapKeys])];
   
+  const apkRepoHostname = (() => {
+    try { return new URL(process.env.NEXT_PUBLIC_APK_REPOSITORY!).hostname; } catch { return 'NEXT_PUBLIC_APK_REPOSITORY is not configured'; }
+  })();
+
+  const apkRepoUrl = process.env.NEXT_PUBLIC_APK_REPOSITORY || 'NEXT_PUBLIC_APK_REPOSITORY is not configured';
+
   // Helper function to determine if a repository is external (not managed by SecureBuild)
   const isExternalRepository = (repo: string): boolean => {
     // Internal repositories typically include SecureBuild managed domains
     const internalPatterns = [
-      'apk.cve0.io',
+      apkRepoHostname,
       'securebuild',
       'localhost'
     ];
     return !internalPatterns.some(pattern => repo.includes(pattern));
   };
-  
+
   // Helper function to determine if a keyring is external (not managed by SecureBuild)
   const isExternalKeyring = (keyring: string): boolean => {
     // Internal keyrings typically include SecureBuild managed domains
     const internalPatterns = [
-      'apk.cve0.io',
+      apkRepoHostname,
       'securebuild',
       'localhost'
     ];
@@ -424,11 +430,11 @@ export default function PackageDetailPage() {
                 <div className="mt-2 space-y-2 pl-6">
                   <div>
                     <Label htmlFor="bootstrap-apk-repository" className="text-sm font-medium">
-                      Custom APK Repositories <span className="text-muted-foreground font-normal">(optional. ex: https://apk.cve0.io https://mirrors.edge.kernel.org/alpine/edge/main)</span>
+                      Custom APK Repositories <span className="text-muted-foreground font-normal">(optional. ex: {apkRepoUrl} https://mirrors.edge.kernel.org/alpine/edge/main)</span>
                     </Label>
                     <Input
                       id="bootstrap-apk-repository"
-                      placeholder="https://apk.cve0.io https://dl-cdn.alpinelinux.org/alpine/v3.19/main"
+                      placeholder={`${apkRepoUrl} https://dl-cdn.alpinelinux.org/alpine/v3.19/main`}
                       value={bootstrapApkRepository}
                       onChange={handleBootstrapRepoChange}
                       className={`mt-1 h-8 text-sm ${bootstrapRepoError ? 'border-red-500 focus:border-red-500' : ''}`}
@@ -442,11 +448,11 @@ export default function PackageDetailPage() {
                   </div>
                   <div>
                     <Label htmlFor="bootstrap-keyring-append" className="text-sm font-medium">
-                      Custom Keyrings <span className="text-muted-foreground font-normal">(optional: https://apk.cve0.io/key/cve0-signing.rsa.pub )</span>
+                      Custom Keyrings <span className="text-muted-foreground font-normal">(optional: {apkRepoUrl}/key/cve0-signing.rsa.pub )</span>
                     </Label>
                     <Input
                       id="bootstrap-keyring-append"
-                      placeholder="https://apk.cve0.io/key/cve0-signing.rsa.pub https://alpinelinux.org/keys/..."
+                      placeholder={`${apkRepoUrl}/key/cve0-signing.rsa.pub https://alpinelinux.org/keys/...`}
                       value={bootstrapKeyringAppend}
                       onChange={handleBootstrapKeyringChange}
                       className={`mt-1 h-8 text-sm ${bootstrapKeyringError ? 'border-red-500 focus:border-red-500' : ''}`}

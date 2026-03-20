@@ -41,7 +41,7 @@ type StaticVM struct {
 type Param struct {
 	DBURI string `yaml:"db_uri"`
 
-	SecureBuildApkRepository string `yaml:"securebuild_apk_repository"`
+	ApkRepository string `yaml:"apk_repository"`
 
 	ReplicatedAPIToken  string `yaml:"replicated_api_token"`
 	ReplicatedAPIOrigin string `yaml:"replicated_api_origin"`
@@ -58,7 +58,6 @@ type Param struct {
 
 	APKPublicKeyName  string `yaml:"apk_public_key_name"`
 	APKPublicKeyData  string `yaml:"apk_public_key_data"`
-	APKSigningKeyName string `yaml:"apk_signing_key_name"`
 	APKSigningKeyData string `yaml:"apk_signing_key_data"`
 
 	CosignKey      string `yaml:"cosign_key"`
