@@ -36,12 +36,16 @@ export async function upsertUserIfInvited(email: string, name: string, imageUrl:
     const db = getDB(await getParam("DB_URI"));
 
     // check the public github membership and see if the the user is there
-    const githubMembership = await fetch(`https://api.github.com/orgs/securebuildhq/members`);
+    const githubOrg = await getParam("ADMIN_GITHUB_ORG");
+    if (!githubOrg) {
+      throw new Error("ADMIN_GITHUB_ORG is not configured");
+    }
+    const githubMembership = await fetch(`https://api.github.com/orgs/${githubOrg}/members`);
     const githubMembers = await githubMembership.json();
     const isMember = githubMembers.some((member: any) => member.login === githubLogin);
 
     if (!isMember) {
-      throw new Error("User is not a member of securebuildhq");
+      throw new Error(`User is not a member of ${githubOrg}`);
     }
 
     // the user will be admin only if there are no other admins in the database
