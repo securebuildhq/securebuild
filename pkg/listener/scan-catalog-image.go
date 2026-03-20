@@ -13,6 +13,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
+	"github.com/securebuildhq/securebuild/pkg/registry"
 	"github.com/securebuildhq/securebuild/pkg/scan"
 	"go.uber.org/zap"
 )
@@ -127,11 +128,7 @@ func getCatalogImageForScan(ctx context.Context, catalogImageID string) (*catalo
 
 	sbomX86 := storedSbomX86.String
 	sbomAarch64 := storedSbomAarch64.String
-	registryURL := fmt.Sprintf("%s/%s/%s:%s",
-		param.GetParam(ctx).ReplicatedRegistryHost,
-		param.GetParam(ctx).ReplicatedAppSlug,
-		imageName,
-		imageTag)
+	registryURL := registry.ImageRefWithTag(param.GetParam(ctx).RegistryImagePrefix, imageName, imageTag)
 	sbomNeedsSaving := false
 
 	if sbomX86 == "" {

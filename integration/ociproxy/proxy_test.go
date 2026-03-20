@@ -46,7 +46,7 @@ func TestOCIProxyHappyPath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Push test image to registry with authentication
-	// Use static credentials to push to the upstream registry path that matches REPLICATED_APP_SLUG
+	// Use static credentials to push to the upstream registry path that matches REGISTRY_IMAGE_PREFIX
 	fmt.Println("Pushing test image to registry...")
 	testImageRef := fmt.Sprintf("%s/securebuild/test-image:latest", registry.Address)
 	testRef, err := name.ParseReference(testImageRef)

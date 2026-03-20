@@ -16,6 +16,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
+	"github.com/securebuildhq/securebuild/pkg/registry"
 	"github.com/tuvistavie/securerandom"
 	"go.uber.org/zap"
 )
@@ -88,9 +89,9 @@ func GenerateSBOM(ctx context.Context, registryURL string, arch string) (string,
 
 	// Set up registry credentials if needed
 	var username, password string
-	if strings.HasPrefix(registryURL, param.GetParam(ctx).ReplicatedRegistryHost) {
-		username = "serviceaccount"
-		password = param.GetParam(ctx).ReplicatedAPIToken
+	if registry.PrefixMatches(registryURL, param.GetParam(ctx).RegistryImagePrefix) {
+		username = param.GetParam(ctx).RegistryUsername
+		password = param.GetParam(ctx).RegistryPassword
 	}
 
 	startTime := time.Now()

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"hash"
 	"net/url"
 	"os"
@@ -45,8 +44,10 @@ func (s *stubFulcio) SigningCert(req fulcioclient.CertificateRequest, token stri
 // -----------------------------------------------------------------------------
 
 func TestCosignSignKeylessWithCustomSubject(t *testing.T) {
-	t.Setenv("CVE0_OCI_HOST", "dummy-host")
-	t.Setenv("REPLICATED_APP_SLUG", "dummy-slug")
+	t.Setenv("OCI_IMAGE_PREFIX", "dummy-host/dummy-slug")
+	t.Setenv("REGISTRY_IMAGE_PREFIX", "dummy-host/dummy-slug")
+	t.Setenv("REGISTRY_USERNAME", "test")
+	t.Setenv("REGISTRY_PASSWORD", "test")
 
 	// Detect whether we should run live (real Fulcio/Rekor) or stubbed.
 	live := strings.EqualFold(os.Getenv("KEYLESS_LIVE_SIGNING"), "true")
@@ -67,8 +68,12 @@ func TestCosignSignKeylessWithCustomSubject(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to init params from env (offline mode): %v", err)
 		}
-		if param.GetParam(ctx).CVE0OCIHost == "" || param.GetParam(ctx).ReplicatedAppSlug == "" {
-			t.Fatalf("CVE0_OCI_HOST and REPLICATED_APP_SLUG params must be set via Doppler for offline mode test")
+		ociPrefix := param.GetParam(ctx).OCIImagePrefix
+		if ociPrefix == "" {
+			ociPrefix = param.GetParam(ctx).RegistryImagePrefix
+		}
+		if ociPrefix == "" {
+			t.Fatalf("OCI_IMAGE_PREFIX or REGISTRY_IMAGE_PREFIX must be set for offline mode test")
 		}
 	}
 
@@ -215,7 +220,11 @@ func TestCosignSignKeylessWithCustomSubject(t *testing.T) {
 		t.Fatalf("expected payload digest %s, got %s", expectedDigest, payload.Critical.Image.DockerManifestDigest)
 	}
 
-	expectedRef := fmt.Sprintf("%s/%s", param.GetParam(ctx).CVE0OCIHost, param.GetParam(ctx).ReplicatedAppSlug)
+	ociPrefixForExpected := param.GetParam(ctx).OCIImagePrefix
+	if ociPrefixForExpected == "" {
+		ociPrefixForExpected = param.GetParam(ctx).RegistryImagePrefix
+	}
+	expectedRef := ociPrefixForExpected
 	if payload.Critical.Identity.DockerReference != expectedRef {
 		t.Fatalf("expected docker-reference %s, got %s", expectedRef, payload.Critical.Identity.DockerReference)
 	}

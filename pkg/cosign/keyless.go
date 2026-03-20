@@ -34,6 +34,7 @@ import (
 	oci "github.com/securebuildhq/securebuild/pkg/oci"
 	"github.com/securebuildhq/securebuild/pkg/oidc"
 	"github.com/securebuildhq/securebuild/pkg/param"
+	"github.com/securebuildhq/securebuild/pkg/registry"
 
 	// third-party
 	cosign "github.com/sigstore/cosign/v2/pkg/cosign"
@@ -134,10 +135,12 @@ func CosignSignKeylessWithCustomSubject(ctx context.Context, imageRef string, oi
 	}
 	digest = strings.TrimPrefix(digest, "sha256:")
 
-	// Final subject name (proxy registry host + replicated app slug)
-	registryHost := param.GetParam(ctx).CVE0OCIHost
-	repo := param.GetParam(ctx).ReplicatedAppSlug
-	finalSubjectName := registryHost + "/" + repo
+	// Final subject name using the OCI prefix (falls back to registry prefix)
+	ociPrefix := registry.NormalizePrefix(param.GetParam(ctx).OCIImagePrefix)
+	if ociPrefix == "" {
+		ociPrefix = registry.NormalizePrefix(param.GetParam(ctx).RegistryImagePrefix)
+	}
+	finalSubjectName := ociPrefix
 
 	// Build canonical Simple Signing payload using official cosign struct
 	var scPayload sigpayload.SimpleContainerImage

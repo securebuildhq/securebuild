@@ -49,8 +49,10 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const cve0OciHost = await getParam("CVE0_OCI_HOST")
-    const fullImageName = `${cve0OciHost}/${imageName}`
+    const ociImagePrefix = await getParam("OCI_IMAGE_PREFIX")
+    const registryImagePrefix = await getParam("REGISTRY_IMAGE_PREFIX")
+    const prefix = ociImagePrefix || registryImagePrefix
+    const fullImageName = `${prefix}/${imageName}`
 
     const scanResult = await getLatestImageScanResult(fullImageName, imageTag, arch)
     if (!scanResult) {

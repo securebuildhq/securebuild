@@ -4,7 +4,7 @@
 // this proxy.  The key-based signing refactor introduced a new requirement:
 //
 //   1.  We *sign* the digest using the public host that end-users will consume
-//       (CVE0_OCI_HOST e.g. localhost:8888) so the simple-signing payload’s
+//       (OCI_IMAGE_PREFIX e.g. localhost:8888) so the simple-signing payload’s
 //       `docker-reference` matches what `cosign verify` sees in production.
 //   2.  We must still *push* the signature layer (the .sig OCI artifact) to the
 //       upstream registry, **never** to the proxy.
@@ -64,6 +64,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/oci"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
+	"github.com/securebuildhq/securebuild/pkg/registry"
 	"github.com/securebuildhq/securebuild/pkg/team"
 	teamtypes "github.com/securebuildhq/securebuild/pkg/team/types"
 	"github.com/tuvistavie/securerandom"
@@ -178,10 +179,14 @@ func StartProxy(ctx context.Context, listenAddr string) error {
 	proxyLogger = logger.Sugar()
 
 	// Configuration (could be from env vars or config file)
-	upstreamRegistryURL := param.GetParam(ctx).ReplicatedRegistryHost
-	imagePrefix := param.GetParam(ctx).ReplicatedAppSlug
-	staticUser := "serviceaccount"
-	staticPassword := param.GetParam(ctx).ReplicatedAPIToken
+	registryPrefix := registry.NormalizePrefix(param.GetParam(ctx).RegistryImagePrefix)
+	upstreamRegistryURL := registry.HostFromPrefix(registryPrefix)
+	imagePrefix := strings.TrimPrefix(registryPrefix, upstreamRegistryURL+"/")
+	if imagePrefix == registryPrefix {
+		imagePrefix = "" // prefix is host-only, no path
+	}
+	staticUser := param.GetParam(ctx).RegistryUsername
+	staticPassword := param.GetParam(ctx).RegistryPassword
 
 	p, err := NewOCIProxy(ctx, listenAddr, upstreamRegistryURL, imagePrefix, staticUser, staticPassword)
 	if err != nil {

@@ -60,11 +60,12 @@ func TestHandleBuildImageWithVMAssigned(t *testing.T) {
 
 	// Initialize param with test overrides
 	overrides := map[string]string{
-		"DB_URI":               testDB.ConnStr,
-		"PIPELINE_DIR":         pkgtestutil.SetupTestPipelineDir(t),
-		"REPLICATED_API_TOKEN": "test-token",
-		"REPLICATED_APP_SLUG":  "test-app",
-		"REPLICATED_REGISTRY":  "registry.test.local",
+		"DB_URI":                testDB.ConnStr,
+		"PIPELINE_DIR":          pkgtestutil.SetupTestPipelineDir(t),
+		"REGISTRY_IMAGE_PREFIX": "registry.test.local/test-app",
+		"OCI_IMAGE_PREFIX":      "",
+		"REGISTRY_USERNAME":     "serviceaccount",
+		"REGISTRY_PASSWORD":     "test-token",
 	}
 	ctx, err = param.Init(param.InitSourceEnvironment, overrides)
 	require.NoError(t, err)

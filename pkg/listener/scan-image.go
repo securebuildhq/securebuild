@@ -9,6 +9,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/notification"
 	"github.com/securebuildhq/securebuild/pkg/param"
+	"github.com/securebuildhq/securebuild/pkg/registry"
 	"go.uber.org/zap"
 )
 
@@ -62,7 +63,7 @@ func handleScanImage(ctx context.Context, payload string) error {
 			}
 
 			if scanImagePayload.IncludeSecureBuild {
-				results, err := image.ScanImage(ctx, fmt.Sprintf("%s/%s/%s:%s", param.GetParam(ctx).ReplicatedRegistryHost, param.GetParam(ctx).ReplicatedAppSlug, img.Name, actualTag))
+				results, err := image.ScanImage(ctx, registry.ImageRefWithTag(param.GetParam(ctx).RegistryImagePrefix, img.Name, actualTag))
 				if err != nil {
 					return fmt.Errorf("failed to scan image: %w", err)
 				}
@@ -80,7 +81,11 @@ func handleScanImage(ctx context.Context, payload string) error {
 					return fmt.Errorf("failed to parse scan result: %w", err)
 				}
 
-				fullImageName := fmt.Sprintf("%s/%s", param.GetParam(ctx).CVE0OCIHost, img.Name)
+				ociPrefix := registry.NormalizePrefix(param.GetParam(ctx).OCIImagePrefix)
+				if ociPrefix == "" {
+					ociPrefix = registry.NormalizePrefix(param.GetParam(ctx).RegistryImagePrefix)
+				}
+				fullImageName := registry.ImageRef(ociPrefix, img.Name)
 				if err := image.WriteScanResult(ctx, fullImageName, actualTag, "x86_64", *scanResultX86, scanResultX86Raw); err != nil {
 					return fmt.Errorf("failed to write scan result: %w", err)
 				}

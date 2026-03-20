@@ -32,6 +32,7 @@ import (
 	oci "github.com/securebuildhq/securebuild/pkg/oci"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
+	"github.com/securebuildhq/securebuild/pkg/registry"
 	"github.com/securebuildhq/securebuild/pkg/security"
 	"go.uber.org/zap"
 )
@@ -347,7 +348,7 @@ func processImageBuildResults(ctx context.Context, buildID string, tmpDir string
 	}
 
 	// Get OCI path
-	ociPathWithoutTag := fmt.Sprintf("%s/%s/%s", param.GetParam(ctx).ReplicatedRegistryHost, param.GetParam(ctx).ReplicatedAppSlug, img.Name)
+	ociPathWithoutTag := registry.ImageRef(param.GetParam(ctx).RegistryImagePrefix, img.Name)
 
 	// Process each tag
 	scanAt := time.Now()
@@ -526,8 +527,8 @@ func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetype
 
 	fullRef := fmt.Sprintf("%s:%s", ociPathWithoutTag, actualTag)
 	auth := authn.FromConfig(authn.AuthConfig{
-		Username: "serviceaccount",
-		Password: param.GetParam(ctx).ReplicatedAPIToken,
+		Username: param.GetParam(ctx).RegistryUsername,
+		Password: param.GetParam(ctx).RegistryPassword,
 	})
 	ref, err := name.ParseReference(fullRef)
 	if err != nil {
@@ -555,7 +556,11 @@ func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetype
 	}
 
 	// Write scan results to database
-	fullImageName := fmt.Sprintf("%s/%s", param.GetParam(ctx).CVE0OCIHost, img.Name)
+	ociPrefix := registry.NormalizePrefix(param.GetParam(ctx).OCIImagePrefix)
+	if ociPrefix == "" {
+		ociPrefix = registry.NormalizePrefix(param.GetParam(ctx).RegistryImagePrefix)
+	}
+	fullImageName := registry.ImageRef(ociPrefix, img.Name)
 
 	// Parse scan results
 	scanResultX86, err := image.ParseScanResult(scanResultX86Raw)
@@ -610,7 +615,11 @@ func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetype
 	// (digest already resolved above)
 
 	// Re-write reference to go through our unauthenticated OCI proxy host
-	digestRef := fmt.Sprintf("%s/%s/%s@%s", param.GetParam(ctx).CVE0OCIHost, param.GetParam(ctx).ReplicatedAppSlug, img.Name, digest)
+	ociPrefixForDigest := registry.NormalizePrefix(param.GetParam(ctx).OCIImagePrefix)
+	if ociPrefixForDigest == "" {
+		ociPrefixForDigest = registry.NormalizePrefix(param.GetParam(ctx).RegistryImagePrefix)
+	}
+	digestRef := fmt.Sprintf("%s@%s", registry.ImageRef(ociPrefixForDigest, img.Name), digest)
 
 	// Fetch and store the index manifest so downstream helper can look it up
 	{

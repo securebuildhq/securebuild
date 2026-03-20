@@ -42,11 +42,13 @@ type Param struct {
 
 	SecureBuildApkRepository string `yaml:"securebuild_apk_repository"`
 
-	ReplicatedAPIToken     string `yaml:"replicated_api_token"`
-	ReplicatedAPIOrigin    string `yaml:"replicated_api_origin"`
-	OCIRegistryBase        string `yaml:"oci_registry_base"`
-	ReplicatedAppSlug      string `yaml:"replicated_app_slug"`
-	ReplicatedRegistryHost string `yaml:"replicated_registry_host"`
+	ReplicatedAPIToken  string `yaml:"replicated_api_token"`
+	ReplicatedAPIOrigin string `yaml:"replicated_api_origin"`
+
+	RegistryImagePrefix string `yaml:"registry_image_prefix"`
+	OCIImagePrefix      string `yaml:"oci_image_prefix"`
+	RegistryUsername    string `yaml:"registry_username"`
+	RegistryPassword    string `yaml:"registry_password"`
 
 	AnthropicAPIKey string `yaml:"anthropic_api_key"`
 	OpenAIAPIKey    string `yaml:"openai_api_key"`
@@ -57,8 +59,6 @@ type Param struct {
 	APKPublicKeyData  string `yaml:"apk_public_key_data"`
 	APKSigningKeyName string `yaml:"apk_signing_key_name"`
 	APKSigningKeyData string `yaml:"apk_signing_key_data"`
-
-	CVE0OCIHost string `yaml:"cve0_oci_host"`
 
 	CosignKey      string `yaml:"cosign_key"`
 	CosignPub      string `yaml:"cosign_pub"`

@@ -566,7 +566,7 @@ func generateImageArtifacts(ctx context.Context, imageCatalogID string, tmpDir s
 
 	// Sign the image in the registry using digestRef
 	logger.Debug("signing image in registry with cosign", zap.String("ref", digestRef))
-	cosign.CosignSignWithKey(ctx, digestRef, param.GetParam(ctx).CosignKey, param.GetParam(ctx).CosignPassword, "serviceaccount", param.GetParam(ctx).ReplicatedAPIToken)
+	cosign.CosignSignWithKey(ctx, digestRef, param.GetParam(ctx).CosignKey, param.GetParam(ctx).CosignPassword, param.GetParam(ctx).RegistryUsername, param.GetParam(ctx).RegistryPassword)
 
 	// After signing, fetch the signature artifact manifest and log its values
 	// Use cosign triangulate to get the signature digest or tag
@@ -586,8 +586,8 @@ func generateImageArtifacts(ctx context.Context, imageCatalogID string, tmpDir s
 	}
 
 	auth := authn.FromConfig(authn.AuthConfig{
-		Username: "serviceaccount",
-		Password: param.GetParam(ctx).ReplicatedAPIToken,
+		Username: param.GetParam(ctx).RegistryUsername,
+		Password: param.GetParam(ctx).RegistryPassword,
 	})
 	manifestDesc, err := remote.Get(importedRef, remote.WithAuth(auth), remote.WithContext(ctx))
 	if err != nil {

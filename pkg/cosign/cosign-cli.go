@@ -13,6 +13,7 @@ import (
 
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	param "github.com/securebuildhq/securebuild/pkg/param"
+	"github.com/securebuildhq/securebuild/pkg/registry"
 	"go.uber.org/zap"
 )
 
@@ -48,19 +49,12 @@ func CosignSignWithKey(ctx context.Context, imageRef, base64PrivateKey, cosignPa
 	}
 
 	// Build the upstream repository root where signatures should be pushed. We
-	// never want cosign to push to the local OCI proxy (CVE0_OCI_HOST). All
-	// signature artifacts must be uploaded directly to the upstream Replicated
-	// registry.  We compute the repository root using the configured
-	// ReplicatedRegistryHost and ReplicatedAppSlug, taking care not to append
-	// the slug twice if the host value already embeds it (this occurs when
-	// ReplicatedRegistryHost is set to something like
-	// "registry.replicated.com/securebuild-dev").  The image name itself is
-	// *not* included in this root; cosign will append it automatically.
+	// never want cosign to push to the local OCI proxy (OCI_IMAGE_PREFIX). All
+	// signature artifacts must be uploaded directly to the upstream registry.
+	// We use RegistryImagePrefix as the root. The image name itself is *not*
+	// included in this root; cosign will append it automatically.
 
-	repoRoot := param.GetParam(ctx).ReplicatedRegistryHost
-	if !strings.HasSuffix(repoRoot, "/"+param.GetParam(ctx).ReplicatedAppSlug) {
-		repoRoot = fmt.Sprintf("%s/%s", repoRoot, param.GetParam(ctx).ReplicatedAppSlug)
-	}
+	repoRoot := registry.NormalizePrefix(param.GetParam(ctx).RegistryImagePrefix)
 
 	// Compose cosign sign command (no --repository flag, which is unsupported
 	// in the currently vendored cosign version).  Instead, we rely on the
@@ -77,33 +71,14 @@ func CosignSignWithKey(ctx context.Context, imageRef, base64PrivateKey, cosignPa
 	//   imageRepo = "securebuild-dev/zlib"
 	//   COSIGN_REPOSITORY = "registry.replicated.com/securebuild-dev/zlib"
 
-	imageRefNoDigest := strings.SplitN(imageRef, "@", 2)[0] // strip @sha256:
+	imageRefNoDigest := strings.SplitN(imageRef, "@", 2)[0]
 	repoParts := strings.Split(imageRefNoDigest, "/")
+	registryPrefix := registry.NormalizePrefix(param.GetParam(ctx).RegistryImagePrefix)
 	if len(repoParts) >= 2 {
-		// Drop the registry/host portion (first element) and rejoin the rest
-		imageRepo := strings.Join(repoParts[1:], "/")
-
-		// Build full upstream repository: <registryHost>/<slug>/<image>
-		slug := param.GetParam(ctx).ReplicatedAppSlug
-		registryHost := param.GetParam(ctx).ReplicatedRegistryHost
-
-		// imageRepo may be "<slug>/<image>" or just "<image>".  Extract the
-		// image name (last component) and prefix with slug once.
-		parts := strings.Split(imageRepo, "/")
-		imageName := parts[len(parts)-1]
-
-		// If registryHost already embeds the slug (common in dev), avoid
-		// duplicating it.
-		var cosignRepo string
-		if strings.HasSuffix(registryHost, "/"+slug) {
-			cosignRepo = fmt.Sprintf("%s/%s", registryHost, imageName)
-		} else {
-			cosignRepo = fmt.Sprintf("%s/%s/%s", registryHost, slug, imageName)
-		}
-
+		imageName := repoParts[len(repoParts)-1]
+		cosignRepo := registry.ImageRef(registryPrefix, imageName)
 		env = append(env, fmt.Sprintf("COSIGN_REPOSITORY=%s", cosignRepo))
 	} else {
-		// Fallback: just use the calculated root
 		env = append(env, fmt.Sprintf("COSIGN_REPOSITORY=%s", repoRoot))
 	}
 	cmd.Env = env
@@ -144,7 +119,7 @@ func CosignAttest(ctx context.Context, predicatePath, sbomLabel, digestRef, priv
 		}
 	}
 	// Set up environment for cosign authentication
-	env := buildCosignEnv("serviceaccount", param.GetParam(ctx).ReplicatedAPIToken, param.GetParam(ctx).CosignPassword)
+	env := buildCosignEnv(param.GetParam(ctx).RegistryUsername, param.GetParam(ctx).RegistryPassword, param.GetParam(ctx).CosignPassword)
 	attestSBOM := func(predicatePath, sbomLabel string) error {
 		logger.Debug("attaching SBOM attestation", zap.String("ref", digestRef), zap.String("sbom", sbomLabel))
 		cmd := exec.CommandContext(ctx, "cosign", "attest",

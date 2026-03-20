@@ -4,7 +4,8 @@ interface Params {
   DB_URI: string;
   REPLICATED_API_ORIGIN: string;
   REPLICATED_API_TOKEN: string;
-  CVE0_OCI_HOST: string;
+  REGISTRY_IMAGE_PREFIX: string;
+  OCI_IMAGE_PREFIX: string;
   PIPELINE_DIR: string;
   AUTH_METHOD?: string;
   ADMIN_GITHUB_ORG?: string;
@@ -22,7 +23,8 @@ const params: Params = {
   DB_URI: process.env["SECUREBUILD_PG_URI"] || process.env["DB_URI"]!,
   REPLICATED_API_ORIGIN: process.env["REPLICATED_API_ORIGIN"]!,
   REPLICATED_API_TOKEN: process.env["REPLICATED_API_TOKEN"]!,
-  CVE0_OCI_HOST: process.env["CVE0_OCI_HOST"]!,
+  REGISTRY_IMAGE_PREFIX: process.env["REGISTRY_IMAGE_PREFIX"]!,
+  OCI_IMAGE_PREFIX: process.env["OCI_IMAGE_PREFIX"] || "",
   PIPELINE_DIR: process.env["PIPELINE_DIR"]!,
   AUTH_METHOD: process.env["AUTH_METHOD"],
   ADMIN_GITHUB_ORG: process.env["ADMIN_GITHUB_ORG"] || "",
@@ -51,8 +53,10 @@ export async function getParam(key: keyof Params): Promise<string> {
       return params.REPLICATED_API_ORIGIN;
     case "REPLICATED_API_TOKEN":
       return params.REPLICATED_API_TOKEN;
-    case "CVE0_OCI_HOST":
-      return params.CVE0_OCI_HOST;
+    case "REGISTRY_IMAGE_PREFIX":
+      return params.REGISTRY_IMAGE_PREFIX;
+    case "OCI_IMAGE_PREFIX":
+      return params.OCI_IMAGE_PREFIX;
     case "PIPELINE_DIR":
       return params.PIPELINE_DIR;
     case "ADMIN_GITHUB_ORG":
