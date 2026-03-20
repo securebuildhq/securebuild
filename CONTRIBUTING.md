@@ -10,7 +10,7 @@ Thank you for your interest in contributing to SecureBuild! Please review our [C
 
 ## Development Setup
 
-The project uses a **Nix flake** for the development environment (Go, Node, SchemaHero, apko, melange, syft, Dagger, vunnel, etc.).
+The project uses a **Nix flake** for the development environment (Go, Node, SchemaHero, apko, melange, syft, Dagger, etc.). Vunnel runs via Docker in dev and production rather than being installed in the dev shell.
 
 ### Prerequisites
 
