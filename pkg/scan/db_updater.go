@@ -147,6 +147,7 @@ func runVunnel(ctx context.Context, grypeDBRoot, provider string) error {
 		"--rm",
 		"--name", containerName,
 		"-v", grypeDBRoot+":"+containerDataDir,
+		"-e", "VUNNEL_ROOT="+containerDataDir+"/data",
 		image,
 		"--config", containerConfigPath,
 		"run",
