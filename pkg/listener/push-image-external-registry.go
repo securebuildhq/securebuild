@@ -12,6 +12,7 @@ import (
 	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
+	"github.com/securebuildhq/securebuild/pkg/registry"
 	"go.uber.org/zap"
 )
 
@@ -62,8 +63,7 @@ func handlePushImageToExternalRegistry(ctx context.Context, payload string) erro
 
 func copyImageToExternalRegistry(ctx context.Context, imageCatalogItem *imagetypes.ImageCatalogItem, externalRegistry *imagetypes.ImageExternalRegistry) error {
 	// Construct the source image reference
-	sourceRegistry := param.GetParam(ctx).ReplicatedRegistryHost
-	sourcePath := fmt.Sprintf("%s/%s/%s:%s", sourceRegistry, param.GetParam(ctx).ReplicatedAppSlug, imageCatalogItem.Name, imageCatalogItem.Tag)
+	sourcePath := registry.ImageRefWithTag(param.GetParam(ctx).RegistryImagePrefix, imageCatalogItem.Name, imageCatalogItem.Tag)
 
 	// Construct the destination image reference
 	// The registry URL already contains the full image path, just append the tag
@@ -95,8 +95,8 @@ func copyImageToExternalRegistry(ctx context.Context, imageCatalogItem *imagetyp
 
 	// Set up authentication for source registry (SecureBuild/Replicated)
 	sourceAuth := authn.FromConfig(authn.AuthConfig{
-		Username: "serviceaccount",
-		Password: param.GetParam(ctx).ReplicatedAPIToken,
+		Username: param.GetParam(ctx).RegistryUsername,
+		Password: param.GetParam(ctx).RegistryPassword,
 	})
 
 	// Set up authentication for destination registry

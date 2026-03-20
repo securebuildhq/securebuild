@@ -27,6 +27,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	oci "github.com/securebuildhq/securebuild/pkg/oci"
 	"github.com/securebuildhq/securebuild/pkg/param"
+	"github.com/securebuildhq/securebuild/pkg/registry"
 	sigcosign "github.com/sigstore/cosign/v2/pkg/cosign"
 	"github.com/sigstore/sigstore/pkg/signature/dsse"
 	"github.com/sigstore/sigstore/pkg/signature/payload"
@@ -67,10 +68,12 @@ func parseDSSEEnvelope(dsseBytes []byte) (string, error) {
 
 // buildCustomSubjectStatement creates an InTotoStatement with the custom subject logic (proxy registry path).
 func buildCustomSubjectStatement(ctx context.Context, digest string, predicate interface{}) InTotoStatement {
-	// Set the final subject name using the proxy registry host and app slug
-	registryHost := param.GetParam(ctx).CVE0OCIHost
-	repo := param.GetParam(ctx).ReplicatedAppSlug
-	finalSubjectName := registryHost + "/" + repo
+	// Set the final subject name using the OCI prefix (falls back to registry prefix)
+	ociPrefix := registry.NormalizePrefix(param.GetParam(ctx).OCIImagePrefix)
+	if ociPrefix == "" {
+		ociPrefix = registry.NormalizePrefix(param.GetParam(ctx).RegistryImagePrefix)
+	}
+	finalSubjectName := ociPrefix
 
 	return InTotoStatement{
 		Type:          "https://in-toto.io/Statement/v0.1",
@@ -84,7 +87,7 @@ func buildCustomSubjectStatement(ctx context.Context, digest string, predicate i
 }
 
 // CosignAttestWithCustomSubject creates and uploads a DSSE envelope with a custom subject for the attestation
-// The main functionality is to set the subject to the OCI Proxy to  CVE0_OCI_HOST
+// The main functionality is to set the subject to the OCI Proxy using OCI_IMAGE_PREFIX
 func CosignAttestWithCustomSubject(ctx context.Context, predicatePath, sbomLabel, digestRef, privateKeyPath, imageCatalogID string) error {
 	// Read the predicate (SBOM)
 	predicateBytes, err := os.ReadFile(predicatePath)
@@ -209,7 +212,7 @@ func CosignAttestWithCustomSubject(ctx context.Context, predicatePath, sbomLabel
 // the upstream registry – the proxy serves the signature directly from the DB.
 //
 // The docker-reference inside the payload exactly matches the reference that
-// end-users (and our tests) will verify ( <CVE0_OCI_HOST>/<image> ), ensuring
+// end-users (and our tests) will verify ( <OCI_IMAGE_PREFIX>/<image> ), ensuring
 // signature validation succeeds through the proxy.
 func CosignSignWithKeyCustomSubject(ctx context.Context, imageRef, base64PrivateKey, cosignPassword, imageCatalogID string) error {
 	// ------------------------------------------------------------------

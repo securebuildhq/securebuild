@@ -25,6 +25,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/oci"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/pipeline"
+	"github.com/securebuildhq/securebuild/pkg/registry"
 	"github.com/securebuildhq/securebuild/pkg/scan"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
@@ -281,7 +282,7 @@ func buildAndPushAPKOWithVM(ctx context.Context, img *imagetypes.Image, buildID 
 	defer os.RemoveAll(tmpDir)
 
 	// Build and push the image on VM - this starts a background job
-	ociPathWithoutTag := fmt.Sprintf("%s/%s/%s", param.GetParam(ctx).ReplicatedRegistryHost, param.GetParam(ctx).ReplicatedAppSlug, img.Name)
+	ociPathWithoutTag := registry.ImageRef(param.GetParam(ctx).RegistryImagePrefix, img.Name)
 	if err := buildAndPushImageOnVM(ctx, vmID, img.Name, img, buildID, apkoID, apkoVersionID, apkoYAML, tmpDir, ociPathWithoutTag, actualTags, workDir); err != nil {
 		return fmt.Errorf("failed to build and push image on VM: %w", err)
 	}
@@ -382,8 +383,8 @@ func buildAndPushImageOnVM(ctx context.Context, vmID string, imageName string, i
 
 	// Create build configuration
 	buildConfig := map[string]interface{}{
-		"registry_username":    "serviceaccount",
-		"registry_password":    param.GetParam(ctx).ReplicatedAPIToken,
+		"registry_username":    param.GetParam(ctx).RegistryUsername,
+		"registry_password":    param.GetParam(ctx).RegistryPassword,
 		"registry_host":        strings.Split(ociPathWithoutTag, "/")[0],
 		"apko_yaml_path":       filepath.Join(vmWorkDir, "apko.yaml"),
 		"work_dir":             vmWorkDir,
@@ -541,8 +542,8 @@ func storeMultiArchIndexManifest(ctx context.Context, ociPathWithoutTag string, 
 	// Store the multi-arch index manifest in oci_artifact_blob
 	fullRef := fmt.Sprintf("%s:%s", ociPathWithoutTag, actualTags[0])
 	auth := authn.FromConfig(authn.AuthConfig{
-		Username: "serviceaccount",
-		Password: param.GetParam(ctx).ReplicatedAPIToken,
+		Username: param.GetParam(ctx).RegistryUsername,
+		Password: param.GetParam(ctx).RegistryPassword,
 	})
 	ref, err := name.ParseReference(fullRef)
 	if err == nil {

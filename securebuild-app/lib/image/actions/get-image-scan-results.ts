@@ -5,8 +5,10 @@ import { getImageScanResults, getImageScanResultById, ImageScanSummary, ImageSca
 import { getParam } from "@/lib/data/param";
 
 export async function getImageScanResultsAction(sess: Session, imageName: string): Promise<ImageScanSummary[]> {
-  const cve0OciHost = await getParam("CVE0_OCI_HOST");
-  return await getImageScanResults(`${cve0OciHost}/${imageName}`);
+  const ociImagePrefix = await getParam("OCI_IMAGE_PREFIX");
+  const registryImagePrefix = await getParam("REGISTRY_IMAGE_PREFIX");
+  const prefix = ociImagePrefix || registryImagePrefix;
+  return await getImageScanResults(`${prefix}/${imageName}`);
 }
 
 export async function getImageScanResultByIdAction(sess: Session, scanId: string): Promise<ImageScanResult | null> {

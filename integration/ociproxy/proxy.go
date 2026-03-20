@@ -45,10 +45,10 @@ func setupTestProxy(ctx context.Context, t *testing.T, testDB *testutil.TestData
 	// Initialize param package with test overrides (NO MORE t.Setenv!)
 	overrides := map[string]string{
 		"DB_URI":                    testDB.ConnStr,
-		"CVE0_OCI_HOST":             proxyAddress,
-		"REPLICATED_REGISTRY_HOST":  registry.Address,
-		"REPLICATED_APP_SLUG":       "securebuild",
-		"REPLICATED_API_TOKEN":      registry.StaticPassword,
+		"OCI_IMAGE_PREFIX":          proxyAddress,
+		"REGISTRY_IMAGE_PREFIX":     registry.Address + "/securebuild",
+		"REGISTRY_USERNAME":         "serviceaccount",
+		"REGISTRY_PASSWORD":         registry.StaticPassword,
 		"OCI_PROXY_JWT_SECRET":      "test-jwt-secret-for-integration-testing",
 		"OCI_PROXY_SKIP_TLS_VERIFY": "true",
 	}
