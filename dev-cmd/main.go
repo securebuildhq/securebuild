@@ -17,7 +17,7 @@ const (
 	dbURI     = "DB_URI=postgres://postgres:password@localhost:15432/securebuild?sslmode=disable"
 )
 
-// goServices are the worker subcommands that use config-cmx.yaml for configuration.
+// goServices are the worker subcommands that use securebuild-config.yaml for configuration.
 var goServices = map[string]bool{"worker": true, "apk-proxy": true, "oci-proxy": true}
 
 type serviceConfig struct {
@@ -246,7 +246,7 @@ func runServiceShell(subcommand string) {
 	if subcommand == "app" {
 		dir = cwd + "/securebuild-app"
 	} else if goServices[subcommand] {
-		extraEnv = append(extraEnv, "SECUREBUILD_CONFIG_SOURCE="+cwd+"/config-cmx.yaml")
+		extraEnv = append(extraEnv, "SECUREBUILD_CONFIG_SOURCE="+cwd+"/securebuild-config.yaml")
 	}
 
 	fmt.Printf("Starting dev shell (DB_URI is set). Exit the shell to scale %s back up.\n", svc.name)
