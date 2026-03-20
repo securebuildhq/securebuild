@@ -180,7 +180,6 @@
               pkgs.docker
               pkgs.git
               pkgs.postgresql  # Provides pg_isready
-              pkgs.pipx        # For installing Python CLI tools like vunnel
               pkgs.grype
               apko
               melange
@@ -195,22 +194,14 @@
             ];
 
             shellHook = ''
-              # Ensure pipx and go install paths are available
-              export PIPX_HOME="$HOME/.local/pipx"
-              export PIPX_BIN_DIR="$HOME/.local/bin"
+              # Ensure go install path is available
               export GOBIN="$HOME/go/bin"
-              
+
               # Create directories if they don't exist
-              mkdir -p "$PIPX_BIN_DIR" "$GOBIN"
-              
+              mkdir -p "$GOBIN"
+
               # Prepend to PATH
-              export PATH="$PIPX_BIN_DIR:$GOBIN:$PATH"
-              
-              # Install vunnel if not already installed
-              if ! command -v vunnel &> /dev/null; then
-                echo "📦 Installing vunnel..."
-                pipx install vunnel
-              fi
+              export PATH="$GOBIN:$PATH"
               
               # Install grype-db if not already installed
               if ! command -v grype-db &> /dev/null; then
@@ -247,11 +238,7 @@
               else
                 echo "❌ Grype-DB failed"
               fi
-              if vunnel_version=$(vunnel --version 2>&1); then
-                echo "✅ Vunnel $vunnel_version"
-              else
-                echo "❌ Vunnel failed"
-              fi
+              echo "ℹ️  Vunnel runs in container (ghcr.io/anchore/vunnel)"
             '' + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
               if colima_version=$(colima version 2>&1 | head -n1); then
                 echo "✅ Colima $colima_version"

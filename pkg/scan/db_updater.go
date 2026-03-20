@@ -87,17 +87,16 @@ func updateDatabase(ctx context.Context, grypeDBRoot string) error {
 	logger.Info("Starting vulnerability database update")
 
 	dataDir := filepath.Join(grypeDBRoot, "data")
-	vunnelConfig := filepath.Join(grypeDBRoot, "vunnel.yaml")
 
 	// Step 1: Run vunnel for NVD provider
 	logger.Info("Running vunnel for NVD provider")
-	if err := runVunnel(ctx, grypeDBRoot, vunnelConfig, "nvd"); err != nil {
+	if err := runVunnel(ctx, grypeDBRoot, "nvd"); err != nil {
 		return fmt.Errorf("vunnel nvd failed: %w", err)
 	}
 
 	// Step 2: Run vunnel for GitHub provider
 	logger.Info("Running vunnel for GitHub provider")
-	if err := runVunnel(ctx, grypeDBRoot, vunnelConfig, "github"); err != nil {
+	if err := runVunnel(ctx, grypeDBRoot, "github"); err != nil {
 		return fmt.Errorf("vunnel github failed: %w", err)
 	}
 
@@ -121,21 +120,44 @@ func updateDatabase(ctx context.Context, grypeDBRoot string) error {
 	return nil
 }
 
-// runVunnel executes vunnel for a specific provider
-func runVunnel(ctx context.Context, grypeDBRoot, configPath, provider string) error {
-	cmd := exec.CommandContext(ctx, "vunnel",
-		"--config", configPath,
+// defaultVunnelImage is the default container image used to run vunnel.
+// Override via the VUNNEL_IMAGE param to pin a different version.
+const defaultVunnelImage = "ghcr.io/anchore/vunnel:v0.55.3"
+
+// runVunnel executes vunnel for a specific provider inside a container.
+// The grypeDBRoot directory is mounted into the container so vunnel can
+// read its config and write provider data.
+func runVunnel(ctx context.Context, grypeDBRoot, provider string) error {
+	image := param.GetParam(ctx).VunnelImage
+	if image == "" {
+		image = defaultVunnelImage
+	}
+
+	// Mount the entire grypeDBRoot as /data inside the container.
+	// The config file path needs to be translated to the container path.
+	containerDataDir := "/data"
+	containerConfigPath := containerDataDir + "/vunnel.yaml"
+
+	// Use a static container name per provider to ensure only one instance
+	// runs at a time. If a previous run is still active, docker will refuse
+	// to start a second container with the same name.
+	containerName := "vunnel-" + provider
+
+	cmd := exec.CommandContext(ctx, "docker", "run",
+		"--rm",
+		"--name", containerName,
+		"-v", grypeDBRoot+":"+containerDataDir,
+		image,
+		"--config", containerConfigPath,
 		"run",
 		provider,
 	)
 
-	// Set working directory to the grypeDBRoot directory
-	cmd.Dir = grypeDBRoot
-
-	logger.Info("running vunnel command",
-		zap.String("command", cmd.String()),
+	logger.Info("running vunnel in container",
+		zap.String("image", image),
+		zap.String("container", containerName),
 		zap.String("provider", provider),
-		zap.String("working_dir", grypeDBRoot))
+		zap.String("mount", grypeDBRoot+":"+containerDataDir))
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

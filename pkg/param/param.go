@@ -111,7 +111,8 @@ type Param struct {
 	LogLevel string `yaml:"log_level"`
 
 	// Vulnerability Database Configuration
-	GrypeDBRoot string `yaml:"grype_database_root"`
+	GrypeDBRoot  string `yaml:"grype_database_root"`
+	VunnelImage  string `yaml:"vunnel_image"`
 
 	// PProf Configuration
 	PProfEnabled bool `yaml:"pprof_enabled"`
