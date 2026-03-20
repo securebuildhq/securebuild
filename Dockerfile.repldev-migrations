@@ -1,0 +1,48 @@
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates bash curl postgresql-client
+
+# Install schemahero v0.23.0-beta.9 (same version as flake.nix)
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && \
+  curl -fsSL "https://github.com/schemahero/schemahero/releases/download/v0.23.0-beta.9/schemahero_linux_${ARCH}.tar.gz" \
+    -o /tmp/schemahero.tar.gz && \
+  tar -xzf /tmp/schemahero.tar.gz -C /tmp && \
+  mv /tmp/schemahero /usr/local/bin/schemahero && \
+  chmod +x /usr/local/bin/schemahero && \
+  rm /tmp/schemahero.tar.gz
+
+# Copy schema files
+COPY db/schema /db/schema
+
+# Entrypoint: wait for postgres, run migrations, exit 0
+RUN cat > /entrypoint.sh <<'EOF'
+#!/bin/bash
+set -e
+
+DB_HOST="${DB_HOST:-postgres}"
+DB_PORT="${DB_PORT:-5432}"
+
+echo "Waiting for postgres at $DB_HOST:$DB_PORT..."
+until pg_isready -h "$DB_HOST" -p "$DB_PORT" -q; do
+  sleep 1
+done
+
+echo "Postgres is ready. Running migrations..."
+mkdir -p /tmp/plan
+schemahero plan \
+  --driver postgres \
+  --spec-file /db/schema/tables \
+  --out /tmp/plan/plan.yaml \
+  --uri "${DB_URI}" \
+  --seed-data
+
+schemahero apply \
+  --driver postgres \
+  --ddl /tmp/plan/plan.yaml \
+  --uri "${DB_URI}"
+
+echo "Migrations complete."
+EOF
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

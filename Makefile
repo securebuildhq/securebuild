@@ -11,6 +11,15 @@ help:
 	@echo "  run-oci-proxy  - Run the OCI proxy service"
 	@echo "  run-apk-proxy  - Run the APK proxy service"
 	@echo ""
+	@echo "Local Dev Stack (Docker Swarm):"
+	@echo "  dev-stack-up   - Build images and start the full dev stack in Docker Swarm"
+	@echo "  dev-stack-down - Stop and remove the dev stack"
+	@echo "  dev-worker     - Scale down worker, open shell with DB_URI set; restores on exit"
+	@echo "  dev-app        - Scale down app, open shell in securebuild-app/ with DB_URI set; restores on exit"
+	@echo "  dev-apk-proxy  - Scale down apk-proxy, open shell with DB_URI set; restores on exit"
+	@echo "  dev-oci-proxy  - Scale down oci-proxy, open shell with DB_URI set; restores on exit"
+	@echo "  dev-migrate    - Open shell with DB_URI set; run 'make migrate' inside"
+	@echo ""
 	@echo "Database:"
 	@echo "  migrate        - Run database migrations using schemahero"
 	@echo ""
@@ -167,3 +176,54 @@ run-autoimg: build-autoimg
 .PHONY: clean-worker
 clean-worker:
 	rm -f ./bin/worker
+
+# Detect host architecture for building linux worker binary (used by dev image build)
+LINUX_ARCH := $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+
+# Build all Docker images used by the dev stack
+.PHONY: build-dev-images
+build-dev-images: pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm64
+	GOOS=linux GOARCH=$(LINUX_ARCH) go build -ldflags "$(BUILD_LDFLAGS)" -o bin/worker cmd/main.go
+	docker build -f Dockerfile.repldev-worker -t securebuild-worker:latest .
+	@set -a; . securebuild-app/.env.local; set +a; \
+	docker build \
+		--build-arg "NEXT_PUBLIC_GITHUB_CLIENT_ID=$${NEXT_PUBLIC_GITHUB_CLIENT_ID}" \
+		--build-arg "NEXT_PUBLIC_GITHUB_REDIRECT_URI=$${NEXT_PUBLIC_GITHUB_REDIRECT_URI}" \
+		--build-arg "NEXT_PUBLIC_GITHUB_OAUTH_STATE=$${NEXT_PUBLIC_GITHUB_OAUTH_STATE}" \
+		--build-arg "NEXT_PUBLIC_CENTRIFUGO_ADDRESS=$${NEXT_PUBLIC_CENTRIFUGO_ADDRESS}" \
+		-f securebuild-app/Dockerfile.repldev -t securebuild-app:latest securebuild-app/
+	docker build -f Dockerfile.repldev-migrations -t securebuild-migrations:latest .
+
+# Dev stack targets (Docker Swarm)
+# Prerequisite: Docker Swarm must be initialized (run 'docker swarm init' once if not already)
+
+STACK_NAME := securebuild
+COMPOSE_FILE := docker-compose.yml
+
+.PHONY: dev-stack-up
+dev-stack-up: build-dev-images
+	REPO_ROOT=$(shell pwd) docker stack deploy --compose-file $(COMPOSE_FILE) $(STACK_NAME)
+
+.PHONY: dev-stack-down
+dev-stack-down:
+	docker stack rm $(STACK_NAME)
+
+.PHONY: dev-worker
+dev-worker:
+	go run ./dev-cmd worker
+
+.PHONY: dev-app
+dev-app:
+	go run ./dev-cmd app
+
+.PHONY: dev-apk-proxy
+dev-apk-proxy:
+	go run ./dev-cmd apk-proxy
+
+.PHONY: dev-oci-proxy
+dev-oci-proxy:
+	go run ./dev-cmd oci-proxy
+
+.PHONY: dev-migrate
+dev-migrate:
+	go run ./dev-cmd migrate

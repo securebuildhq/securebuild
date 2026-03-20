@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
-	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/securebuildhq/securebuild/pkg/adminuser"
@@ -52,27 +50,10 @@ func RunCmd() *cobra.Command {
 			stopTracer := datadog.Start("securebuild-worker")
 			defer stopTracer()
 
-			// Determine configuration source:
-			// SECUREBUILD_CONFIG_SOURCE can be:
-			//   - missing or "doppler" → load from Doppler (default)
-			//   - "env" → load from environment variables
-			//   - path to a .yaml/.yml file → load from YAML config file
-			var initSource param.InitSource = param.InitSourceDoppler
-			configSource := os.Getenv("SECUREBUILD_CONFIG_SOURCE")
-			switch {
-			case configSource == "" || configSource == "doppler":
-				// default: Doppler
-			case configSource == "env":
-				initSource = param.InitSourceEnvironment
-			default:
-				ext := filepath.Ext(configSource)
-				if ext == ".yaml" || ext == ".yml" {
-					initSource = param.InitSourceYAMLFile
-				} else {
-					return fmt.Errorf("invalid SECUREBUILD_CONFIG_SOURCE: %s (expected 'doppler', 'env', or path to .yaml/.yml file)", configSource)
-				}
+			initSource, err := param.ResolveInitSource()
+			if err != nil {
+				return fmt.Errorf("failed to initialize params: %w", err)
 			}
-
 			ctx, err := param.Init(initSource, nil)
 			if err != nil {
 				return fmt.Errorf("failed to initialize params: %w", err)

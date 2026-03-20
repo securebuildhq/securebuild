@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/viper"
 )
 
+
 func APKProxyCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "apk-proxy",
@@ -32,7 +33,11 @@ func APKProxyCmd() *cobra.Command {
 			stopTracer := datadog.Start("securebuild-apk-proxy")
 			defer stopTracer()
 
-			ctx, err := param.Init(param.InitSourceDoppler, nil)
+			initSource, err := param.ResolveInitSource()
+			if err != nil {
+				return fmt.Errorf("failed to initialize params: %w", err)
+			}
+			ctx, err := param.Init(initSource, nil)
 			if err != nil {
 				return fmt.Errorf("failed to initialize params: %w", err)
 			}
