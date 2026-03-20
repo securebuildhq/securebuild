@@ -29,7 +29,7 @@ func GenerateAPKOFromMelanage(ctx context.Context, melanageYaml string) (string,
 		anthropic.NewAssistantMessage(anthropic.NewTextBlock(generateApkoSystemPrompt)),
 		anthropic.NewAssistantMessage(anthropic.NewTextBlock(
 			fmt.Sprintf(secureBuildApkRepositoryFormatString,
-				param.GetParam(ctx).SecureBuildApkRepository,
+				param.GetParam(ctx).ApkRepository,
 			),
 		),
 		),

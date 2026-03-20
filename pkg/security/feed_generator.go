@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/securebuildhq/securebuild/pkg/logger"
+	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"go.uber.org/zap"
 )
@@ -144,7 +145,7 @@ func GenerateSecDBFeed(ctx context.Context) (string, error) {
 	secdb := AlpineSecDB{
 		APKURL:        "{{urlprefix}}/{{arch}}/{{pkg.name}}-{{pkg.ver}}.apk",
 		Archs:         []string{"x86_64", "aarch64"},
-		URLPrefix:     "https://apk.cve0.io",
+		URLPrefix:     param.GetParam(ctx).ApkRepository,
 		DistroVersion: "v1",
 		Packages:      packages,
 	}

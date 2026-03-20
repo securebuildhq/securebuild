@@ -20,6 +20,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/cloudflare"
 	"github.com/securebuildhq/securebuild/pkg/image/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
+	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -47,7 +48,11 @@ func BuildCmd() *cobra.Command {
 		Short: "Build and test a package",
 		Long:  `Build and test a package`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBuildAndTestPackage(cmd.Context(), workDir, apkRepositories, keyringAppends, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, zoneID, cachePurgeToken, useRoot, bootstrapMode)
+			ctx, err := param.Init(param.InitSourceEnvironment, nil)
+			if err != nil {
+				return fmt.Errorf("failed to initialize params: %w", err)
+			}
+			return runBuildAndTestPackage(ctx, workDir, apkRepositories, keyringAppends, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, zoneID, cachePurgeToken, useRoot, bootstrapMode)
 		},
 	}
 
@@ -188,25 +193,34 @@ echo "Melange build completed for %s architecture at $(date) with exit code $MEL
 		return err
 	}
 
-	// Test command uses cve0 repository by default for test environment dependencies.
-	// Additional repositories can be specified in the melange.yaml test section if needed.
+	// Test command uses the same repositories/keyrings passed to the build command.
+	// Build dynamic repository flags for test command
+	testRepoFlags := "\t--repository-append packages \\\n"
+	for _, repo := range apkRepositories {
+		if repo != "" {
+			testRepoFlags += fmt.Sprintf("\t--repository-append %s \\\n", repo)
+		}
+	}
+	testKeyringFlags := "\t--keyring-append local-melange.rsa.pub \\\n"
+	for _, keyring := range keyringAppends {
+		if keyring != "" {
+			testKeyringFlags += fmt.Sprintf("\t--keyring-append %s \\\n", keyring)
+		}
+	}
+
 	testCmd := fmt.Sprintf(`set -euo pipefail
 echo "Starting melange test for %s architecture at $(date)";
 %smelange test melange.yaml \
 	--arch %s \
 	--source-dir . \
 	--pipeline-dirs ./pipelines/packages/ \
-	--repository-append packages \
-	--repository-append https://apk.cve0.io \
-	--keyring-append local-melange.rsa.pub \
-	--keyring-append https://apk.cve0.io/key/cve0-signing.rsa.pub \
-	--test-package-append "busybox" \
+%s%s	--test-package-append "busybox" \
 	>> output/melange_stdout_%s.log 2>> output/melange_stderr_%s.log;
 MELANGE_TEST_EXIT_CODE=$?;
 echo $MELANGE_TEST_EXIT_CODE > output/melange_test_done_%s.txt;
 echo "Melange test completed for %s architecture at $(date) with exit code $MELANGE_TEST_EXIT_CODE";
 exit $MELANGE_TEST_EXIT_CODE;
-	`, arch, sudoOrNot, arch, arch, arch, arch, arch)
+	`, arch, sudoOrNot, arch, testRepoFlags, testKeyringFlags, arch, arch, arch, arch)
 
 	testOutput, testErr := exec.CommandContext(ctx, "bash", "-c", testCmd).CombinedOutput()
 	logger.Debug("test command terminated", zap.String("output", string(testOutput)), zap.Error(testErr))
@@ -464,7 +478,7 @@ func uploadFileToR2(ctx context.Context, fileName string, bucketName string, key
 	}
 
 	// Purge CloudFlare cache for the uploaded file
-	apkURL := fmt.Sprintf("https://apk.cve0.io/%s", key)
+	apkURL := fmt.Sprintf("%s/%s", param.GetParam(ctx).ApkRepository, key)
 	if err := cloudflare.PurgeCache(ctx, cfZoneID, cfAPIKey, []string{apkURL}); err != nil {
 		// Log warning but don't fail the upload
 		logToFile(publishingLogFile, fmt.Sprintf("warning: failed to purge cloudflare cache for %s: %s", apkURL, err))
@@ -524,7 +538,7 @@ func uploadFileToR2Multipart(ctx context.Context, fileName string, bucketName st
 	}
 
 	// Purge CloudFlare cache for the uploaded file
-	apkURL := fmt.Sprintf("https://apk.cve0.io/%s", key)
+	apkURL := fmt.Sprintf("%s/%s", param.GetParam(ctx).ApkRepository, key)
 	if err := cloudflare.PurgeCache(ctx, cfZoneID, cfAPIKey, []string{apkURL}); err != nil {
 		// Log warning but don't fail the upload
 		logToFile(publishingLogFile, fmt.Sprintf("warning: failed to purge cloudflare cache for %s: %s", apkURL, err))

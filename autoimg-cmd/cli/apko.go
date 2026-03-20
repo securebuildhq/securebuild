@@ -48,12 +48,20 @@ func generateAPKOConfig(ctx context.Context, imageInfo *ImageInfo, filteredSBOM 
 	// Build the package list from filtered SBOM
 	packages := buildPackageList(filteredSBOM)
 
-	// Use CVE0 repository
+	// Use APK repository from environment (required)
+	apkRepo := os.Getenv("APK_REPOSITORY")
+	if apkRepo == "" {
+		return nil, fmt.Errorf("APK_REPOSITORY environment variable is required")
+	}
+	apkKeyName := os.Getenv("APK_PUBLIC_KEY_NAME")
+	if apkKeyName == "" {
+		return nil, fmt.Errorf("APK_PUBLIC_KEY_NAME environment variable is required")
+	}
 	repositories := []string{
-		"https://apk.cve0.io",
+		apkRepo,
 	}
 	keyring := []string{
-		"https://apk.cve0.io/key/cve0-signing.rsa.pub",
+		apkRepo + "/key/" + apkKeyName,
 	}
 
 	// Create the APKO configuration

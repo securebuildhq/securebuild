@@ -434,8 +434,9 @@ func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pk
 			return fmt.Errorf("bootstrap apk repository is not set")
 		}
 	} else {
-		apkRepositories = []string{"https://apk.cve0.io"}
-		keyringAppends = []string{"https://apk.cve0.io/key/cve0-signing.rsa.pub"}
+		apkRepo := param.GetParam(ctx).ApkRepository
+		apkRepositories = []string{apkRepo}
+		keyringAppends = []string{apkRepo + "/key/" + param.GetParam(ctx).APKPublicKeyName}
 	}
 
 	r2Directory := ""
