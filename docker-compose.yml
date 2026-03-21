@@ -27,11 +27,9 @@ services:
     command: ["run"]
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
-      SECUREBUILD_CONFIG_SOURCE: /config-cmx.yaml
+      SECUREBUILD_CONFIG_SOURCE: /securebuild-config.yaml
     volumes:
-      - ${REPO_ROOT}/config-cmx.yaml:/config-cmx.yaml:ro
-    ports:
-      - "50000:50000"
+      - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
     depends_on:
       - postgres
 
@@ -54,11 +52,11 @@ services:
     command: ["apk-proxy"]
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
-      SECUREBUILD_CONFIG_SOURCE: /config-cmx.yaml
+      SECUREBUILD_CONFIG_SOURCE: /securebuild-config.yaml
     volumes:
-      - ${REPO_ROOT}/config-cmx.yaml:/config-cmx.yaml:ro
+      - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
     ports:
-      - "8080:8080"
+      - "8880:8880"
     depends_on:
       - postgres
 
@@ -67,11 +65,11 @@ services:
     command: ["oci-proxy"]
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
-      SECUREBUILD_CONFIG_SOURCE: /config-cmx.yaml
+      SECUREBUILD_CONFIG_SOURCE: /securebuild-config.yaml
     volumes:
-      - ${REPO_ROOT}/config-cmx.yaml:/config-cmx.yaml:ro
+      - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
     ports:
-      - "8081:8081"
+      - "8888:8888"
     depends_on:
       - postgres
 
