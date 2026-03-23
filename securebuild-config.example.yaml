@@ -22,7 +22,11 @@ apk_signing_key_data: "<base64 data>"  # replace: base64-encoded private key PEM
 apk_signing_key_name: cve0-signing.rsa.key
 
 # S3-compatible object storage (Cloudflare R2, AWS S3, MinIO, etc.).
+# For AWS S3 path-style: r2_endpoint is the regional endpoint only (no bucket path), e.g.
+# https://s3.us-east-1.amazonaws.com — and set r2_region to that region (e.g. us-east-1).
+# For Cloudflare R2, omit r2_region (defaults to auto) and use your R2 S3 API URL.
 r2_endpoint: https://s3.example.com
+r2_region: us-east-1  # required for AWS S3; omit for R2 (auto)
 r2_access_key: replace-me  # replace with your R2 or S3 access key
 r2_secret_key: replace-me  # replace with your R2 or S3 secret key
 r2_bucket_name: securebuild

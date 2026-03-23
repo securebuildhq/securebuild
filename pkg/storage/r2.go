@@ -41,10 +41,14 @@ func NewR2Client(ctx context.Context, bucketName string) (*R2Client, error) {
 		dynamicFolder = folder
 	}
 
+	region := p.R2Region
+	if region == "" {
+		region = "auto" // Cloudflare R2; AWS S3 needs the real region (set r2_region in config).
+	}
+
 	// Load AWS config with custom endpoint and credentials
-	// R2 uses "auto" as the region
 	cfg, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion("auto"),
+		config.WithRegion(region),
 		config.WithBaseEndpoint(p.R2Endpoint),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			p.R2AccessKey,
