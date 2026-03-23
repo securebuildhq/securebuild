@@ -1,0 +1,24 @@
+database: securebuild
+name: package
+requires: []
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "pkg-go-boring-1.24-test"
+        - column: name
+          value:
+            str: "go-boring-1.24"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: is_delete_protection_enabled
+          value:
+            str: "false"
+        - column: is_deleted
+          value:
+            str: "false"

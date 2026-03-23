@@ -1295,18 +1295,20 @@ func getExistingVersionsForFamily(ctx context.Context, pf *package_family.Packag
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	// Query all package_version records for packages in this family
-	// Use package_family_package join to scope to the correct family,
-	// avoiding false matches from LIKE patterns (e.g., "go-%" matching "go-boring-1.26")
+	// Query all package_version records for packages in this family.
+	// Use regex "^{family}-[0-9]" to match versioned packages (e.g., go-1.26)
+	// while excluding unrelated families (e.g., go-boring-1.26).
+	// Also match exact name for families like "tw" with no version suffix.
 	query := `
 		SELECT DISTINCT p.name, pv.version
 		FROM package p
 		INNER JOIN package_version pv ON p.id = pv.package_id
-		INNER JOIN package_family_package pfp ON p.id = pfp.package_id
-		WHERE pfp.package_family_id = $1 AND p.parent_id IS NULL
+		WHERE p.parent_id IS NULL
+		  AND (p.name ~ $1 OR p.name = $2)
 	`
 
-	rows, err := conn.Query(ctx, query, pf.ID)
+	familyPattern := "^" + regexp.QuoteMeta(pf.Name) + "-[0-9]"
+	rows, err := conn.Query(ctx, query, familyPattern, pf.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query existing versions: %w", err)
 	}
