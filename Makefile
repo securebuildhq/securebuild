@@ -203,6 +203,7 @@ COMPOSE_FILE := docker-compose.yml
 
 .PHONY: dev-stack-up
 dev-stack-up: build-dev-images
+	mkdir -p dev-pipelines
 	REPO_ROOT=$(shell pwd) docker stack deploy --compose-file $(COMPOSE_FILE) $(STACK_NAME)
 
 .PHONY: dev-stack-down

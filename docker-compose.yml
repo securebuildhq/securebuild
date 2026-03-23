@@ -30,6 +30,7 @@ services:
       SECUREBUILD_CONFIG_SOURCE: /securebuild-config.yaml
     volumes:
       - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
+      - ${REPO_ROOT}/dev-pipelines:/var/run/securebuild/pipelines
     depends_on:
       - postgres
 

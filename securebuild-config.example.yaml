@@ -26,12 +26,16 @@ r2_endpoint: https://s3.example.com
 r2_access_key: replace-me  # replace with your R2 or S3 access key
 r2_secret_key: replace-me  # replace with your R2 or S3 secret key
 r2_bucket_name: securebuild
-r2_feed_bucket_name: securebuild-feeds
 r2_use_path_style: false
 
 # Build execution: "local" runs builds on the worker host; "static" uses SSH to listed VMs.
 build_backend: local
 max_parallel_builds: 1
+
+# Pipeline workspace root on the worker. Docker Swarm dev stack (make dev-stack-up): use
+# /var/run/securebuild/pipelines — docker-compose bind-mounts ./dev-pipelines from the repo.
+# Worker on the bare host: absolute path to that directory (e.g. /path/to/repo/dev-pipelines).
+# pipeline_dir: /var/run/securebuild/pipelines
 # static_vms:
 #   - host: build-vm.example.com
 #     user: builder

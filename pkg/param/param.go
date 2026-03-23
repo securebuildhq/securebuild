@@ -102,15 +102,17 @@ type Param struct {
 	SpecSyncToken   string `yaml:"specsync_github_token"`
 	SpecSyncBranch  string `yaml:"specsync_github_branch"`
 
-	// Pipeline Directory Configuration
+	// PipelineDir is the worker filesystem root for pipeline workspaces (packages/images subtrees).
+	// Docker Swarm dev stack: set to /var/run/securebuild/pipelines (compose bind-mounts repo dev-pipelines/).
+	// Worker on the host: set to an absolute path on that machine (e.g. repo-root dev-pipelines).
 	PipelineDir string `yaml:"pipeline_dir"`
 
 	// Logging Configuration
 	LogLevel string `yaml:"log_level"`
 
 	// Vulnerability Database Configuration
-	GrypeDBRoot  string `yaml:"grype_database_root"`
-	VunnelImage  string `yaml:"vunnel_image"`
+	GrypeDBRoot string `yaml:"grype_database_root"`
+	VunnelImage string `yaml:"vunnel_image"`
 
 	// PProf Configuration
 	PProfEnabled bool `yaml:"pprof_enabled"`

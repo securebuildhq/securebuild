@@ -10,3 +10,4 @@ playwright-report
 yarn.lock
 /data/
 .grype-dev/
+dev-pipelines/
