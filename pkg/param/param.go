@@ -167,6 +167,42 @@ const (
 	InitSourceYAMLFile    InitSource = "yaml_file"
 )
 
+// normalizePoolSizeForBackend sets PoolSize for listener queue concurrency and (for CMX)
+// pool maintenance. Local builds use 1; static uses len(static_vms). CMX and other backends
+// use the configured value, minimum 1. Logs at debug when the value is adjusted.
+func normalizePoolSizeForBackend(p *Param) {
+	configured := p.PoolSize
+	backend := strings.ToLower(strings.TrimSpace(p.BuildBackend))
+	if backend == "" {
+		if p.ReplicatedAPIToken != "" && p.ReplicatedAPIOrigin != "" {
+			backend = "cmx"
+		} else {
+			backend = "local"
+		}
+	}
+
+	var effective int
+	switch backend {
+	case "local":
+		effective = 1
+	case "static":
+		effective = len(p.StaticVMs)
+	default:
+		effective = configured
+		if effective < 1 {
+			effective = 1
+		}
+	}
+
+	if p.PoolSize != effective {
+		logger.Debug("pool_size adjusted for build backend",
+			zap.String("build_backend", backend),
+			zap.Int("configured", configured),
+			zap.Int("effective", effective))
+	}
+	p.PoolSize = effective
+}
+
 // ResolveInitSource reads SECUREBUILD_CONFIG_SOURCE from the environment and
 // returns the corresponding InitSource:
 //
@@ -248,6 +284,8 @@ func Init(source InitSource, overrides map[string]string) (context.Context, erro
 			zap.Int("configured", p.MaxParallelBuilds))
 		p.MaxParallelBuilds = 1
 	}
+
+	normalizePoolSizeForBackend(p)
 
 	// Return context with param embedded
 	ctx := context.Background()

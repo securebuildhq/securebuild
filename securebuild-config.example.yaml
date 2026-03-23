@@ -35,6 +35,8 @@ r2_use_path_style: false
 # Build execution: "local" runs builds on the worker host; "static" uses SSH to listed VMs.
 build_backend: local
 max_parallel_builds: 1
+# pool_size is derived at startup: local → 1, static → number of static_vms. For CMX, set
+# pool_size for the VM pool; if it is missing or 0 it becomes 1 (see worker debug logs).
 
 # Pipeline workspace root on the worker. Docker Swarm dev stack (make dev-stack-up): use
 # /var/run/securebuild/pipelines — docker-compose bind-mounts ./dev-pipelines from the repo.
