@@ -14,7 +14,6 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/buildqueue"
 	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/dynamicparam"
-	"github.com/securebuildhq/securebuild/pkg/email"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	"github.com/securebuildhq/securebuild/pkg/githubsync"
 	"github.com/securebuildhq/securebuild/pkg/listener"
@@ -90,10 +89,6 @@ func runWorker(ctx context.Context) error {
 				logger.Warnf("pprof server enabled but failed to start: %v", err)
 			}
 		}()
-	}
-
-	if err := email.Init(ctx); err != nil {
-		return fmt.Errorf("failed to initialize email service: %w", err)
 	}
 
 	if err := dynamicparam.EnsureDynamicParams(ctx); err != nil {

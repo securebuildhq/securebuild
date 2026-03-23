@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/securebuildhq/securebuild/pkg/email"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 )
@@ -262,8 +261,6 @@ func processEvent(ctx context.Context, event NotificationEvent) {
 	// Attempt delivery
 	var deliveryErr error
 	switch notification.NotificationType {
-	case NotificationTypeEmail:
-		deliveryErr = sendEmailNotification(ctx, notification, event)
 	case NotificationTypeWebhook:
 		deliveryErr = sendWebhookNotification(ctx, notification, event)
 	default:
@@ -304,44 +301,6 @@ func processEvent(ctx context.Context, event NotificationEvent) {
 			logger.Error(fmt.Errorf("failed to update event status for %s: %w", event.ID, err))
 		}
 	}
-}
-
-// sendEmailNotification sends an email notification via Postmark
-func sendEmailNotification(ctx context.Context, notification *Notification, event NotificationEvent) error {
-	logger.Info(fmt.Sprintf("Sending email notification to %s for event %s",
-		notification.Target, event.ID))
-
-	// Parse the payload to get event details
-	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(event.Payload), &payload); err != nil {
-		return fmt.Errorf("failed to parse event payload: %w", err)
-	}
-
-	// Send the email using Postmark
-	err := email.SendNotificationEmail(
-		ctx,
-		notification.Target,
-		event.EventType,
-		event.ImageName,
-		event.ImageTag,
-		event.ImageDigest,
-		func() *string {
-			if event.PreviousDigest != nil && *event.PreviousDigest != "" {
-				return event.PreviousDigest
-			}
-			return nil
-		}(),
-		event.CreatedAt,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to send email notification: %w", err)
-	}
-
-	logger.Info(fmt.Sprintf("Successfully sent email notification to %s for event %s",
-		notification.Target, event.ID))
-
-	return nil
 }
 
 // sendWebhookNotification sends a webhook notification with HMAC signature

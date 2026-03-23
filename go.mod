@@ -31,11 +31,11 @@ require (
 	github.com/google/go-containerregistry v0.21.1
 	github.com/google/go-github/v61 v61.0.0
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/keighl/postmark v0.0.0-20190821160221-28358b1a94e3
 	github.com/lib/pq v1.11.2
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
+	github.com/pkg/errors v0.9.1
 	github.com/sigstore/cosign/v2 v2.6.2
 	github.com/sigstore/fulcio v1.8.5
 	github.com/sigstore/rekor v1.5.0
@@ -363,7 +363,6 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pjbgf/sha1cd v0.5.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pkg/profile v1.7.0 // indirect
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
@@ -468,7 +467,6 @@ require (
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
-	goji.io v2.0.2+incompatible // indirect
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/mod v0.33.0 // indirect
