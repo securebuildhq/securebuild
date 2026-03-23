@@ -1296,14 +1296,16 @@ func getExistingVersionsForFamily(ctx context.Context, pf *package_family.Packag
 	defer conn.Release()
 
 	// Query all package_version records for packages in this family
+	// Use regex to match {family}-{digits}.{digits} format to avoid matching unrelated packages
+	// e.g., "go" matches "go-1.26" but NOT "go-boring-1.26"
 	query := `
 		SELECT DISTINCT p.name, pv.version
 		FROM package p
 		INNER JOIN package_version pv ON p.id = pv.package_id
-		WHERE p.name LIKE $1 AND p.parent_id IS NULL
+		WHERE p.name ~ $1 AND p.parent_id IS NULL
 	`
 
-	familyPattern := pf.Name + "-%"
+	familyPattern := "^" + regexp.QuoteMeta(pf.Name) + "-[0-9]+\\.[0-9]+$"
 	rows, err := conn.Query(ctx, query, familyPattern)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query existing versions: %w", err)
