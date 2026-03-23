@@ -1296,19 +1296,29 @@ func getExistingVersionsForFamily(ctx context.Context, pf *package_family.Packag
 	defer conn.Release()
 
 	// Query all package_version records for packages in this family.
-	// Use regex "^{family}-[0-9]" to match versioned packages (e.g., go-1.26)
-	// while excluding unrelated families (e.g., go-boring-1.26).
-	// Also match exact name for families like "tw" with no version suffix.
+	// Convert the package_name_template (e.g., "{name}-{major}.{minor}") into a regex
+	// by replacing placeholders with digit matchers. This correctly scopes packages:
+	// - "go" with template "{name}-{major}.{minor}" → "^go-[0-9]+\.[0-9]+$" matches go-1.26 but NOT go-boring-1.26
+	// - "eclipse-temurin" with template "{name}-{major}-jre" → "^eclipse-temurin-[0-9]+-jre$"
+	// Also match exact name for families with no version suffix in the template.
+	familyPattern := "^" + regexp.QuoteMeta(pf.Name) + "$"
+	if pf.PackageNameTemplate != "" && pf.PackageNameTemplate != pf.Name {
+		tmpl := pf.PackageNameTemplate
+		tmpl = strings.ReplaceAll(tmpl, "{name}", regexp.QuoteMeta(pf.Name))
+		tmpl = strings.ReplaceAll(tmpl, "{major}", "[0-9]+")
+		tmpl = strings.ReplaceAll(tmpl, "{minor}", "[0-9]+")
+		familyPattern = "^" + tmpl + "$"
+	}
+
 	query := `
 		SELECT DISTINCT p.name, pv.version
 		FROM package p
 		INNER JOIN package_version pv ON p.id = pv.package_id
 		WHERE p.parent_id IS NULL
-		  AND (p.name ~ $1 OR p.name = $2)
+		  AND p.name ~ $1
 	`
 
-	familyPattern := "^" + regexp.QuoteMeta(pf.Name) + "-[0-9]"
-	rows, err := conn.Query(ctx, query, familyPattern, pf.Name)
+	rows, err := conn.Query(ctx, query, familyPattern)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query existing versions: %w", err)
 	}
