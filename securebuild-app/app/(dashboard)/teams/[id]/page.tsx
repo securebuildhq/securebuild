@@ -37,7 +37,6 @@ import { Badge } from "@/components/ui/badge"
 import { getTeamAction } from "@/lib/team/actions/get-team"
 import { updateTeamFeatureFlagsAction } from "@/lib/team/actions/update-team-feature-flags"
 import { AVAILABLE_FEATURE_FLAGS } from "@/lib/constants/feature-flags"
-import { CustomBuildImages } from "@/components/team/CustomBuildImages"
 
 const formatPrice = (price: number) => `$${price.toFixed(2)}`;
 
@@ -425,25 +424,6 @@ export default function TeamDetailsPage() {
                 </div>
               )}
               
-              {/* Custom Build Images Section */}
-              {team && (
-                <div className="mt-8">
-                  <Card>
-                    <CardHeader>
-                      <div>
-                        <CardTitle>Custom Build Images</CardTitle>
-                        <CardDescription>
-                          Configure which images this team can build using the Custom Build API
-                        </CardDescription>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <CustomBuildImages teamId={teamId} />
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
               {/* Feature Flags Section */}
               {team && (
                 <div className="mt-8">
