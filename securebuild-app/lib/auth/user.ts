@@ -5,27 +5,6 @@ import { getDB } from "@/lib/data/db";
 import { User } from "@/lib/types/user";
 
 
-export async function createToken(userId: string): Promise<string> {
-  try {
-    const db = getDB(await getParam("DB_URI"));
-    const token = srs.default({ length: 24, alphanumeric: true });
-
-    const result = await db.query(
-      `INSERT INTO user_token (user_id, token, created_at) VALUES ($1, $2, now())`,
-      [userId, token],
-    );
-
-    if (result.rowCount !== 1) {
-      throw new Error("Failed to create token");
-    }
-
-    return token;
-  } catch (err) {
-    logger.error("Failed to create token", { err });
-    throw err;
-  }
-}
-
 export async function upsertUserIfInvited(email: string, name: string, imageUrl: string, githubLogin: string): Promise<User> {
   const user = await findUser(email);
   if (user) {
