@@ -1295,15 +1295,29 @@ func getExistingVersionsForFamily(ctx context.Context, pf *package_family.Packag
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	// Query all package_version records for packages in this family
+	// Query all package_version records for packages in this family.
+	// Convert the package_name_template (e.g., "{name}-{major}.{minor}") into a regex
+	// by replacing placeholders with digit matchers. This correctly scopes packages:
+	// - "go" with template "{name}-{major}.{minor}" → "^go-[0-9]+\.[0-9]+$" matches go-1.26 but NOT go-boring-1.26
+	// - "eclipse-temurin" with template "{name}-{major}-jre" → "^eclipse-temurin-[0-9]+-jre$"
+	// Default to "{name}-{major}.{minor}" if no template is set.
+	tmpl := "{name}-{major}.{minor}"
+	if pf.PackageNameTemplate != "" {
+		tmpl = pf.PackageNameTemplate
+	}
+	tmpl = strings.ReplaceAll(tmpl, "{name}", regexp.QuoteMeta(pf.Name))
+	tmpl = strings.ReplaceAll(tmpl, "{major}", "[0-9]+")
+	tmpl = strings.ReplaceAll(tmpl, "{minor}", "[0-9]+")
+	familyPattern := "^" + tmpl + "$"
+
 	query := `
 		SELECT DISTINCT p.name, pv.version
 		FROM package p
 		INNER JOIN package_version pv ON p.id = pv.package_id
-		WHERE p.name LIKE $1 AND p.parent_id IS NULL
+		WHERE p.parent_id IS NULL
+		  AND p.name ~ $1
 	`
 
-	familyPattern := pf.Name + "-%"
 	rows, err := conn.Query(ctx, query, familyPattern)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query existing versions: %w", err)

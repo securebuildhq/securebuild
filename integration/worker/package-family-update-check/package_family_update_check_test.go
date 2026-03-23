@@ -212,4 +212,16 @@ func TestPackageFamilyUpdateCheckToBuildPackageChain(t *testing.T) {
 	err = testDB.Pool.QueryRow(ctx, "SELECT last_check_at FROM package_family WHERE id = $1", packageFamilyID).Scan(&lastCheckAt)
 	require.NoError(t, err)
 	assert.WithinDuration(t, time.Now(), lastCheckAt, 10*time.Second, "last_check_at should be recent")
+
+	// Verify go-boring-1.24 was NOT affected: it already had 1.24.10 in seed data,
+	// and the go family update should not have created any new versions for it.
+	// This is the core regression test: the old LIKE 'go-%' pattern would have matched
+	// go-boring-1.24 and incorrectly treated its 1.24.10 as belonging to the go family,
+	// preventing go-1.24 from getting 1.24.10 created.
+	var goBoringVersionCount int
+	err = testDB.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM package_version WHERE package_id = 'pkg-go-boring-1.24-test'
+	`).Scan(&goBoringVersionCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, goBoringVersionCount, "go-boring-1.24 should still have only its original seed version (1.24.10), not any new versions from the go family update")
 }
