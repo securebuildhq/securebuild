@@ -41,8 +41,10 @@ services:
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
       HOSTNAME: "0.0.0.0"
+      PIPELINE_DIR: /var/run/securebuild/pipelines
     volumes:
       - ${REPO_ROOT}/securebuild-app/.env.local:/app/.env.local:ro
+      - ${REPO_ROOT}/dev-pipelines:/var/run/securebuild/pipelines
     ports:
       - "3000:3000"
     depends_on:

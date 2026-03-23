@@ -245,11 +245,17 @@ func runServiceShell(subcommand string) {
 	extraEnv := append([]string{dbURI}, promptVars...)
 	if subcommand == "app" {
 		dir = cwd + "/securebuild-app"
+		extraEnv = append(extraEnv, "PIPELINE_DIR="+filepath.Join(cwd, "dev-pipelines"))
 	} else if goServices[subcommand] {
 		extraEnv = append(extraEnv, "SECUREBUILD_CONFIG_SOURCE="+cwd+"/securebuild-config.yaml")
 	}
 
-	fmt.Printf("Starting dev shell (DB_URI is set). Exit the shell to scale %s back up.\n", svc.name)
+	fmt.Println("Dev shell extra environment:")
+	for _, e := range extraEnv {
+		fmt.Printf("  %s\n", e)
+	}
+
+	fmt.Printf("Starting dev shell. Exit the shell to scale %s back up.\n", svc.name)
 	if err := spawnShell(dir, extraEnv...); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			_ = exitErr
