@@ -56,6 +56,5 @@ const (
 
 // Notification types
 const (
-	NotificationTypeEmail   = "email"
 	NotificationTypeWebhook = "webhook"
 )

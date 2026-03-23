@@ -30,7 +30,6 @@ func StartListeners(ctx context.Context) error {
 	StartPushImageToExternalRegistryListener(ctx, l)
 	StartScanImageListener(ctx, l)
 	StartScanCatalogImageListener(ctx, l)
-	StartSendEmailListener(ctx, l)
 	StartExternalImageSbomListener(ctx, l)
 	StartExternalImageScanListener(ctx, l)
 	StartPackageFamilyUpdateCheckListener(ctx, l)
@@ -198,18 +197,6 @@ func StartScanCatalogImageListener(ctx context.Context, l *Listener) {
 			if err := handleScanCatalogImage(ctx, notification.Payload); err != nil {
 				logger.Error(fmt.Errorf("failed to handle scan catalog image notification: %w", err))
 				return fmt.Errorf("failed to handle scan catalog image notification: %w", err)
-			}
-			return nil
-		})
-	})
-}
-
-func StartSendEmailListener(ctx context.Context, l *Listener) {
-	l.AddHandler(ctx, "send_email", 1, time.Minute*1, func(ctx context.Context, notification *pgconn.Notification) error {
-		return datadog.WithSpan(ctx, "listener.send_email", func(ctx context.Context) error {
-			if err := handleSendEmail(ctx, notification.Payload); err != nil {
-				logger.Error(fmt.Errorf("failed to handle send email notification: %w", err))
-				return fmt.Errorf("failed to handle send email notification: %w", err)
 			}
 			return nil
 		})

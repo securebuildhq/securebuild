@@ -83,8 +83,6 @@ type Param struct {
 	CloudflareZoneID          string `yaml:"cloudflare_zone_id"`
 	CloudflareCachePurgeToken string `yaml:"cloudflare_cache_purge_token"`
 
-	PostmarkServerToken string `yaml:"postmark_server_token"`
-
 	UpdaterGithubAPIToken string `yaml:"updater_github_api_token"`
 
 	ReleaseMonitorAPIToken string `yaml:"release_monitor_api_token"`
