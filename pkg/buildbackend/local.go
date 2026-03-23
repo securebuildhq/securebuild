@@ -41,28 +41,40 @@ func (b *LocalBackend) SeedMachinePool(ctx context.Context) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	// Upsert a single local machine row in machine_pool
-	query := `
+	var existingStatus string
+	err := conn.QueryRow(ctx, `SELECT status FROM machine_pool WHERE id = $1`, localMachineID).Scan(&existingStatus)
+	if err == nil && existingStatus == "running" {
+		logger.Debug("local machine already running, skipping re-install",
+			zap.String("id", localMachineID),
+			zap.String("architecture", b.architecture))
+		_, err = conn.Exec(ctx, `
+			INSERT INTO machine_pool (id, machine_id, created_at, private_key, username, status, architecture, is_on_demand, type)
+			VALUES ($1, $2, $3, $4, $5, 'running', $6, $7, $8)
+			ON CONFLICT (id) DO UPDATE SET
+				status = EXCLUDED.status,
+				architecture = EXCLUDED.architecture,
+				type = EXCLUDED.type
+		`, localMachineID, localMachineID, time.Now().UTC(), "", "", b.architecture, false, "local")
+		if err != nil {
+			return fmt.Errorf("failed to upsert local machine in pool: %w", err)
+		}
+		return nil
+	}
+
+	_, err = conn.Exec(ctx, `
 		INSERT INTO machine_pool (id, machine_id, created_at, private_key, username, status, architecture, is_on_demand, type)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (id) DO UPDATE SET
-			status = EXCLUDED.status,
 			architecture = EXCLUDED.architecture,
+			status = EXCLUDED.status,
 			type = EXCLUDED.type
-	`
-	_, err := conn.Exec(ctx, query,
-		localMachineID,   // id
-		localMachineID,   // machine_id
-		time.Now().UTC(), // created_at
-		"",               // private_key (not needed for local)
-		"",               // username (not needed for local)
-		"running",        // status
-		b.architecture,   // architecture
-		false,            // is_on_demand
-		"local",          // type
-	)
+	`, localMachineID, localMachineID, time.Now().UTC(), "", "", "installing", b.architecture, false, "local")
 	if err != nil {
-		return fmt.Errorf("failed to seed local machine in pool: %w", err)
+		return fmt.Errorf("failed to upsert local machine in pool: %w", err)
+	}
+
+	if err := builder.InstallBuildEnv(ctx, localMachineID); err != nil {
+		return fmt.Errorf("install build env: %w", err)
 	}
 
 	logger.Info("seeded local machine in pool",

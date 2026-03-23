@@ -595,7 +595,8 @@ func checkAndUpdateVMStatus(ctx context.Context, vmID string) error {
 }
 
 // InstallBuildEnv installs required build tools on a VM (melange, apko, grype, syft, docker, signing keys, builder binary, etc.).
-// The machine must exist in machine_pool with status "installing". Used by CMX (after provision) and static backend (on seed).
+// The machine must exist in machine_pool with status "installing".
+// Used by CMX (after provision), static backend (on seed), and local backend (after seed inserts the row).
 func InstallBuildEnv(ctx context.Context, vmID string) error {
 	logger.Trace("installing build env", zap.String("vmID", vmID))
 
@@ -664,7 +665,7 @@ func InstallBuildEnv(ctx context.Context, vmID string) error {
 
 	// generate local melange key
 	{
-		if err := generateLocalMelangeKey(ctx, vm); err != nil {
+		if err := generateLocalMelangeKey(ctx, vm, homeDir); err != nil {
 			return fmt.Errorf("failed to generate local melange key on VM %s: %w", vmID, err)
 		}
 	}
@@ -783,6 +784,10 @@ func copyBuilderBinary(ctx context.Context, vm types.BuilderVM, homeDir string) 
 	builderData := GetEmbeddedBuilder(vm.Architecture)
 	if len(builderData) == 0 {
 		return fmt.Errorf("embedded builder binary is empty for architecture %s", vm.Architecture)
+	}
+
+	if vm.Type == "local" {
+		return localCopyBuilderBinary(homeDir, vm.Architecture, vm.ID)
 	}
 
 	logger.Trace("embedded builder binary info",
@@ -911,7 +916,11 @@ func copyBuilderBinary(ctx context.Context, vm types.BuilderVM, homeDir string) 
 	return nil
 }
 
-func generateLocalMelangeKey(ctx context.Context, vm types.BuilderVM) error {
+func generateLocalMelangeKey(ctx context.Context, vm types.BuilderVM, homeDir string) error {
+	if vm.Type == "local" {
+		return localGenerateMelangeKeyIfNeeded(ctx, homeDir, vm.ID)
+	}
+
 	logger.Trace("generating local melange key", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
 
 	client, err := GetSSHClient(ctx, vm)
@@ -920,7 +929,7 @@ func generateLocalMelangeKey(ctx context.Context, vm types.BuilderVM) error {
 	}
 	defer client.Close()
 
-	cmd := `melange keygen local-melange.rsa`
+	cmd := fmt.Sprintf("cd %q && melange keygen local-melange.rsa", homeDir)
 
 	stdoutCh := make(chan string)
 	stderrCh := make(chan string)
@@ -950,6 +959,11 @@ func generateLocalMelangeKey(ctx context.Context, vm types.BuilderVM) error {
 }
 
 func installBasicDeps(ctx context.Context, vm types.BuilderVM) error {
+	if vm.Type == "local" {
+		logger.Info("skipping apt basic deps for local build machine", zap.String("vmID", vm.ID))
+		return nil
+	}
+
 	logger.Trace("installing basic deps", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
 
 	client, err := GetSSHClient(ctx, vm)
@@ -998,9 +1012,22 @@ func getSigningKeys(ctx context.Context, vm types.BuilderVM, homeDir string) err
 func getCve0SigningKey(ctx context.Context, vm types.BuilderVM, homeDir string) error {
 	logger.Trace("getting cve0 signing key", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
 
-	decodedSigningPublicKey, err := base64.StdEncoding.DecodeString(param.GetParam(ctx).APKPublicKeyData)
+	raw := param.GetParam(ctx).APKPublicKeyData
+	if raw == "" {
+		return fmt.Errorf("apk_public_key_data is empty for VM %s", vm.ID)
+	}
+	decodedSigningPublicKey, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
 		return fmt.Errorf("failed to decode signing public key for VM %s: %w", vm.ID, err)
+	}
+
+	if vm.Type == "local" {
+		path := filepath.Join(homeDir, "cve0-signing.rsa.pub")
+		if err := os.WriteFile(path, decodedSigningPublicKey, 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", path, err)
+		}
+		logger.Debug("wrote cve0 signing public key", zap.String("vmID", vm.ID), zap.String("path", path))
+		return nil
 	}
 
 	client, err := GetSSHClient(ctx, vm)
@@ -1018,6 +1045,10 @@ func getCve0SigningKey(ctx context.Context, vm types.BuilderVM, homeDir string) 
 }
 
 func installApko(ctx context.Context, vm types.BuilderVM) error {
+	if vm.Type == "local" {
+		return localInstallApko(ctx, vm)
+	}
+
 	// Select download link based on architecture
 	var apkoDownloadLink string
 	var apkoDirName string
@@ -1076,6 +1107,10 @@ apko version
 }
 
 func installMelange(ctx context.Context, vm types.BuilderVM) error {
+	if vm.Type == "local" {
+		return localInstallMelange(ctx, vm)
+	}
+
 	// Select download link based on architecture
 	var melangeDownloadLink string
 	var melangeDirName string
@@ -1134,6 +1169,10 @@ melange version
 }
 
 func installGrype(ctx context.Context, vm types.BuilderVM) error {
+	if vm.Type == "local" {
+		return localInstallGrype(ctx, vm)
+	}
+
 	logger.Trace("installing grype", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
 
 	client, err := GetSSHClient(ctx, vm)
@@ -1179,6 +1218,10 @@ grype version
 }
 
 func installSyft(ctx context.Context, vm types.BuilderVM) error {
+	if vm.Type == "local" {
+		return localInstallSyft(ctx, vm)
+	}
+
 	logger.Trace("installing syft", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
 
 	client, err := GetSSHClient(ctx, vm)
@@ -1224,6 +1267,10 @@ syft version
 }
 
 func installDocker(ctx context.Context, vm types.BuilderVM) error {
+	if vm.Type == "local" {
+		return localInstallDocker(ctx, vm)
+	}
+
 	logger.Debug("installing docker", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
 
 	client, err := GetSSHClient(ctx, vm)
@@ -2272,8 +2319,12 @@ func getPrivateKeyBytes(vm types.BuilderVM) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(vm.PrivateKey)
 }
 
-// GetRemoteHome returns the remote VM's $HOME via SSH (works for static and CMX).
+// GetRemoteHome returns the VM home directory: $HOME from SSH for static/CMX, or os.UserHomeDir for local.
 func GetRemoteHome(ctx context.Context, vm types.BuilderVM) (string, error) {
+	if vm.Type == "local" {
+		return os.UserHomeDir()
+	}
+
 	client, err := GetSSHClient(ctx, vm)
 	if err != nil {
 		return "", err
@@ -2354,6 +2405,10 @@ func GetSSHClient(ctx context.Context, vm types.BuilderVM) (*KeepAliveSSHClient,
 }
 
 func copyBuildEnvFiles(ctx context.Context, vm types.BuilderVM, homeDir string) error {
+	if vm.Type == "local" {
+		return localCopyBuildEnvFiles(homeDir, vm.ID)
+	}
+
 	logger.Trace("copying build env files", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
 
 	client, err := GetSSHClient(ctx, vm)

@@ -63,7 +63,7 @@ type Runner interface {
 	VMID() string
 
 	// RunSetup prepares the work dir for a build (melange signing key, build-<arch>.env, etc.).
-	// LocalRunner: runs "builder setup --work-dir <workDir>" then CopyEmbeddedFS(workDir).
+	// LocalRunner: writes build-<arch>.env, copies local-melange keys from $HOME, then CopyEmbeddedFS(workDir).
 	// SSHRunner: writes build-<arch>.env into work dir via runner (CopyEmbeddedFS only works locally).
 	RunSetup(ctx context.Context, workDir string, builderBin string, arch string) error
 }
@@ -213,11 +213,35 @@ func (r *LocalRunner) MkdirAll(path string) error {
 	return os.MkdirAll(path, 0755)
 }
 
-func (r *LocalRunner) RunSetup(ctx context.Context, workDir string, builderBin string, _ string) error {
-	escape := func(s string) string { return strings.ReplaceAll(s, "'", "'\\''") }
-	cmd := fmt.Sprintf("'%s' setup --work-dir '%s'", escape(builderBin), escape(workDir))
-	if _, err := r.RunCommand(ctx, cmd); err != nil {
+func (r *LocalRunner) RunSetup(ctx context.Context, workDir string, _ string, arch string) error {
+	// Match SSHRunner: build-*.env from embedded FS + copy melange keys from $HOME
+	// (keys and tools come from builder.InstallBuildEnv for type=local at worker startup).
+	envFileName := fmt.Sprintf("build-%s.env", arch)
+	content, err := fs.ReadFile(builder.EmbeddedFS(), "filesystem/"+envFileName)
+	if err != nil {
+		return fmt.Errorf("failed to read embedded %s: %w", envFileName, err)
+	}
+	if err := r.WriteFile(filepath.Join(workDir, envFileName), string(content)); err != nil {
 		return err
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("user home dir: %w", err)
+	}
+	for _, name := range []string{"local-melange.rsa", "local-melange.rsa.pub"} {
+		src := filepath.Join(homeDir, name)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return fmt.Errorf("read melange key %s: %w (ensure worker ran local build env install)", src, err)
+		}
+		dst := filepath.Join(workDir, name)
+		mode := os.FileMode(0600)
+		if strings.HasSuffix(name, ".pub") {
+			mode = 0644
+		}
+		if err := os.WriteFile(dst, data, mode); err != nil {
+			return fmt.Errorf("write %s: %w", dst, err)
+		}
 	}
 	return builder.CopyEmbeddedFS(workDir)
 }
