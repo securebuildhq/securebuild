@@ -1300,15 +1300,15 @@ func getExistingVersionsForFamily(ctx context.Context, pf *package_family.Packag
 	// by replacing placeholders with digit matchers. This correctly scopes packages:
 	// - "go" with template "{name}-{major}.{minor}" → "^go-[0-9]+\.[0-9]+$" matches go-1.26 but NOT go-boring-1.26
 	// - "eclipse-temurin" with template "{name}-{major}-jre" → "^eclipse-temurin-[0-9]+-jre$"
-	// Also match exact name for families with no version suffix in the template.
-	familyPattern := "^" + regexp.QuoteMeta(pf.Name) + "$"
-	if pf.PackageNameTemplate != "" && pf.PackageNameTemplate != pf.Name {
-		tmpl := pf.PackageNameTemplate
-		tmpl = strings.ReplaceAll(tmpl, "{name}", regexp.QuoteMeta(pf.Name))
-		tmpl = strings.ReplaceAll(tmpl, "{major}", "[0-9]+")
-		tmpl = strings.ReplaceAll(tmpl, "{minor}", "[0-9]+")
-		familyPattern = "^" + tmpl + "$"
+	// Default to "{name}-{major}.{minor}" if no template is set.
+	tmpl := "{name}-{major}.{minor}"
+	if pf.PackageNameTemplate != "" {
+		tmpl = pf.PackageNameTemplate
 	}
+	tmpl = strings.ReplaceAll(tmpl, "{name}", regexp.QuoteMeta(pf.Name))
+	tmpl = strings.ReplaceAll(tmpl, "{major}", "[0-9]+")
+	tmpl = strings.ReplaceAll(tmpl, "{minor}", "[0-9]+")
+	familyPattern := "^" + tmpl + "$"
 
 	query := `
 		SELECT DISTINCT p.name, pv.version
