@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -114,8 +115,13 @@ func runBuildAndTestPackageInCwd(ctx context.Context, apkRepositories []string, 
 	}
 	logger.Info("Wrote status=building; preparing melange command")
 
+	// Root in-container: no sudo. Non-root + root mode: require sudo on PATH or fail fast (clearer than shell exit 127).
 	sudoOrNot := ""
-	if useRoot {
+	if useRoot && syscall.Geteuid() != 0 {
+		if _, err := exec.LookPath("sudo"); err != nil {
+			_ = WriteStatus(statusFile, types.ImageBuildStatusFailed)
+			return fmt.Errorf("enable-root-mode requires sudo in PATH or run the builder as root: %w", err)
+		}
 		sudoOrNot = "sudo "
 	}
 

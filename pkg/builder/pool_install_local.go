@@ -16,6 +16,7 @@ import (
 )
 
 // Versions for local auto-install (host GOOS may differ from Linux VMs).
+// Local install runs in the worker process environment (e.g. worker container as root): no sudo.
 const (
 	localInstallMelangeVersion = "0.43.3"
 	localInstallApkoVersion    = "0.27.6"
@@ -42,7 +43,9 @@ curl -sSL %q -o melange.tar.gz
 echo "Extracting melange..."
 tar -xzf melange.tar.gz
 echo "Installing melange..."
-sudo mv %q/melange /usr/local/bin/melange
+mkdir -p /usr/local/bin
+cp %q/melange /usr/local/bin/melange
+chmod 0755 /usr/local/bin/melange
 echo "Checking melange version..."
 melange version
 `, url, dirName)
@@ -70,7 +73,9 @@ curl -sSL %q -o apko.tar.gz
 echo "Extracting apko..."
 tar -xzf apko.tar.gz
 echo "Installing apko..."
-sudo mv %q/apko /usr/local/bin/apko
+mkdir -p /usr/local/bin
+cp %q/apko /usr/local/bin/apko
+chmod 0755 /usr/local/bin/apko
 echo "Checking apko version..."
 apko version
 `, url, dirName)
@@ -89,7 +94,7 @@ func localInstallGrype(ctx context.Context, vm types.BuilderVM) error {
 	script := `
 set -e
 echo "Installing grype..."
-curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
+curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
 echo "Checking grype version..."
 grype version
 `
@@ -108,7 +113,7 @@ func localInstallSyft(ctx context.Context, vm types.BuilderVM) error {
 	script := `
 set -e
 echo "Installing syft..."
-curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin
+curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
 echo "Checking syft version..."
 syft version
 `
@@ -127,11 +132,16 @@ func localInstallDocker(ctx context.Context, vm types.BuilderVM) error {
 			zap.String("vmID", vm.ID))
 		return nil
 	}
+	if runningInOCIContainer() {
+		logger.Warn("docker CLI not found in container; use a host docker socket + docker-cli in the image, or skip image builds",
+			zap.String("vmID", vm.ID))
+		return nil
+	}
 	script := `
 set -e
 echo "Installing Docker..."
 curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-sudo sh /tmp/get-docker.sh
+sh /tmp/get-docker.sh
 echo "Verifying Docker installation..."
 docker --version
 `
@@ -261,4 +271,20 @@ func localCommandCombinedOutput(ctx context.Context, name string, args ...string
 	cmd := exec.CommandContext(ctx, name, args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// runningInOCIContainer reports whether we are likely inside Docker/containerd (no full docker engine install).
+func runningInOCIContainer() bool {
+	_, err := os.Stat("/.dockerenv")
+	if err == nil {
+		return true
+	}
+	// cgroup v2: kubernetes and other runtimes
+	if b, err := os.ReadFile("/proc/self/cgroup"); err == nil {
+		s := string(b)
+		if strings.Contains(s, "docker") || strings.Contains(s, "containerd") || strings.Contains(s, "kubepods") {
+			return true
+		}
+	}
+	return false
 }

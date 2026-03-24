@@ -31,6 +31,8 @@ services:
     volumes:
       - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
       - ${REPO_ROOT}/dev-pipelines:/var/run/securebuild/pipelines
+      # Persist local-backend signing keys and InstallBuildEnv drops under /root across task restarts
+      - securebuild_worker_home:/root
     depends_on:
       - postgres
 
@@ -78,3 +80,4 @@ services:
 
 volumes:
   postgres_data: {}
+  securebuild_worker_home: {}
