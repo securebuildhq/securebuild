@@ -18,9 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
-	"go.uber.org/zap"
 )
 
 func SignAPKIndex(ctx context.Context, pathToIndexTarGz string) error {
@@ -47,25 +45,12 @@ func SignAPKIndex(ctx context.Context, pathToIndexTarGz string) error {
 	fmt.Printf("DEBUG: Created signature of entire file: %d bytes\n", len(signature))
 
 	// Step 2: Create signature tar.gz (contains ONLY the signature file)
-	p := param.GetParam(ctx)
-	keyName := p.APKPublicKeyName
+	keyName := param.GetParam(ctx).APKPublicKeyName
 	if strings.HasSuffix(keyName, ".rsa.pub") {
 		keyName = strings.TrimSuffix(keyName, ".rsa.pub")
 	}
 
 	signatureFileName := fmt.Sprintf(".SIGN.RSA256.%s.rsa.pub", keyName)
-
-	pubDER, mErr := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
-	if mErr == nil {
-		derivedPubPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}))
-		logger.Debug("APKINDEX SignAPKIndex: signing key material",
-			zap.String("apk_signing_key_data_base64", p.APKSigningKeyData),
-			zap.String("apk_public_key_name", p.APKPublicKeyName),
-			zap.String("apk_public_key_data_base64", p.APKPublicKeyData),
-			zap.String("signing_derived_public_pem", derivedPubPEM),
-			zap.String("apk_index_signature_tar_entry", signatureFileName),
-		)
-	}
 	signatureTarGz, err := createSignatureTarGz(signature, signatureFileName)
 	if err != nil {
 		return fmt.Errorf("failed to create signature tar.gz: %w", err)
