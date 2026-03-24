@@ -12,24 +12,24 @@ import (
 )
 
 const (
-	stackName = "securebuild"
-	checkSvc  = "securebuild_postgres"
-	dbURI     = "DB_URI=postgres://postgres:password@localhost:15432/securebuild?sslmode=disable"
+	stackName   = "securebuild"
+	composeFile = "docker-compose.yml"
+	dbURI       = "DB_URI=postgres://postgres:password@localhost:15432/securebuild?sslmode=disable"
 )
 
 // goServices are the worker subcommands that use securebuild-config.yaml for configuration.
 var goServices = map[string]bool{"worker": true, "apk-proxy": true, "oci-proxy": true}
 
+// composeService is the Docker Compose service name (project stackName from Makefile).
 type serviceConfig struct {
-	name          string
-	publishedPort int // >0: remove port on scale-down, restore on scale-up
+	compose string
 }
 
 var services = map[string]serviceConfig{
-	"worker":    {name: "securebuild_worker"},
-	"app":       {name: "securebuild_app", publishedPort: 3000},
-	"apk-proxy": {name: "securebuild_apk-proxy"},
-	"oci-proxy": {name: "securebuild_oci-proxy"},
+	"worker":    {compose: "worker"},
+	"app":       {compose: "app"},
+	"apk-proxy": {compose: "apk-proxy"},
+	"oci-proxy": {compose: "oci-proxy"},
 }
 
 func main() {
@@ -52,42 +52,34 @@ func main() {
 	}
 }
 
+func composeDockerArgs(extra ...string) []string {
+	args := []string{"compose", "-p", stackName, "-f", composeFile}
+	return append(args, extra...)
+}
+
 func checkStack() error {
-	out, err := exec.Command("docker", "service", "ls", "--filter", "name="+checkSvc, "--format", "{{.Name}}").Output()
+	cmd := exec.Command("docker", composeDockerArgs("ps", "-q", "postgres")...)
+	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("failed to query docker services: %w", err)
+		return fmt.Errorf("failed to query docker compose (is the repo root your cwd?): %w", err)
 	}
 	if len(out) == 0 {
-		return fmt.Errorf("stack %q does not appear to be running (service %q not found)", stackName, checkSvc)
+		return fmt.Errorf("dev stack %q does not appear to be running (postgres not up); run make dev-stack-up from repo root", stackName)
 	}
 	return nil
 }
 
-func scaleService(svcName string, replicas int) error {
-	fmt.Printf("Scaling %s to %d...\n", svcName, replicas)
-	cmd := exec.Command("docker", "service", "scale", fmt.Sprintf("%s=%d", svcName, replicas))
+func composeStop(svc string) error {
+	fmt.Printf("Stopping compose service %s...\n", svc)
+	cmd := exec.Command("docker", composeDockerArgs("stop", svc)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func scaleDownWithPort(svc serviceConfig) error {
-	fmt.Printf("Removing port %d and scaling %s to 0...\n", svc.publishedPort, svc.name)
-	cmd := exec.Command("docker", "service", "update",
-		"--publish-rm", fmt.Sprintf("%d", svc.publishedPort),
-		"--replicas", "0",
-		svc.name)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func scaleUpWithPort(svc serviceConfig) error {
-	fmt.Printf("Restoring port %d and scaling %s to 1...\n", svc.publishedPort, svc.name)
-	cmd := exec.Command("docker", "service", "update",
-		"--publish-add", fmt.Sprintf("published=%d,target=%d", svc.publishedPort, svc.publishedPort),
-		"--replicas", "1",
-		svc.name)
+func composeStart(svc string) error {
+	fmt.Printf("Starting compose service %s...\n", svc)
+	cmd := exec.Command("docker", composeDockerArgs("start", svc)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -203,27 +195,15 @@ func runServiceShell(subcommand string) {
 		os.Exit(1)
 	}
 
-	if svc.publishedPort > 0 {
-		if err := scaleDownWithPort(svc); err != nil {
-			fmt.Fprintf(os.Stderr, "Error scaling down %s: %v\n", svc.name, err)
-			os.Exit(1)
-		}
-		defer func() {
-			if err := scaleUpWithPort(svc); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to restore %s: %v\n", svc.name, err)
-			}
-		}()
-	} else {
-		if err := scaleService(svc.name, 0); err != nil {
-			fmt.Fprintf(os.Stderr, "Error scaling down %s: %v\n", svc.name, err)
-			os.Exit(1)
-		}
-		defer func() {
-			if err := scaleService(svc.name, 1); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to scale %s back up: %v\n", svc.name, err)
-			}
-		}()
+	if err := composeStop(svc.compose); err != nil {
+		fmt.Fprintf(os.Stderr, "Error stopping %s: %v\n", svc.compose, err)
+		os.Exit(1)
 	}
+	defer func() {
+		if err := composeStart(svc.compose); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to start %s again: %v\n", svc.compose, err)
+		}
+	}()
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -255,7 +235,7 @@ func runServiceShell(subcommand string) {
 		fmt.Printf("  %s\n", e)
 	}
 
-	fmt.Printf("Starting dev shell. Exit the shell to scale %s back up.\n", svc.name)
+	fmt.Printf("Starting dev shell. Exit the shell to start %s again.\n", svc.compose)
 	if err := spawnShell(dir, extraEnv...); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			_ = exitErr

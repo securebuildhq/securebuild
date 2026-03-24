@@ -13,6 +13,7 @@ services:
 
   migrations:
     image: securebuild-migrations:latest
+    restart: "no"
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
     depends_on:
