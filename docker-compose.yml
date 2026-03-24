@@ -1,5 +1,4 @@
-version: '3.8'
-
+# Compose specification (no legacy version key) — use current Docker Compose / Engine on Linux.
 services:
   postgres:
     image: postgres:17-alpine
@@ -25,6 +24,19 @@ services:
   worker:
     image: securebuild-worker:latest
     command: ["run"]
+    # Dev-only, Linux + current Docker only: melange/bubblewrap needs nested namespaces and
+    # mount(MS_REC|MS_SLAVE) on /. Not for production. If bwrap still fails, check host
+    # AppArmor (Ubuntu 24.04+); compose cannot fix host policy (containers/bubblewrap#505).
+    privileged: true
+    pid: host
+    ipc: host
+    userns_mode: host
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+      - label:disable
+    cap_add:
+      - SYS_ADMIN
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
       SECUREBUILD_CONFIG_SOURCE: /securebuild-config.yaml
