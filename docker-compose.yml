@@ -41,6 +41,7 @@ services:
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
       SECUREBUILD_CONFIG_SOURCE: /securebuild-config.yaml
+      PIPELINE_DIR: /var/run/securebuild/pipelines
     volumes:
       - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
       - ${REPO_ROOT}/dev-pipelines:/var/run/securebuild/pipelines

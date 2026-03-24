@@ -255,7 +255,14 @@ func runServiceShell(subcommand string) {
 		dir = cwd + "/securebuild-app"
 		extraEnv = append(extraEnv, "PIPELINE_DIR="+filepath.Join(cwd, "dev-pipelines"))
 	} else if goServices[subcommand] {
-		extraEnv = append(extraEnv, "SECUREBUILD_CONFIG_SOURCE="+cwd+"/securebuild-config.yaml")
+		extraEnv = append(extraEnv,
+			"SECUREBUILD_CONFIG_SOURCE="+cwd+"/securebuild-config.yaml",
+			"PIPELINE_DIR="+filepath.Join(cwd, "dev-pipelines"),
+		)
+		if subcommand == "worker" {
+			// Config often uses http://apk-proxy:8880 for in-compose workers; host melange/builder needs loopback.
+			extraEnv = append(extraEnv, "APK_REPOSITORY=http://localhost:8880")
+		}
 	}
 
 	fmt.Println("Dev shell extra environment:")

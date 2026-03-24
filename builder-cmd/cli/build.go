@@ -78,6 +78,17 @@ func BuildCmd() *cobra.Command {
 	return &buildCmd
 }
 
+// nixShellLikeEnv reports whether the process likely runs with Nix-provided tools on PATH.
+// nix-shell sets IN_NIX_SHELL; nix develop often does too. Flakes + direnv frequently only prepend
+// /nix/store/... paths to PATH. When combined with sudo, secure_path hides melange, bwrap, etc.;
+// we use sudo env "PATH=$PATH" so melange stays on PATH for that invocation.
+func nixShellLikeEnv() bool {
+	if os.Getenv("IN_NIX_SHELL") != "" {
+		return true
+	}
+	return strings.Contains(os.Getenv("PATH"), "/nix/store/")
+}
+
 func runBuildAndTestPackage(ctx context.Context, workDir string, apkRepositories []string, keyringAppends []string, r2BucketName string, r2AccessKey string, r2SecretKey string, r2Endpoint string, r2Region string, r2Directory string, zoneID string, cachePurgeToken string, useRoot bool, bootstrapMode bool) error {
 	if workDir != "" {
 		if err := os.Chdir(workDir); err != nil {
@@ -115,19 +126,26 @@ func runBuildAndTestPackageInCwd(ctx context.Context, apkRepositories []string, 
 	}
 	logger.Info("Wrote status=building; preparing melange command")
 
-	// Root in-container: no sudo. Non-root + root mode: require sudo on PATH or fail fast (clearer than shell exit 127).
-	sudoOrNot := ""
+	// Root in-container: no sudo. Non-root + root mode: sudo melange so bubblewrap can create namespaces.
+	// Under sudo, secure_path drops Nix; pass PATH through env(1) so melange finds bwrap and other store tools.
+	melangeInvokerPrefix := ""
 	if useRoot && syscall.Geteuid() != 0 {
 		if _, err := exec.LookPath("sudo"); err != nil {
 			_ = WriteStatus(statusFile, types.ImageBuildStatusFailed)
 			return fmt.Errorf("enable-root-mode requires sudo in PATH or run the builder as root: %w", err)
 		}
-		sudoOrNot = "sudo "
+		if nixShellLikeEnv() {
+			melangeInvokerPrefix = `sudo env "PATH=$PATH" `
+		} else {
+			melangeInvokerPrefix = "sudo "
+		}
 	}
+
+	const melangeBin = "melange"
 
 	// Build melange command using string slice for better readability
 	cmdArgs := []string{
-		"melange build melange.yaml",
+		melangeBin + " build melange.yaml",
 		"--log-level debug",
 		"--arch " + arch,
 		"--signing-key local-melange.rsa",
@@ -181,7 +199,7 @@ echo "Starting melange build for %s architecture at $(date)";
 MELANGE_EXIT_CODE=$?;
 echo $MELANGE_EXIT_CODE > output/melange_done_%s.txt;
 echo "Melange build completed for %s architecture at $(date) with exit code $MELANGE_EXIT_CODE";
-	`, arch, sudoOrNot, melangeCmd, arch, arch, arch, arch)
+	`, arch, melangeInvokerPrefix, melangeCmd, arch, arch, arch, arch)
 
 	logger.Info("Running melange build (blocking until complete); melange stdout/stderr go to output/melange_stdout_*.log and output/melange_stderr_*.log")
 	output, err := exec.CommandContext(ctx, "bash", "-c", buildCmd).CombinedOutput()
@@ -216,7 +234,7 @@ echo "Melange build completed for %s architecture at $(date) with exit code $MEL
 
 	testCmd := fmt.Sprintf(`set -euo pipefail
 echo "Starting melange test for %s architecture at $(date)";
-%smelange test melange.yaml \
+%s%s test melange.yaml \
 	--arch %s \
 	--source-dir . \
 	--pipeline-dirs ./pipelines/packages/ \
@@ -226,7 +244,7 @@ MELANGE_TEST_EXIT_CODE=$?;
 echo $MELANGE_TEST_EXIT_CODE > output/melange_test_done_%s.txt;
 echo "Melange test completed for %s architecture at $(date) with exit code $MELANGE_TEST_EXIT_CODE";
 exit $MELANGE_TEST_EXIT_CODE;
-	`, arch, sudoOrNot, arch, testRepoFlags, testKeyringFlags, arch, arch, arch, arch)
+	`, arch, melangeInvokerPrefix, melangeBin, arch, testRepoFlags, testKeyringFlags, arch, arch, arch, arch)
 
 	testOutput, testErr := exec.CommandContext(ctx, "bash", "-c", testCmd).CombinedOutput()
 	logger.Debug("test command terminated", zap.String("output", string(testOutput)), zap.Error(testErr))

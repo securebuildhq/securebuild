@@ -41,27 +41,7 @@ func (b *LocalBackend) SeedMachinePool(ctx context.Context) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	var existingStatus string
-	err := conn.QueryRow(ctx, `SELECT status FROM machine_pool WHERE id = $1`, localMachineID).Scan(&existingStatus)
-	if err == nil && existingStatus == "running" {
-		logger.Debug("local machine already running, skipping re-install",
-			zap.String("id", localMachineID),
-			zap.String("architecture", b.architecture))
-		_, err = conn.Exec(ctx, `
-			INSERT INTO machine_pool (id, machine_id, created_at, private_key, username, status, architecture, is_on_demand, type)
-			VALUES ($1, $2, $3, $4, $5, 'running', $6, $7, $8)
-			ON CONFLICT (id) DO UPDATE SET
-				status = EXCLUDED.status,
-				architecture = EXCLUDED.architecture,
-				type = EXCLUDED.type
-		`, localMachineID, localMachineID, time.Now().UTC(), "", "", b.architecture, false, "local")
-		if err != nil {
-			return fmt.Errorf("failed to upsert local machine in pool: %w", err)
-		}
-		return nil
-	}
-
-	_, err = conn.Exec(ctx, `
+	_, err := conn.Exec(ctx, `
 		INSERT INTO machine_pool (id, machine_id, created_at, private_key, username, status, architecture, is_on_demand, type)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (id) DO UPDATE SET
