@@ -209,7 +209,7 @@ dev-stack-up: build-dev-images
 
 .PHONY: dev-stack-down
 dev-stack-down:
-	docker compose -p $(STACK_NAME) -f $(COMPOSE_FILE) down
+	REPO_ROOT=$(shell pwd) docker compose -p $(STACK_NAME) -f $(COMPOSE_FILE) down
 
 .PHONY: dev-worker
 dev-worker:
