@@ -57,8 +57,34 @@ func composeDockerArgs(extra ...string) []string {
 	return append(args, extra...)
 }
 
+// composeEnv returns the current process environment with REPO_ROOT set to repoRoot
+// (replacing any existing REPO_ROOT) so docker compose can interpolate docker-compose.yml.
+func composeEnv(repoRoot string) []string {
+	env := os.Environ()
+	if repoRoot == "" {
+		return env
+	}
+	const prefix = "REPO_ROOT="
+	out := make([]string, 0, len(env)+1)
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			out = append(out, e)
+		}
+	}
+	return append(out, prefix+repoRoot)
+}
+
+func setComposeCmdEnv(cmd *exec.Cmd) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	cmd.Env = composeEnv(wd)
+}
+
 func checkStack() error {
 	cmd := exec.Command("docker", composeDockerArgs("ps", "-q", "postgres")...)
+	setComposeCmdEnv(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to query docker compose (is the repo root your cwd?): %w", err)
@@ -72,6 +98,7 @@ func checkStack() error {
 func composeStop(svc string) error {
 	fmt.Printf("Stopping compose service %s...\n", svc)
 	cmd := exec.Command("docker", composeDockerArgs("stop", svc)...)
+	setComposeCmdEnv(cmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -80,6 +107,7 @@ func composeStop(svc string) error {
 func composeStart(svc string) error {
 	fmt.Printf("Starting compose service %s...\n", svc)
 	cmd := exec.Command("docker", composeDockerArgs("start", svc)...)
+	setComposeCmdEnv(cmd)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
