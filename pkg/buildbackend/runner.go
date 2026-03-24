@@ -511,12 +511,6 @@ func RunnerCopyToLocalTar(ctx context.Context, runner Runner, remoteDir, localDi
 			// pipefail: without it, a failing first tar can leave exit status 0 from the final extractor.
 			cmd = fmt.Sprintf("set -o pipefail; (cd %q && find . -maxdepth 1 \\( %s \\) -print0) | tar -cf - -C %q --null -T - | tar -xf - -C %q", remoteDir, findExpr, remoteDir, localDir)
 		}
-		logger.Debug("RunnerCopyToLocalTar shell command",
-			zap.String("vmID", runner.VMID()),
-			zap.String("remoteDir", remoteDir),
-			zap.String("localDir", localDir),
-			zap.Strings("includePatterns", includePatterns),
-			zap.String("command", cmd))
 		if _, err := runner.RunCommand(ctx, cmd); err != nil {
 			return fmt.Errorf("failed to copy files locally: %w", err)
 		}
@@ -546,12 +540,6 @@ func RunnerCopyToLocalTar(ctx context.Context, runner Runner, remoteDir, localDi
 		findExpr := buildFindIncludeExpr(includePatterns)
 		tarCmd = fmt.Sprintf("cd %q && find . -maxdepth 1 \\( %s \\) -print0 | tar -czf %s --null -T -", remoteDir, findExpr, remoteTarPath)
 	}
-	logger.Debug("RunnerCopyToLocalTar remote tar command",
-		zap.String("vmID", runner.VMID()),
-		zap.String("remoteDir", remoteDir),
-		zap.String("localDir", localDir),
-		zap.Strings("includePatterns", includePatterns),
-		zap.String("command", tarCmd))
 	if _, err := runner.RunCommand(ctx, tarCmd); err != nil {
 		return fmt.Errorf("failed to create remote tar: %w", err)
 	}
