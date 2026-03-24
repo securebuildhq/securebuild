@@ -244,12 +244,14 @@ func checkAndHandleBuildCompletion(ctx context.Context, buildID string, builderV
 		zap.String("vmID", builderVM.ID),
 		zap.String("status", status))
 
-	// Create temporary directory for downloaded results
+	// Staging directory for SBOM/metadata download. Not removed automatically so contents can be inspected when debugging.
 	tmpDir, err := os.MkdirTemp("", "securebuild-image-build-download")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	logger.Debug("image build download directory (left on disk for debugging)",
+		zap.String("buildID", buildID),
+		zap.String("path", tmpDir))
 
 	// Download SBOMs and metadata from VM to host
 	if err := downloadSBOMsAndMetadata(ctx, runner, buildDir, tmpDir); err != nil {
