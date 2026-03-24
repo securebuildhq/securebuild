@@ -507,7 +507,9 @@ func RunnerCopyToLocalTar(ctx context.Context, runner Runner, remoteDir, localDi
 			cmd = fmt.Sprintf("tar -cf - -C %q . | tar -xf - -C %q", remoteDir, localDir)
 		} else {
 			findExpr := buildFindIncludeExpr(includePatterns)
-			cmd = fmt.Sprintf("(cd %q && find . -maxdepth 1 \\( %s \\) -print0) | tar -cf - --null -T - -C %q | tar -xf - -C %q", remoteDir, findExpr, remoteDir, localDir)
+			// GNU tar: -C must appear before -T, or -C has no effect and paths from find (e.g. ./file) resolve against the wrong cwd.
+			// pipefail: without it, a failing first tar can leave exit status 0 from the final extractor.
+			cmd = fmt.Sprintf("set -o pipefail; (cd %q && find . -maxdepth 1 \\( %s \\) -print0) | tar -cf - -C %q --null -T - | tar -xf - -C %q", remoteDir, findExpr, remoteDir, localDir)
 		}
 		logger.Debug("RunnerCopyToLocalTar shell command",
 			zap.String("vmID", runner.VMID()),
