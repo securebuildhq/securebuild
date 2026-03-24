@@ -326,7 +326,8 @@ require (
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
 	github.com/moby/locker v1.0.1 // indirect
-	github.com/moby/moby v28.5.2+incompatible // indirect
+	github.com/moby/moby/api v1.54.0 // indirect
+	github.com/moby/moby/client v0.3.0 // indirect
 	github.com/moby/moby/v2 v2.0.0-beta.7 // indirect
 	github.com/moby/patternmatcher v0.6.0 // indirect
 	github.com/moby/sys/mountinfo v0.7.2 // indirect
@@ -494,3 +495,7 @@ require (
 	mvdan.cc/sh/v3 v3.13.0 // indirect
 	sigs.k8s.io/release-utils v0.12.3 // indirect
 )
+
+// Monolithic github.com/moby/moby v28 also provides github.com/moby/moby/client with a
+// pre-split API, which shadows anchore/stereoscope's required moby/moby/client module.
+exclude github.com/moby/moby v28.5.2+incompatible
