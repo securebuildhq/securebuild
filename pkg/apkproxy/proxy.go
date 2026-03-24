@@ -11,6 +11,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
+	"go.uber.org/zap"
 	gintrace "gopkg.in/DataDog/dd-trace-go.v1/contrib/gin-gonic/gin"
 )
 
@@ -78,12 +79,18 @@ func StartProxy(ctx context.Context, listenAddr string) error {
 			return
 		}
 
-		decodedKeyData, err := base64.StdEncoding.DecodeString(param.GetParam(ctx).APKPublicKeyData)
+		p := param.GetParam(c.Request.Context())
+		decodedKeyData, err := base64.StdEncoding.DecodeString(p.APKPublicKeyData)
 		if err != nil {
 			logger.Errorf("Failed to decode public key data: %s", err)
 			c.Status(http.StatusInternalServerError)
 			return
 		}
+		logger.Debug("apk-proxy GET /key/:keyName",
+			zap.String("apk_public_key_name", p.APKPublicKeyName),
+			zap.String("apk_public_key_data_base64", p.APKPublicKeyData),
+			zap.String("apk_public_key_pem", string(decodedKeyData)),
+		)
 
 		c.String(http.StatusOK, string(decodedKeyData))
 	})
@@ -96,12 +103,18 @@ func StartProxy(ctx context.Context, listenAddr string) error {
 			return
 		}
 
-		decodedKeyData, err := base64.StdEncoding.DecodeString(param.GetParam(ctx).APKPublicKeyData)
+		p := param.GetParam(c.Request.Context())
+		decodedKeyData, err := base64.StdEncoding.DecodeString(p.APKPublicKeyData)
 		if err != nil {
 			logger.Errorf("Failed to decode public key data: %s", err)
 			c.Status(http.StatusInternalServerError)
 			return
 		}
+		logger.Debug("apk-proxy HEAD /key/:keyName",
+			zap.String("apk_public_key_name", p.APKPublicKeyName),
+			zap.String("apk_public_key_data_base64", p.APKPublicKeyData),
+			zap.String("apk_public_key_pem", string(decodedKeyData)),
+		)
 
 		c.Header("Content-Type", "text/plain")
 		c.Header("Content-Length", fmt.Sprintf("%d", len(decodedKeyData)))
@@ -109,14 +122,20 @@ func StartProxy(ctx context.Context, listenAddr string) error {
 	})
 
 	router.GET("/key", func(c *gin.Context) {
-		decodedData, err := base64.StdEncoding.DecodeString(param.GetParam(ctx).APKPublicKeyData)
+		p := param.GetParam(c.Request.Context())
+		decodedData, err := base64.StdEncoding.DecodeString(p.APKPublicKeyData)
 		if err != nil {
 			logger.Errorf("Failed to decode public key data: %s", err)
 			c.Status(http.StatusInternalServerError)
 			return
 		}
+		logger.Debug("apk-proxy GET /key",
+			zap.String("apk_public_key_name", p.APKPublicKeyName),
+			zap.String("apk_public_key_data_base64", p.APKPublicKeyData),
+			zap.String("apk_public_key_pem", string(decodedData)),
+		)
 
-		filename := param.GetParam(ctx).APKPublicKeyName
+		filename := p.APKPublicKeyName
 
 		// Serve directly from memory without writing to disk
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
@@ -126,14 +145,20 @@ func StartProxy(ctx context.Context, listenAddr string) error {
 
 	// Add HEAD handler for /key
 	router.HEAD("/key", func(c *gin.Context) {
-		decodedData, err := base64.StdEncoding.DecodeString(param.GetParam(ctx).APKPublicKeyData)
+		p := param.GetParam(c.Request.Context())
+		decodedData, err := base64.StdEncoding.DecodeString(p.APKPublicKeyData)
 		if err != nil {
 			logger.Errorf("Failed to decode public key data: %s", err)
 			c.Status(http.StatusInternalServerError)
 			return
 		}
+		logger.Debug("apk-proxy HEAD /key",
+			zap.String("apk_public_key_name", p.APKPublicKeyName),
+			zap.String("apk_public_key_data_base64", p.APKPublicKeyData),
+			zap.String("apk_public_key_pem", string(decodedData)),
+		)
 
-		filename := param.GetParam(ctx).APKPublicKeyName
+		filename := p.APKPublicKeyName
 
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 		c.Header("Content-Type", "application/x-pem-file")
@@ -161,6 +186,13 @@ func StartProxy(ctx context.Context, listenAddr string) error {
 			log.Fatalf("listen: %s\n", err)
 		}
 	}()
+
+	p0 := param.GetParam(ctx)
+	logger.Debug("apk-proxy startup: APK key config from param",
+		zap.String("apk_public_key_name", p0.APKPublicKeyName),
+		zap.String("apk_public_key_data_base64", p0.APKPublicKeyData),
+		zap.String("apk_signing_key_data_base64", p0.APKSigningKeyData),
+	)
 
 	log.Printf("Proxy server started on %s", p.listenAddr)
 

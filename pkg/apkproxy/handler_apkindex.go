@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/securebuildhq/securebuild/pkg/apk"
 	"github.com/securebuildhq/securebuild/pkg/logger"
+	"go.uber.org/zap"
 )
 
 func handleHeadAPKIndex(c *gin.Context) {
@@ -38,6 +39,10 @@ func handleHeadAPKIndex(c *gin.Context) {
 			c.Status(http.StatusInternalServerError)
 			return
 		}
+		logger.Debug("apk-proxy empty signed APKINDEX (HEAD)",
+			zap.String("arch", arch),
+			zap.Int("body_len", len(data)),
+		)
 		c.Header("Content-Type", "application/gzip")
 		c.Header("Content-Length", fmt.Sprintf("%d", len(data)))
 		c.Status(http.StatusOK)
@@ -82,6 +87,10 @@ func handleGetAPKIndex(c *gin.Context) {
 			c.Status(http.StatusInternalServerError)
 			return
 		}
+		logger.Debug("apk-proxy empty signed APKINDEX (GET)",
+			zap.String("arch", arch),
+			zap.Int("body_len", len(data)),
+		)
 		c.Header("Content-Type", "application/gzip")
 		c.Header("Content-Length", fmt.Sprintf("%d", len(data)))
 		c.Status(http.StatusOK)
