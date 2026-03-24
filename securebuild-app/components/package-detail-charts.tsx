@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import type { TooltipProps } from "recharts"
 import { Button } from "@/components/ui/button"
 import {
   Line,
@@ -65,10 +66,10 @@ export function PackageDetailCharts({ data }: PackageDetailChartsProps) {
 
   const frequencyData = buildFrequency
 
-  // Custom tooltip formatter
-  const tooltipFormatter = (value: string | number | (string | number)[] | undefined, name: string | number | undefined) => {
+  const tooltipFormatter: NonNullable<TooltipProps["formatter"]> = (value, name) => {
     if (value === undefined) return ["-", name ?? ""]
-    const numValue = typeof value === 'number' ? value : (Array.isArray(value) ? Number(value[0]) : Number(value))
+    const numValue =
+      typeof value === "number" ? value : Array.isArray(value) ? Number(value[0]) : Number(value)
     if (name === "duration") return [numValue, "Duration (seconds)"]
     if (name === "success") return [numValue === 1 ? "Success" : "Failed", "Status"]
     if (name === "failure") return [numValue === 1 ? "Failed" : "Success", "Status"]
