@@ -110,7 +110,7 @@
     "lightningcss": "^1.29.2",
     "postcss": "^8",
     "tailwindcss": "^4.1.18",
-    "testcontainers": "^10.2.0",
+    "testcontainers": "^11.13.0",
     "ts-jest": "^29.4.6",
     "typescript": "5.9.3"
   },
