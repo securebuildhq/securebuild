@@ -507,6 +507,10 @@ func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pk
 		builderBin := filepath.Join(workDir, "builder")
 		builderLog := filepath.Join(workDir, fmt.Sprintf("builder_output_%s.log", arch))
 		workDirEscaped := strings.ReplaceAll(workDir, "'", "'\\''")
+		r2Region := param.GetParam(ctx).R2Region
+		if r2Region == "" {
+			r2Region = "auto"
+		}
 		cmd = fmt.Sprintf(`set -euo pipefail
 cd '%s'
 echo "Starting builder build for %s architecture at $(date)";
@@ -533,13 +537,17 @@ echo "Builder build backgrounded for %s architecture at $(date)";
 echo "Builder output will be written to %s";
 `, workDirEscaped, arch, debugApkRepos, debugKeyrings, useRoot, builderBin, workDirEscaped, flagsSection,
 			param.GetParam(ctx).CloudflareZoneID, param.GetParam(ctx).CloudflareCachePurgeToken,
-			param.GetParam(ctx).R2BucketName, param.GetParam(ctx).R2AccessKey, param.GetParam(ctx).R2SecretKey, param.GetParam(ctx).R2Endpoint, "auto",
+			param.GetParam(ctx).R2BucketName, param.GetParam(ctx).R2AccessKey, param.GetParam(ctx).R2SecretKey, param.GetParam(ctx).R2Endpoint, r2Region,
 			useRoot, r2DirectoryFlag, arch, builderLog, arch, builderLog)
 	} else {
 		// Standard mode: no debug logging
 		builderBin := filepath.Join(workDir, "builder")
 		builderLog := filepath.Join(workDir, fmt.Sprintf("builder_output_%s.log", arch))
 		workDirEscaped := strings.ReplaceAll(workDir, "'", "'\\''")
+		r2Region := param.GetParam(ctx).R2Region
+		if r2Region == "" {
+			r2Region = "auto"
+		}
 		cmd = fmt.Sprintf(`set -euo pipefail
 cd '%s'
 echo "Starting builder build for %s architecture at $(date)";
@@ -562,7 +570,7 @@ echo "Builder output will be written to %s";
 `, workDirEscaped, arch, builderBin, workDirEscaped,
 			apkRepositoryFlags, keyringAppendFlags,
 			param.GetParam(ctx).CloudflareZoneID, param.GetParam(ctx).CloudflareCachePurgeToken,
-			param.GetParam(ctx).R2BucketName, param.GetParam(ctx).R2AccessKey, param.GetParam(ctx).R2SecretKey, param.GetParam(ctx).R2Endpoint, "auto",
+			param.GetParam(ctx).R2BucketName, param.GetParam(ctx).R2AccessKey, param.GetParam(ctx).R2SecretKey, param.GetParam(ctx).R2Endpoint, r2Region,
 			useRoot, r2DirectoryFlag, arch, builderLog, arch, builderLog)
 	}
 

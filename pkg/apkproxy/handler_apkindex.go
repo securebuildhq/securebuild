@@ -17,6 +17,11 @@ func handleHeadAPKIndex(c *gin.Context) {
 
 	log.Printf("Received HEAD request for APKINDEX.tar.gz - version: %s, arch: %s", version, arch)
 
+	if arch != "x86_64" && arch != "aarch64" {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
 	ctx := c.Request.Context()
 
 	// Get the APK index stream
@@ -27,8 +32,15 @@ func handleHeadAPKIndex(c *gin.Context) {
 		return
 	}
 	if s3Object == nil {
-		logger.Errorf("handleHeadAPKIndex: APK index not found")
-		c.Status(http.StatusNotFound)
+		data, err := apk.EmptySignedAPKIndexTarGz(ctx)
+		if err != nil {
+			logger.Errorf("handleHeadAPKIndex: empty APK index fallback: %v", err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		c.Header("Content-Type", "application/gzip")
+		c.Header("Content-Length", fmt.Sprintf("%d", len(data)))
+		c.Status(http.StatusOK)
 		return
 	}
 	defer s3Object.Body.Close()
@@ -64,8 +76,18 @@ func handleGetAPKIndex(c *gin.Context) {
 		return
 	}
 	if s3Object == nil {
-		logger.Errorf("handleGetAPKIndex: APK index not found")
-		c.Status(http.StatusNotFound)
+		data, err := apk.EmptySignedAPKIndexTarGz(ctx)
+		if err != nil {
+			logger.Errorf("handleGetAPKIndex: empty APK index fallback: %v", err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		c.Header("Content-Type", "application/gzip")
+		c.Header("Content-Length", fmt.Sprintf("%d", len(data)))
+		c.Status(http.StatusOK)
+		if _, werr := c.Writer.Write(data); werr != nil {
+			logger.Errorf("handleGetAPKIndex: write empty APK index: %v", werr)
+		}
 		return
 	}
 	defer s3Object.Body.Close()

@@ -1,5 +1,4 @@
-version: '3.8'
-
+# Compose specification (no legacy version key) — use current Docker Compose / Engine on Linux.
 services:
   postgres:
     image: postgres:17-alpine
@@ -14,6 +13,7 @@ services:
 
   migrations:
     image: securebuild-migrations:latest
+    restart: "no"
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
     depends_on:
@@ -25,11 +25,28 @@ services:
   worker:
     image: securebuild-worker:latest
     command: ["run"]
+    # Dev-only, Linux + current Docker only: melange/bubblewrap needs nested namespaces and
+    # mount(MS_REC|MS_SLAVE) on /. Not for production. If bwrap still fails, check host
+    # AppArmor (Ubuntu 24.04+); compose cannot fix host policy (containers/bubblewrap#505).
+    privileged: true
+    pid: host
+    ipc: host
+    userns_mode: host
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+      - label:disable
+    cap_add:
+      - SYS_ADMIN
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
       SECUREBUILD_CONFIG_SOURCE: /securebuild-config.yaml
+      PIPELINE_DIR: /var/run/securebuild/pipelines
     volumes:
       - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
+      - ${REPO_ROOT}/dev-pipelines:/var/run/securebuild/pipelines
+      # Persist local-backend signing keys and InstallBuildEnv drops under /root across task restarts
+      - securebuild_worker_home:/root
     depends_on:
       - postgres
 
@@ -40,8 +57,10 @@ services:
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
       HOSTNAME: "0.0.0.0"
+      PIPELINE_DIR: /var/run/securebuild/pipelines
     volumes:
       - ${REPO_ROOT}/securebuild-app/.env.local:/app/.env.local:ro
+      - ${REPO_ROOT}/dev-pipelines:/var/run/securebuild/pipelines
     ports:
       - "3000:3000"
     depends_on:
@@ -75,3 +94,4 @@ services:
 
 volumes:
   postgres_data: {}
+  securebuild_worker_home: {}

@@ -74,6 +74,8 @@ type Param struct {
 	R2AccessKey        string `yaml:"r2_access_key"`
 	R2SecretKey        string `yaml:"r2_secret_key"`
 	R2Endpoint         string `yaml:"r2_endpoint"`
+	// R2Region is the SigV4 signing region for S3-compatible APIs. Cloudflare R2 uses "auto" (default when empty). AWS S3 requires the bucket region (e.g. us-east-1).
+	R2Region           string `yaml:"r2_region"`
 	R2UseDynamicFolder bool   `yaml:"r2_use_dynamic_folder"`
 	R2UsePathStyle     bool   `yaml:"r2_use_path_style"`
 
@@ -102,15 +104,17 @@ type Param struct {
 	SpecSyncToken   string `yaml:"specsync_github_token"`
 	SpecSyncBranch  string `yaml:"specsync_github_branch"`
 
-	// Pipeline Directory Configuration
+	// PipelineDir is the worker filesystem root for pipeline workspaces (packages/images subtrees).
+	// Docker Swarm dev stack: set to /var/run/securebuild/pipelines (compose bind-mounts repo dev-pipelines/).
+	// Worker on the host: set to an absolute path on that machine (e.g. repo-root dev-pipelines).
 	PipelineDir string `yaml:"pipeline_dir"`
 
 	// Logging Configuration
 	LogLevel string `yaml:"log_level"`
 
 	// Vulnerability Database Configuration
-	GrypeDBRoot  string `yaml:"grype_database_root"`
-	VunnelImage  string `yaml:"vunnel_image"`
+	GrypeDBRoot string `yaml:"grype_database_root"`
+	VunnelImage string `yaml:"vunnel_image"`
 
 	// PProf Configuration
 	PProfEnabled bool `yaml:"pprof_enabled"`
@@ -162,6 +166,42 @@ const (
 	InitSourceEnvironment InitSource = "environment"
 	InitSourceYAMLFile    InitSource = "yaml_file"
 )
+
+// normalizePoolSizeForBackend sets PoolSize for listener queue concurrency and (for CMX)
+// pool maintenance. Local builds use 1; static uses len(static_vms). CMX and other backends
+// use the configured value, minimum 1. Logs at debug when the value is adjusted.
+func normalizePoolSizeForBackend(p *Param) {
+	configured := p.PoolSize
+	backend := strings.ToLower(strings.TrimSpace(p.BuildBackend))
+	if backend == "" {
+		if p.ReplicatedAPIToken != "" && p.ReplicatedAPIOrigin != "" {
+			backend = "cmx"
+		} else {
+			backend = "local"
+		}
+	}
+
+	var effective int
+	switch backend {
+	case "local":
+		effective = 1
+	case "static":
+		effective = len(p.StaticVMs)
+	default:
+		effective = configured
+		if effective < 1 {
+			effective = 1
+		}
+	}
+
+	if p.PoolSize != effective {
+		logger.Debug("pool_size adjusted for build backend",
+			zap.String("build_backend", backend),
+			zap.Int("configured", configured),
+			zap.Int("effective", effective))
+	}
+	p.PoolSize = effective
+}
 
 // ResolveInitSource reads SECUREBUILD_CONFIG_SOURCE from the environment and
 // returns the corresponding InitSource:
@@ -244,6 +284,8 @@ func Init(source InitSource, overrides map[string]string) (context.Context, erro
 			zap.Int("configured", p.MaxParallelBuilds))
 		p.MaxParallelBuilds = 1
 	}
+
+	normalizePoolSizeForBackend(p)
 
 	// Return context with param embedded
 	ctx := context.Background()

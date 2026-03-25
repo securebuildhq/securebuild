@@ -12,14 +12,15 @@ import (
 )
 
 // SetupCmd returns the "setup" subcommand. It prepares the work dir for a local backend
-// (e.g. generates melange signing key). Static/CMX backends get this from pool.installBuildEnv.
+// (e.g. generates melange signing key). The worker normally runs builder.InstallBuildEnv
+// for type=local at startup; this subcommand is for manual/ad-hoc use.
 func SetupCmd() *cobra.Command {
 	var workDir string
 
 	setupCmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Prepare work dir for local backend (e.g. melange signing key)",
-		Long:  `Runs setup steps that static/CMX VMs get from pool.installBuildEnv. Used only for local backend.`,
+		Long:  `Generates local-melange signing keys in the work dir. The worker runs builder.InstallBuildEnv for local machines at startup (keys in $HOME) and copies them per build.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSetup(workDir)
 		},

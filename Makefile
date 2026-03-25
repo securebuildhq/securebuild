@@ -11,8 +11,8 @@ help:
 	@echo "  run-oci-proxy  - Run the OCI proxy service"
 	@echo "  run-apk-proxy  - Run the APK proxy service"
 	@echo ""
-	@echo "Local Dev Stack (Docker Swarm):"
-	@echo "  dev-stack-up   - Build images and start the full dev stack in Docker Swarm"
+	@echo "Local Dev Stack (Docker Compose):"
+	@echo "  dev-stack-up   - Build images and start the full dev stack (Compose applies worker security options)"
 	@echo "  dev-stack-down - Stop and remove the dev stack"
 	@echo "  dev-worker     - Scale down worker, open shell with DB_URI set; restores on exit"
 	@echo "  dev-app        - Scale down app, open shell in securebuild-app/ with DB_URI set; restores on exit"
@@ -195,19 +195,21 @@ build-dev-images: pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm6
 		-f securebuild-app/Dockerfile.repldev -t securebuild-app:latest securebuild-app/
 	docker build -f Dockerfile.repldev-migrations -t securebuild-migrations:latest .
 
-# Dev stack targets (Docker Swarm)
-# Prerequisite: Docker Swarm must be initialized (run 'docker swarm init' once if not already)
+# Dev stack targets (Docker Compose)
+# Swarm stack deploy ignores privileged/security_opt/pid/ipc/userns; use Compose so the worker
+# settings in docker-compose.yml are honored (melange/bubblewrap in the worker container).
 
 STACK_NAME := securebuild
 COMPOSE_FILE := docker-compose.yml
 
 .PHONY: dev-stack-up
 dev-stack-up: build-dev-images
-	REPO_ROOT=$(shell pwd) docker stack deploy --compose-file $(COMPOSE_FILE) $(STACK_NAME)
+	mkdir -p dev-pipelines
+	REPO_ROOT=$(shell pwd) docker compose -p $(STACK_NAME) -f $(COMPOSE_FILE) up -d
 
 .PHONY: dev-stack-down
 dev-stack-down:
-	docker stack rm $(STACK_NAME)
+	REPO_ROOT=$(shell pwd) docker compose -p $(STACK_NAME) -f $(COMPOSE_FILE) down
 
 .PHONY: dev-worker
 dev-worker:

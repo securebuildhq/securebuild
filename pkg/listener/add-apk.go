@@ -41,13 +41,13 @@ func StartAddAPK(ctx context.Context) error {
 
 		hasMore, err := HandleAddApk(ctx, "x86_64")
 		if err != nil {
-			logger.Errorf("failed to handle add apk: %w", err)
+			logger.Errorf("failed to handle add x86_64 apk: %w", err)
 		}
 		hasMoreX86 = hasMore
 
 		hasMoreAarch64, err := HandleAddApk(ctx, "aarch64")
 		if err != nil {
-			logger.Errorf("failed to handle add apk: %w", err)
+			logger.Errorf("failed to handle add aarch64 apk: %w", err)
 		}
 		hasMore = hasMoreX86 || hasMoreAarch64
 
