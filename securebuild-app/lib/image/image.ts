@@ -483,6 +483,23 @@ export async function setImageReadme(id: string, readme: string): Promise<void> 
     throw err;
   }
 }
+export async function getImageByName(name: string): Promise<Image | null> {
+  try {
+    const db = getDB(await getParam("DB_URI"));
+    const query = `select id from image where name = $1`;
+    const result = await db.query(query, [name]);
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return await getImage(result.rows[0].id);
+  } catch (err) {
+    console.error(err);
+    throw err;
+  }
+}
+
 export async function getImage(id: string): Promise<Image> {
   try {
     const db = getDB(await getParam("DB_URI"));
