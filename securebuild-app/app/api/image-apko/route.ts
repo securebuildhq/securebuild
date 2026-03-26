@@ -6,6 +6,7 @@ import { ValidationError } from '@/lib/errors/validation-error'
 
 interface ApkoResponse {
   apkoId: string
+  apkoVersionId: string
   apkoYamlBase64: string
 }
 
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest) {
 
     const response: ApkoResponse = {
       apkoId: result.apkoId,
+      apkoVersionId: result.apkoVersionId,
       apkoYamlBase64: Buffer.from(result.apkoYaml).toString('base64')
     }
 

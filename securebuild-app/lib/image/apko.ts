@@ -7,6 +7,7 @@ import { getImageTestForLatestVersion, createOrUpdateImageTest } from "./image-t
 
 interface ApkoVersion {
   apkoId: string
+  apkoVersionId: string
   apkoYaml: string
 }
 
@@ -35,7 +36,7 @@ export async function getLatestImageApkoYaml(imageName: string, imageTag: string
 
     // Now get the latest APKO YAML for this image_apko_id
     const versionQuery = `
-      SELECT apko_yaml, created_at
+      SELECT id, apko_yaml, created_at
       FROM image_apko_version
       WHERE image_apko_id = $1
       ORDER BY created_at DESC
@@ -51,6 +52,7 @@ export async function getLatestImageApkoYaml(imageName: string, imageTag: string
     const row = versionResult.rows[0]
     return {
       apkoId: imageApkoId,
+      apkoVersionId: row.id,
       apkoYaml: row.apko_yaml
     }
 
