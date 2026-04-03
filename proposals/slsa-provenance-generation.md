@@ -1,4 +1,4 @@
-# Proposal: SLSA Provenance Generation for SecureBuild Image Rebuilds
+# Proposal: Supply Chain Verification for SecureBuild-Rebuilt Images
 
 **Research document**: [slsa-provenance-generation_research.md](./slsa-provenance-generation_research.md)
 
@@ -6,21 +6,45 @@
 
 ## TL;DR
 
-When SecureBuild rebuilds an image to patch CVEs, the resulting image has a different digest and lacks SLSA provenance, causing verification failures for customers running `slsa-verifier`. This proposal adds SLSA v1.0 provenance predicate construction and a second keyless attestation call to the existing build pipeline. Because `slsa-verifier` has a hardcoded trusted builder list that will never include SecureBuild, we define a `cosign verify-attestation`-based verification path using the Fulcio signing identity as the trust anchor. No database changes are required.
+When SecureBuild rebuilds an image to patch CVEs, **all three verification steps** in the upstream verification script break — not just SLSA provenance, but also cosign signature verification and SBOM attestation verification. This is because the upstream script is tied to the original build pipeline's identity (GitHub Actions SLSA generators, Replicated's cosign signing keys). This proposal: (1) adds SLSA v1.0 provenance generation to SecureBuild, (2) provides a SecureBuild-owned verification script/API that customers can use for rebuilt images, and (3) documents the verification lifecycle across original and rebuilt images. No database changes are required.
 
 ---
 
 ## The Problem
 
-When an upstream project (e.g., replicated-sdk) builds an image via GitHub Actions, `slsa-framework/slsa-github-generator` attaches SLSA L3 provenance to the original digest. SecureBuild rebuilds the image with patched dependencies, producing a new digest. This rebuilt image has cosign signatures and SBOM attestations but **no SLSA provenance**. Customers following the verification guide at `docs.replicated.com/vendor/replicated-sdk-slsa-validating` get:
+When an upstream project (e.g., replicated-sdk) builds an image via GitHub Actions, the build pipeline attaches three supply chain artifacts:
+
+1. **SLSA L3 provenance** — via `slsa-framework/slsa-github-generator`
+2. **Cosign signature** — signed with Replicated's environment-specific keys (`cosign-prod.pub`)
+3. **SBOM attestation** — signed with the same keys, type `spdxjson`
+
+Customers verify all three using `verify-image.sh` from the replicated-sdk repo. When SecureBuild rebuilds the image ~6 hours later, **all three verification steps fail**:
+
+| Step | What `verify-image.sh` does | Why it fails after rebuild |
+|------|---------------------------|---------------------------|
+| 1. SLSA | `slsa-verifier verify-image --source-uri github.com/replicatedhq/replicated-sdk` | Provenance is bound to original digest; `slsa-verifier` only trusts GitHub Actions builders |
+| 2. Cosign signature | `cosign verify-attestation --key ./cosign-prod.pub --type spdxjson` | SecureBuild uses keyless signing (Fulcio/GCP SA), not Replicated's `cosign-prod.pub` key |
+| 3. SBOM download | `cosign download attestation --predicate-type spdxjson` | SecureBuild attests with `predicateType: https://spdx.dev/Document`; download may work but signature verification in Step 2 already failed |
+
+### The Verification Gap
+
+There is no single verification method that works across the full lifecycle of a tag:
 
 ```
-slsa-verifier verify-image: FAILED: no matching provenance found
+T+0h    Tag v1.18.2 created, original build pushed
+        → verify-image.sh      ✅ (all 3 steps pass)
+        → SecureBuild verify    ❌ (no SecureBuild attestations yet)
+
+T+6h    SecureBuild rebuilds, pushes new digest to same tag
+        → verify-image.sh      ❌ (all 3 steps fail)
+        → SecureBuild verify    ✅ (SecureBuild attestations present)
 ```
 
-This breaks the supply chain verification workflow for security-conscious customers and undermines confidence in SecureBuild's rebuilt images.
+This is a fundamental tension: SLSA L3 proves an artifact came from a specific source+builder pair, and SecureBuild is by definition a *different builder* producing a *different artifact* (with patched CVEs). These are two valid but competing security goals — provenance purity vs. CVE remediation.
 
-**Who is affected**: Any customer verifying SLSA provenance on images that SecureBuild has rebuilt. The replicated-sdk is the immediate case (per its verify-image.sh script), but this applies to any image with an upstream SLSA attestation.
+**Who is affected**: Any customer verifying supply chain artifacts on images that SecureBuild has rebuilt. The replicated-sdk is the immediate case (per its `verify-image.sh` script), but this applies to any image with upstream verification tooling.
+
+Today, SecureBuild has **no customer-facing verification tooling** — no scripts, no documentation, no published signing identity. Customers have no way to verify SecureBuild-rebuilt images even if they wanted to.
 
 ---
 
@@ -96,19 +120,84 @@ processImageTag()
 
 ### Verification Path for Customers
 
-Since `slsa-verifier` only trusts hardcoded builders (GitHub Actions SLSA generators), SecureBuild provenance requires a different verification command:
+Since `slsa-verifier` only trusts hardcoded builders (GitHub Actions SLSA generators), SecureBuild provenance requires a different verification approach. **SecureBuild should own the verification tooling** for its rebuilt images, rather than expecting customers to figure it out.
+
+#### SecureBuild Verification Script (`verify-securebuild-image.sh`)
+
+SecureBuild provides a verification script that mirrors the structure of upstream verification scripts (like replicated-sdk's `verify-image.sh`) but uses SecureBuild's signing identity:
 
 ```bash
-# Instead of: slsa-verifier verify-image ...
-# Use:
+#!/bin/bash
+# verify-securebuild-image.sh
+# Verifies supply chain artifacts for SecureBuild-rebuilt images
+
+SECUREBUILD_IDENTITY="<GCP attestor service account email>"
+SECUREBUILD_OIDC_ISSUER="https://accounts.google.com"
+
+# Step 1: Verify SLSA Provenance
+echo "Step 1: Verifying SLSA provenance..."
 cosign verify-attestation \
   --type slsaprovenance \
-  --certificate-identity "<GCP attestor service account email>" \
-  --certificate-oidc-issuer "https://accounts.google.com" \
+  --certificate-identity "${SECUREBUILD_IDENTITY}" \
+  --certificate-oidc-issuer "${SECUREBUILD_OIDC_ISSUER}" \
+  "${IMAGE_WITH_DIGEST}" | jq -r '
+    .payload | @base64d | fromjson |
+    "Build Type: \(.predicate.buildDefinition.buildType)",
+    "Builder: \(.predicate.runDetails.builder.id)",
+    "Build ID: \(.predicate.runDetails.metadata.invocationId)",
+    "Started: \(.predicate.runDetails.metadata.startedOn)",
+    "Finished: \(.predicate.runDetails.metadata.finishedOn)"
+  '
+
+# Step 2: Verify Image Signature
+echo "Step 2: Verifying image signature..."
+cosign verify \
+  --certificate-identity "${SECUREBUILD_IDENTITY}" \
+  --certificate-oidc-issuer "${SECUREBUILD_OIDC_ISSUER}" \
+  "${IMAGE_WITH_DIGEST}"
+
+# Step 3: Verify SBOM Attestation
+echo "Step 3: Verifying SBOM attestation..."
+cosign verify-attestation \
+  --type https://spdx.dev/Document \
+  --certificate-identity "${SECUREBUILD_IDENTITY}" \
+  --certificate-oidc-issuer "${SECUREBUILD_OIDC_ISSUER}" \
   "${IMAGE_WITH_DIGEST}"
 ```
 
-This uses the Fulcio signing identity (the GCP service account email in the OIDC token) as the trust anchor. The certificate chain is Fulcio -> ephemeral cert -> Rekor tlog entry, same as the existing SBOM attestation verification.
+#### Unified Verification (Original + SecureBuild)
+
+For customers who want a single script that handles both original and rebuilt images, we provide guidance for a "try both" approach:
+
+```bash
+# Try upstream verification first (works for original builds within ~6h of tag)
+if slsa-verifier verify-image "${IMAGE_WITH_DIGEST}" --source-uri ... 2>/dev/null; then
+  echo "Verified via upstream SLSA provenance"
+else
+  # Fall back to SecureBuild verification (works after SecureBuild rebuilds)
+  if cosign verify-attestation --type slsaprovenance \
+    --certificate-identity "${SECUREBUILD_IDENTITY}" \
+    --certificate-oidc-issuer "${SECUREBUILD_OIDC_ISSUER}" \
+    "${IMAGE_WITH_DIGEST}" 2>/dev/null; then
+    echo "Verified via SecureBuild provenance"
+  else
+    echo "FAILED: No valid provenance found"
+    exit 1
+  fi
+fi
+```
+
+#### Where the Script Lives
+
+Options (not mutually exclusive):
+
+| Option | Pros | Cons |
+|--------|------|------|
+| **A. API endpoint** (`GET /api/verify-image-script`) | Always up-to-date, can be version-specific | Requires network access to fetch |
+| **B. Published in SecureBuild docs/repo** | Discoverable, can be vendored | May go stale if identity changes |
+| **C. Generated per-image in the web UI** | Pre-filled with correct digest/identity | Requires UI work |
+
+**Recommendation**: Start with **B** (published script with the signing identity baked in) and add **C** (web UI with copy-paste commands) later. The signing identity is stable (it's the GCP service account), so staleness risk is low.
 
 ### Key Design Decisions
 
@@ -121,12 +210,13 @@ This uses the Fulcio signing identity (the GCP service account email in the OIDC
 | What digest to attest | Index digest (same as SBOM attestation) | Consistent with existing attestation behavior; per-arch attestation can follow later |
 | Key-based path | No SLSA provenance | Only the keyless VM path has the metadata and identity to produce meaningful provenance |
 | Verification tool | `cosign verify-attestation` | `slsa-verifier` has hardcoded trusted builders; cosign is the pragmatic path |
+| Verification script ownership | SecureBuild provides it | SecureBuild changes the verification story, so it should own the tooling |
 
 ---
 
 ## New Subagents / Commands
 
-No new subagents or commands. This feature is entirely within the existing build worker and attestation pipeline.
+No new subagents or commands for the build pipeline changes. The verification script is a standalone bash script distributed to customers (not a SecureBuild internal component).
 
 ---
 
@@ -147,14 +237,16 @@ The `predicateType` annotation on the layer descriptor is what differentiates SL
 
 ### Files to Touch
 
-| File | Change |
-|------|--------|
-| `pkg/cosign/cosign-api.go` | Parameterize `buildCustomSubjectStatement` to accept `predicateType` |
-| `pkg/cosign/keyless.go` | Update `CosignAttestKeylessWithCustomSubject` to accept `predicateType` parameter |
-| `pkg/cosign/slsa.go` | **New file**: SLSA v1.0 predicate builder |
-| `pkg/cosign/slsa_test.go` | **New file**: Unit tests for predicate builder |
-| `pkg/cosign/keyless_test.go` | Update tests for new `predicateType` parameter |
-| `pkg/listener/update-build-image-status.go` | Add SLSA provenance attestation call after SBOM attestation |
+| File | Change | PR |
+|------|--------|----|
+| `pkg/cosign/cosign-api.go` | Parameterize `buildCustomSubjectStatement` to accept `predicateType` | 1 |
+| `pkg/cosign/keyless.go` | Update `CosignAttestKeylessWithCustomSubject` to accept `predicateType` parameter | 1 |
+| `pkg/cosign/slsa.go` | **New file**: SLSA v1.0 predicate builder | 1 |
+| `pkg/cosign/slsa_test.go` | **New file**: Unit tests for predicate builder | 1 |
+| `pkg/cosign/keyless_test.go` | Update tests for new `predicateType` parameter | 1 |
+| `pkg/listener/update-build-image-status.go` | Add SLSA provenance attestation call after SBOM attestation | 2 |
+| `certs/verify-securebuild-image.sh` | **New file**: Customer-facing verification script (3 steps) | 3 |
+| `securebuild-app/` (TBD) | Verification commands in web UI image detail page | 3 (optional) |
 
 ### Pseudo Code
 
@@ -466,6 +558,8 @@ Update `TestCosignAttestKeylessWithCustomSubject` in `keyless_test.go` to:
 | resolvedDependencies | Initially empty | Full APK dependency list | Parsing Syft SBOMs for resolved deps adds complexity; can iterate later |
 | Per-arch attestation | Index digest only | Per-architecture provenance | Consistent with existing SBOM attestation approach; can add later |
 | Key-based path | No provenance | Provenance for local builds | Local builder lacks the metadata and identity model for meaningful provenance |
+| Verification gap | Accept 2 modes (original vs. rebuilt) | Seamless single-tool verification | Fundamental: SLSA L3 and CVE rebuilds are different builders; no way around this |
+| Verification script ownership | SecureBuild provides and maintains | Upstream scripts handle both | SecureBuild changes the identity model; it should own the verification story |
 
 ---
 
@@ -515,6 +609,33 @@ No new dependencies required. The SLSA predicate is constructed as plain Go stru
 
 ---
 
+## Impact on Upstream Verification Scripts
+
+### replicated-sdk `verify-image.sh`
+
+The existing script (`certs/verify-image.sh`) will fail on all three steps for SecureBuild-rebuilt images. There are two paths forward:
+
+**Option 1: Replicated updates their script to handle both modes**
+
+Replicated modifies `verify-image.sh` to detect whether the image was rebuilt by SecureBuild and branch accordingly. This requires coordination with the Replicated team and depends on them adopting SecureBuild's signing identity.
+
+**Option 2: SecureBuild provides a replacement/companion script**
+
+SecureBuild publishes `verify-securebuild-image.sh` that customers use specifically for SecureBuild-rebuilt images. The customer's CI/CD decides which script to run based on whether they're pulling from the upstream registry or SecureBuild's proxy.
+
+**Recommendation**: Option 2 in the short term (SecureBuild owns it), with a path toward Option 1 as a long-term collaboration with upstream projects. The verification script should be published alongside SecureBuild's documentation and discoverable from the web UI.
+
+### What Customers Need to Know
+
+Documentation should clearly explain:
+
+1. **Why verification changes** — SecureBuild rebuilds the image with patched dependencies, producing a new digest signed with SecureBuild's identity
+2. **What's verified** — Same three things (provenance, signature, SBOM), different trust anchor (SecureBuild's Fulcio identity instead of upstream's cosign keys)
+3. **How to verify** — Provide the exact commands with SecureBuild's signing identity pre-filled
+4. **The security trade-off** — Customers gain CVE remediation but lose `slsa-verifier` compatibility; `cosign verify-attestation` provides equivalent cryptographic guarantees with a different trust model
+
+---
+
 ## Checkpoints (PR Plan)
 
 ### PR 1: Parameterize predicateType and add SLSA predicate builder
@@ -529,12 +650,21 @@ No new dependencies required. The SLSA predicate is constructed as plain Go stru
 
 This PR is safe to merge independently -- it changes no runtime behavior (existing callers pass the same SPDX predicate type they were hardcoded to before).
 
-### PR 2: Wire SLSA provenance into build pipeline + verification docs
+### PR 2: Wire SLSA provenance into build pipeline
 
 **Scope:**
 - Thread `buildID` and `imageBuild` through to `processImageTag`
 - Add SLSA provenance attestation call after SBOM attestation
 - Add integration test: build produces provenance, `cosign verify-attestation --type slsaprovenance` succeeds
-- Update/create customer-facing verification documentation
 
-This PR activates the feature. Once merged, all new builds produce SLSA provenance.
+This PR activates provenance generation. Once merged, all new builds produce SLSA provenance.
+
+### PR 3: SecureBuild verification script and documentation
+
+**Scope:**
+- Add `verify-securebuild-image.sh` script (covers all 3 verification steps)
+- Publish SecureBuild's signing identity (GCP service account email)
+- Add verification documentation (why, what, how)
+- Optionally: Add verification commands to the web UI image detail page
+
+This PR makes the verification story customer-facing.
