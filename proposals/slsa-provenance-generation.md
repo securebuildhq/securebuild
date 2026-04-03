@@ -638,7 +638,7 @@ Documentation should clearly explain:
 
 ## Checkpoints (PR Plan)
 
-### PR 1: Parameterize predicateType and add SLSA predicate builder
+### PR 1: Parameterize predicateType and add SLSA predicate builder ✅ IMPLEMENTED
 
 **Scope:**
 - Parameterize `buildCustomSubjectStatement` to accept `predicateType`

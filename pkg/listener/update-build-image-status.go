@@ -654,7 +654,7 @@ func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetype
 	if _, err := os.Stat(indexSBOMPath); os.IsNotExist(err) {
 		indexSBOMPath = filepath.Join(tmpDir, "sbom-index.spdx.json")
 	}
-	if err := cosign.CosignAttestKeylessWithCustomSubject(ctx, indexSBOMPath, digestRef, provider, imageCatalogID); err != nil {
+	if err := cosign.CosignAttestKeylessWithCustomSubject(ctx, indexSBOMPath, "https://spdx.dev/Document", digestRef, provider, imageCatalogID); err != nil {
 		logger.Warn("keyless SBOM attestation failed", zap.Error(err))
 	}
 

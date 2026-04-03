@@ -67,7 +67,7 @@ func parseDSSEEnvelope(dsseBytes []byte) (string, error) {
 }
 
 // buildCustomSubjectStatement creates an InTotoStatement with the custom subject logic (proxy registry path).
-func buildCustomSubjectStatement(ctx context.Context, digest string, predicate interface{}) InTotoStatement {
+func buildCustomSubjectStatement(ctx context.Context, digest string, predicateType string, predicate interface{}) InTotoStatement {
 	// Set the final subject name using the OCI prefix (falls back to registry prefix)
 	ociPrefix := registry.NormalizePrefix(param.GetParam(ctx).OCIImagePrefix)
 	if ociPrefix == "" {
@@ -77,7 +77,7 @@ func buildCustomSubjectStatement(ctx context.Context, digest string, predicate i
 
 	return InTotoStatement{
 		Type:          "https://in-toto.io/Statement/v0.1",
-		PredicateType: "https://spdx.dev/Document",
+		PredicateType: predicateType,
 		Subject: []Subject{{
 			Name:   finalSubjectName,
 			Digest: map[string]string{"sha256": digest},
@@ -109,7 +109,7 @@ func CosignAttestWithCustomSubject(ctx context.Context, predicatePath, sbomLabel
 	digest = strings.TrimPrefix(digest, "sha256:")
 
 	// Use the helper to build the in-toto statement
-	statement := buildCustomSubjectStatement(ctx, digest, predicate)
+	statement := buildCustomSubjectStatement(ctx, digest, "https://spdx.dev/Document", predicate)
 
 	jsonPayload, err := json.Marshal(statement)
 	if err != nil {
