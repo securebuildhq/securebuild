@@ -79,7 +79,7 @@
     "secure-random-string": "^1.1.4",
     "semver": "^7.7.4",
     "sonner": "^1.7.1",
-    "stripe": "^21.0.1",
+    "stripe": "^22.0.0",
     "tailwind-merge": "^2.5.5",
     "tar": "^7.5.13",
     "tar-stream": "^3.1.8",
