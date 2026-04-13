@@ -30,6 +30,7 @@ require (
 	github.com/go-openapi/strfmt v0.26.1
 	github.com/google/go-containerregistry v0.21.3
 	github.com/google/go-github/v61 v61.0.0
+	github.com/in-toto/attestation v1.2.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/lib/pq v1.12.0
 	github.com/mikesmitty/edkey v0.0.0-20170222072505-3356ea4e686a
@@ -52,6 +53,7 @@ require (
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/api v0.272.0
 	google.golang.org/genproto v0.0.0-20260217215200-42d3e9bedb6d
+	google.golang.org/protobuf v1.36.11
 	gopkg.in/DataDog/dd-trace-go.v1 v1.74.8
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -284,7 +286,6 @@ require (
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/iancoleman/strcase v0.3.0 // indirect
 	github.com/ijt/goparsify v0.0.0-20221203142333-3a5276334b8d // indirect
-	github.com/in-toto/attestation v1.2.0 // indirect
 	github.com/in-toto/in-toto-golang v0.10.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -482,7 +483,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260311181403-84a4fc48630c // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260311181403-84a4fc48630c // indirect
 	google.golang.org/grpc v1.79.3 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/ini.v1 v1.67.1 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gorm.io/gorm v1.31.1 // indirect

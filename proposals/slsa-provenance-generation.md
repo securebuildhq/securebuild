@@ -241,10 +241,10 @@ The `predicateType` annotation on the layer descriptor is what differentiates SL
 |------|--------|----|
 | `pkg/cosign/cosign-api.go` | Parameterize `buildCustomSubjectStatement` to accept `predicateType` | 1 |
 | `pkg/cosign/keyless.go` | Update `CosignAttestKeylessWithCustomSubject` to accept `predicateType` parameter | 1 |
-| `pkg/cosign/slsa.go` | **New file**: SLSA v1.0 predicate builder | 1 |
-| `pkg/cosign/slsa_test.go` | **New file**: Unit tests for predicate builder | 1 |
 | `pkg/cosign/keyless_test.go` | Update tests for new `predicateType` parameter | 1 |
-| `pkg/listener/update-build-image-status.go` | Add SLSA provenance attestation call after SBOM attestation | 2 |
+| `pkg/listener/update-build-image-status.go` | Update caller to pass SPDX predicateType (PR 1), add SLSA attestation call (PR 2) | 1, 2 |
+| `pkg/cosign/slsa.go` | **New file**: SLSA v1.0 predicate builder using protobuf types from `in-toto/attestation` | 2 |
+| `pkg/cosign/slsa_test.go` | **New file**: Unit tests for predicate builder | 2 |
 | `certs/verify-securebuild-image.sh` | **New file**: Customer-facing verification script (3 steps) | 3 |
 | `securebuild-app/` (TBD) | Verification commands in web UI image detail page | 3 (optional) |
 
@@ -303,61 +303,61 @@ func CosignAttestKeylessWithCustomSubject(
 }
 ```
 
-#### 3. SLSA v1.0 Predicate Builder (`pkg/cosign/slsa.go` -- new file)
+#### 3. SLSA v1.0 Predicate Builder (`pkg/cosign/slsa.go` -- new file, PR 2)
 
-Uses the official `github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v1` types (already an indirect dependency in go.mod). Only SecureBuild-specific types are defined locally.
+Uses the protobuf-generated types from `github.com/in-toto/attestation/go/predicates/provenance/v1` (already an indirect dependency in go.mod at v1.2.0). These are the non-deprecated replacements for the types in `in-toto-golang`.
+
+Key differences from the deprecated types:
+- Root type is `provenance.Provenance` (not `ProvenancePredicate`)
+- `ExternalParameters` and `InternalParameters` are `*structpb.Struct`
+- Timestamps are `*timestamppb.Timestamp`
 
 ```go
 package cosign
 
 import (
-    slsav1 "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v1"
+    provenance "github.com/in-toto/attestation/go/predicates/provenance/v1"
+    "google.golang.org/protobuf/types/known/structpb"
+    "google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const PredicateSLSAProvenance = "https://slsa.dev/provenance/v1"
 const SecureBuildBuildType = "https://securebuild.com/provenance/image-rebuild/v1"
 const SecureBuildBuilderID = "https://securebuild.com/builder/gcp-vm/v1"
 
-// SecureBuildSourceParameters holds build inputs specific to SecureBuild.
-type SecureBuildSourceParameters struct {
-    ApkoConfigDigest string   `json:"apkoConfigDigest"`
-    Tags             []string `json:"tags"`
-}
-
-// SLSAProvenanceInput holds the metadata needed to build a SLSA provenance predicate.
-type SLSAProvenanceInput struct {
-    BuildID, BuilderID string
-    StartedOn, FinishedOn *time.Time
-    ApkoYAML string
-    Tags []string
-}
-
-// BuildSLSAProvenancePredicate constructs a SLSA v1.0 provenance predicate
-// using the official in-toto types.
-func BuildSLSAProvenancePredicate(input SLSAProvenanceInput) slsav1.ProvenancePredicate {
+func BuildSLSAProvenancePredicate(input SLSAProvenanceInput) *provenance.Provenance {
     apkoDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(input.ApkoYAML)))
 
-    return slsav1.ProvenancePredicate{
-        BuildDefinition: slsav1.ProvenanceBuildDefinition{
-            BuildType: SecureBuildBuildType,
-            ExternalParameters: SecureBuildSourceParameters{
-                ApkoConfigDigest: apkoDigest,
-                Tags:             input.Tags,
-            },
-            ResolvedDependencies: []slsav1.ResourceDescriptor{},
+    extParams, _ := structpb.NewStruct(map[string]interface{}{
+        "source": map[string]interface{}{
+            "apkoConfigDigest": apkoDigest,
+            "tags":             input.Tags,
         },
-        RunDetails: slsav1.ProvenanceRunDetails{
-            Builder:       slsav1.Builder{ID: SecureBuildBuilderID},
-            BuildMetadata: slsav1.BuildMetadata{
-                InvocationID: input.BuildID,
-                StartedOn:    input.StartedOn,
-                FinishedOn:   input.FinishedOn,
+    })
+
+    pred := &provenance.Provenance{
+        BuildDefinition: &provenance.BuildDefinition{
+            BuildType:          SecureBuildBuildType,
+            ExternalParameters: extParams,
+        },
+        RunDetails: &provenance.RunDetails{
+            Builder: &provenance.Builder{Id: SecureBuildBuilderID},
+            Metadata: &provenance.BuildMetadata{
+                InvocationId: input.BuildID,
             },
         },
     }
+    if input.StartedOn != nil {
+        pred.RunDetails.Metadata.StartedOn = timestamppb.New(*input.StartedOn)
+    }
+    if input.FinishedOn != nil {
+        pred.RunDetails.Metadata.FinishedOn = timestamppb.New(*input.FinishedOn)
+    }
+    return pred
 }
 ```
 
-The predicate type constant is `slsav1.PredicateSLSAProvenance` (`"https://slsa.dev/provenance/v1"`).
+Note: The predicate will be JSON-marshaled using `protojson.Marshal` (not `encoding/json`) to produce spec-compliant output.
 
 #### 4. Integrate into Build Pipeline (`pkg/listener/update-build-image-status.go`)
 
@@ -583,26 +583,19 @@ Documentation should clearly explain:
 
 ## Checkpoints (PR Plan)
 
-### PR 1: Parameterize predicateType and add SLSA predicate builder ✅ IMPLEMENTED
+### PR 1: Parameterize predicateType + SLSA predicate builder + wire into build pipeline ✅ IMPLEMENTED
 
 **Scope:**
 - Parameterize `buildCustomSubjectStatement` to accept `predicateType`
 - Parameterize `CosignAttestKeylessWithCustomSubject` to accept `predicateType`
 - Update `CosignAttestWithCustomSubject` (key-based) to pass SPDX predicateType
 - Update existing callers and tests
-- Add `pkg/cosign/slsa.go` with `BuildSLSAProvenancePredicate` using official `in-toto/in-toto-golang` SLSA v1.0 types
+- Add `pkg/cosign/slsa.go` with `BuildSLSAProvenancePredicate` using protobuf-generated types from `github.com/in-toto/attestation/go/predicates/provenance/v1` (non-deprecated)
 - Add `pkg/cosign/slsa_test.go`
-
-This PR is safe to merge independently -- it changes no runtime behavior (existing callers pass the same SPDX predicate type they were hardcoded to before).
-
-### PR 2: Wire SLSA provenance into build pipeline
-
-**Scope:**
-- Thread `buildID` and `imageBuild` through to `processImageTag`
+- Thread `imageBuild` through to `processImageTag`
 - Add SLSA provenance attestation call after SBOM attestation
-- Add integration test: build produces provenance, `cosign verify-attestation --type slsaprovenance` succeeds
 
-This PR activates provenance generation. Once merged, all new builds produce SLSA provenance.
+Once merged, all new builds produce SLSA provenance attestations alongside existing SBOM attestations.
 
 ### PR 3: SecureBuild verification script and documentation
 
