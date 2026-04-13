@@ -305,115 +305,59 @@ func CosignAttestKeylessWithCustomSubject(
 
 #### 3. SLSA v1.0 Predicate Builder (`pkg/cosign/slsa.go` -- new file)
 
+Uses the official `github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v1` types (already an indirect dependency in go.mod). Only SecureBuild-specific types are defined locally.
+
 ```go
 package cosign
 
-// SLSAProvenancePredicateType is the predicateType URI for SLSA v1.0 provenance.
-const SLSAProvenancePredicateType = "https://slsa.dev/provenance/v1"
+import (
+    slsav1 "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v1"
+)
 
-// SecureBuildBuildType is the buildType URI for SecureBuild image rebuilds.
 const SecureBuildBuildType = "https://securebuild.com/provenance/image-rebuild/v1"
-
-// SecureBuildBuilderID is the builder.id for SecureBuild GCP VM builds.
 const SecureBuildBuilderID = "https://securebuild.com/builder/gcp-vm/v1"
 
-// SLSABuildDefinition represents the buildDefinition in SLSA v1.0.
-type SLSABuildDefinition struct {
-    BuildType            string                  `json:"buildType"`
-    ExternalParameters   SLSAExternalParameters  `json:"externalParameters"`
-    InternalParameters   SLSAInternalParameters  `json:"internalParameters"`
-    ResolvedDependencies []SLSAResourceDescriptor `json:"resolvedDependencies"`
-}
-
-type SLSAExternalParameters struct {
-    Source SLSASourceParameters `json:"source"`
-}
-
-type SLSASourceParameters struct {
+// SecureBuildSourceParameters holds build inputs specific to SecureBuild.
+type SecureBuildSourceParameters struct {
     ApkoConfigDigest string   `json:"apkoConfigDigest"`
     Tags             []string `json:"tags"`
 }
 
-type SLSAInternalParameters struct {
-    BuilderVersion string `json:"builderVersion,omitempty"`
-}
-
-type SLSAResourceDescriptor struct {
-    URI    string            `json:"uri"`
-    Digest map[string]string `json:"digest,omitempty"`
-}
-
-// SLSARunDetails represents the runDetails in SLSA v1.0.
-type SLSARunDetails struct {
-    Builder  SLSABuilder   `json:"builder"`
-    Metadata SLSAMetadata  `json:"metadata"`
-}
-
-type SLSABuilder struct {
-    ID string `json:"id"`
-}
-
-type SLSAMetadata struct {
-    InvocationID string  `json:"invocationId"`
-    StartedOn    *string `json:"startedOn,omitempty"`
-    FinishedOn   *string `json:"finishedOn,omitempty"`
-}
-
-// SLSAProvenancePredicate is the top-level SLSA v1.0 provenance predicate.
-type SLSAProvenancePredicate struct {
-    BuildDefinition SLSABuildDefinition `json:"buildDefinition"`
-    RunDetails      SLSARunDetails      `json:"runDetails"`
-}
-
 // SLSAProvenanceInput holds the metadata needed to build a SLSA provenance predicate.
 type SLSAProvenanceInput struct {
-    BuildID        string
-    BuilderID      string     // VM builder ID
-    StartedOn      *time.Time
-    FinishedOn     *time.Time
-    ApkoYAML       string     // raw APKO config content
-    Tags           []string   // resolved image tags
-    // Future: source repo, commit, tool versions
+    BuildID, BuilderID string
+    StartedOn, FinishedOn *time.Time
+    ApkoYAML string
+    Tags []string
 }
 
 // BuildSLSAProvenancePredicate constructs a SLSA v1.0 provenance predicate
-// from the available build metadata.
-func BuildSLSAProvenancePredicate(input SLSAProvenanceInput) SLSAProvenancePredicate {
-    // Hash the APKO config for the externalParameters
+// using the official in-toto types.
+func BuildSLSAProvenancePredicate(input SLSAProvenanceInput) slsav1.ProvenancePredicate {
     apkoDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(input.ApkoYAML)))
 
-    predicate := SLSAProvenancePredicate{
-        BuildDefinition: SLSABuildDefinition{
+    return slsav1.ProvenancePredicate{
+        BuildDefinition: slsav1.ProvenanceBuildDefinition{
             BuildType: SecureBuildBuildType,
-            ExternalParameters: SLSAExternalParameters{
-                Source: SLSASourceParameters{
-                    ApkoConfigDigest: apkoDigest,
-                    Tags:             input.Tags,
-                },
+            ExternalParameters: SecureBuildSourceParameters{
+                ApkoConfigDigest: apkoDigest,
+                Tags:             input.Tags,
             },
-            // resolvedDependencies left empty for now;
-            // future: parse Syft SBOM for APK package URIs
+            ResolvedDependencies: []slsav1.ResourceDescriptor{},
         },
-        RunDetails: SLSARunDetails{
-            Builder: SLSABuilder{
-                ID: SecureBuildBuilderID,
-            },
-            Metadata: SLSAMetadata{
+        RunDetails: slsav1.ProvenanceRunDetails{
+            Builder:       slsav1.Builder{ID: SecureBuildBuilderID},
+            BuildMetadata: slsav1.BuildMetadata{
                 InvocationID: input.BuildID,
-                StartedOn:    formatTimePtr(input.StartedOn),
-                FinishedOn:   formatTimePtr(input.FinishedOn),
+                StartedOn:    input.StartedOn,
+                FinishedOn:   input.FinishedOn,
             },
         },
     }
-    return predicate
-}
-
-func formatTimePtr(t *time.Time) *string {
-    if t == nil { return nil }
-    s := t.Format(time.RFC3339)
-    return &s
 }
 ```
+
+The predicate type constant is `slsav1.PredicateSLSAProvenance` (`"https://slsa.dev/provenance/v1"`).
 
 #### 4. Integrate into Build Pipeline (`pkg/listener/update-build-image-status.go`)
 
@@ -439,7 +383,7 @@ if err == nil {
     os.WriteFile(slsaPath, slsaPredicateBytes, 0644)
 
     if err := cosign.CosignAttestKeylessWithCustomSubject(
-        ctx, slsaPath, cosign.SLSAProvenancePredicateType,
+        ctx, slsaPath, slsav1.PredicateSLSAProvenance,
         digestRef, provider, imageCatalogID,
     ); err != nil {
         logger.Warn("keyless SLSA provenance attestation failed", zap.Error(err))
@@ -600,12 +544,13 @@ Update `TestCosignAttestKeylessWithCustomSubject` in `keyless_test.go` to:
 - [DSSE envelope spec](https://github.com/secure-systems-lab/dsse/blob/master/envelope.md)
 
 ### Dependencies Already Available
+- `github.com/in-toto/in-toto-golang v0.10.0` (indirect, in go.mod) -- provides official SLSA v1.0 provenance types (`slsa_provenance/v1.ProvenancePredicate`, etc.) and `PredicateSLSAProvenance` constant
 - `github.com/in-toto/attestation v1.2.0` (indirect, in go.mod)
 - `github.com/sigstore/cosign/v2 v2.6.2`
 - `github.com/sigstore/fulcio v1.8.5`
 - `github.com/sigstore/rekor v1.5.1`
 
-No new dependencies required. The SLSA predicate is constructed as plain Go structs and serialized to JSON.
+No new dependencies required. The SLSA predicate uses the official `in-toto-golang` types.
 
 ---
 
@@ -645,7 +590,7 @@ Documentation should clearly explain:
 - Parameterize `CosignAttestKeylessWithCustomSubject` to accept `predicateType`
 - Update `CosignAttestWithCustomSubject` (key-based) to pass SPDX predicateType
 - Update existing callers and tests
-- Add `pkg/cosign/slsa.go` with SLSA v1.0 predicate types and `BuildSLSAProvenancePredicate`
+- Add `pkg/cosign/slsa.go` with `BuildSLSAProvenancePredicate` using official `in-toto/in-toto-golang` SLSA v1.0 types
 - Add `pkg/cosign/slsa_test.go`
 
 This PR is safe to merge independently -- it changes no runtime behavior (existing callers pass the same SPDX predicate type they were hardcoded to before).

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	slsav1 "github.com/in-toto/in-toto-golang/in_toto/slsa_provenance/v1"
 )
 
 func TestBuildSLSAProvenancePredicate(t *testing.T) {
@@ -34,27 +36,31 @@ func TestBuildSLSAProvenancePredicate(t *testing.T) {
 	}
 
 	// Verify invocation ID
-	if predicate.RunDetails.Metadata.InvocationID != "abc123" {
-		t.Fatalf("expected invocationId %q, got %q", "abc123", predicate.RunDetails.Metadata.InvocationID)
+	if predicate.RunDetails.BuildMetadata.InvocationID != "abc123" {
+		t.Fatalf("expected invocationId %q, got %q", "abc123", predicate.RunDetails.BuildMetadata.InvocationID)
 	}
 
 	// Verify timestamps
-	if predicate.RunDetails.Metadata.StartedOn == nil || *predicate.RunDetails.Metadata.StartedOn != "2025-01-15T10:00:00Z" {
-		t.Fatalf("unexpected startedOn: %v", predicate.RunDetails.Metadata.StartedOn)
+	if predicate.RunDetails.BuildMetadata.StartedOn == nil || !predicate.RunDetails.BuildMetadata.StartedOn.Equal(startedOn) {
+		t.Fatalf("unexpected startedOn: %v", predicate.RunDetails.BuildMetadata.StartedOn)
 	}
-	if predicate.RunDetails.Metadata.FinishedOn == nil || *predicate.RunDetails.Metadata.FinishedOn != "2025-01-15T10:05:00Z" {
-		t.Fatalf("unexpected finishedOn: %v", predicate.RunDetails.Metadata.FinishedOn)
+	if predicate.RunDetails.BuildMetadata.FinishedOn == nil || !predicate.RunDetails.BuildMetadata.FinishedOn.Equal(finishedOn) {
+		t.Fatalf("unexpected finishedOn: %v", predicate.RunDetails.BuildMetadata.FinishedOn)
 	}
 
 	// Verify APKO config digest
 	expectedDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("packages:\n  - zlib\n")))
-	if predicate.BuildDefinition.ExternalParameters.Source.ApkoConfigDigest != expectedDigest {
-		t.Fatalf("expected apkoConfigDigest %q, got %q", expectedDigest, predicate.BuildDefinition.ExternalParameters.Source.ApkoConfigDigest)
+	extParams, ok := predicate.BuildDefinition.ExternalParameters.(SecureBuildSourceParameters)
+	if !ok {
+		t.Fatalf("expected ExternalParameters to be SecureBuildSourceParameters")
+	}
+	if extParams.ApkoConfigDigest != expectedDigest {
+		t.Fatalf("expected apkoConfigDigest %q, got %q", expectedDigest, extParams.ApkoConfigDigest)
 	}
 
 	// Verify tags
-	if len(predicate.BuildDefinition.ExternalParameters.Source.Tags) != 2 {
-		t.Fatalf("expected 2 tags, got %d", len(predicate.BuildDefinition.ExternalParameters.Source.Tags))
+	if len(extParams.Tags) != 2 {
+		t.Fatalf("expected 2 tags, got %d", len(extParams.Tags))
 	}
 
 	// Verify JSON serialization round-trips
@@ -62,7 +68,7 @@ func TestBuildSLSAProvenancePredicate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to marshal predicate: %v", err)
 	}
-	var roundTripped SLSAProvenancePredicate
+	var roundTripped slsav1.ProvenancePredicate
 	if err := json.Unmarshal(data, &roundTripped); err != nil {
 		t.Fatalf("failed to unmarshal predicate: %v", err)
 	}
@@ -81,11 +87,11 @@ func TestBuildSLSAProvenancePredicate_NilTimestamps(t *testing.T) {
 
 	predicate := BuildSLSAProvenancePredicate(input)
 
-	if predicate.RunDetails.Metadata.StartedOn != nil {
-		t.Fatalf("expected nil startedOn, got %v", predicate.RunDetails.Metadata.StartedOn)
+	if predicate.RunDetails.BuildMetadata.StartedOn != nil {
+		t.Fatalf("expected nil startedOn, got %v", predicate.RunDetails.BuildMetadata.StartedOn)
 	}
-	if predicate.RunDetails.Metadata.FinishedOn != nil {
-		t.Fatalf("expected nil finishedOn, got %v", predicate.RunDetails.Metadata.FinishedOn)
+	if predicate.RunDetails.BuildMetadata.FinishedOn != nil {
+		t.Fatalf("expected nil finishedOn, got %v", predicate.RunDetails.BuildMetadata.FinishedOn)
 	}
 
 	// Verify omitempty works in JSON
