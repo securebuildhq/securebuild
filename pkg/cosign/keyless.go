@@ -348,6 +348,7 @@ func CosignSignKeylessWithCustomSubject(ctx context.Context, imageRef string, oi
 func CosignAttestKeylessWithCustomSubject(
 	ctx context.Context,
 	predicatePath string, // path to SBOM / provenance JSON file
+	predicateType string, // in-toto predicateType URI
 	digestRef string, // image reference with digest (…@sha256:…)
 	oidcProvider oidc.OIDCProvider,
 	imageCatalogID string,
@@ -372,7 +373,7 @@ func CosignAttestKeylessWithCustomSubject(
 	digest = strings.TrimPrefix(digest, "sha256:")
 
 	// Build in-toto statement with custom subject
-	statement := buildCustomSubjectStatement(ctx, digest, predicate)
+	statement := buildCustomSubjectStatement(ctx, digest, predicateType, predicate)
 	stmtBytes, err := json.Marshal(statement)
 	if err != nil {
 		return fmt.Errorf("failed to marshal in-toto statement: %w", err)

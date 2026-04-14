@@ -357,7 +357,7 @@ func processImageBuildResults(ctx context.Context, buildID string, tmpDir string
 		imageCatalogID, err := processImageTag(ctx, img, apko, actualTag, ociPathWithoutTag, scanAt,
 			scanResults.GrypeScanStandardX86, scanResults.GrypeScanStandardAarch64,
 			scanResults.AlternateScanX86, scanResults.AlternateScanAarch64,
-			tmpDir)
+			tmpDir, imageBuild)
 		if err != nil {
 			return fmt.Errorf("failed to process image tag %s: %w", actualTag, err)
 		}
@@ -520,7 +520,7 @@ func captureLogFileWithRunner(ctx context.Context, runner buildbackend.Runner, b
 }
 
 // processImageTag processes a single image tag and creates catalog entries
-func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetypes.ImageAPKO, actualTag string, ociPathWithoutTag string, scanAt time.Time, scanResultX86Raw, scanResultAarch64Raw, alternateScanResultX86Raw, alternateScanResultAarch64Raw string, tmpDir string) (string, error) {
+func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetypes.ImageAPKO, actualTag string, ociPathWithoutTag string, scanAt time.Time, scanResultX86Raw, scanResultAarch64Raw, alternateScanResultX86Raw, alternateScanResultAarch64Raw string, tmpDir string, imageBuild *imagetypes.ImageBuild) (string, error) {
 	// ----------------------------------------------------
 	// Resolve digest for the just-pushed image tag FIRST
 	// ----------------------------------------------------
@@ -654,8 +654,30 @@ func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetype
 	if _, err := os.Stat(indexSBOMPath); os.IsNotExist(err) {
 		indexSBOMPath = filepath.Join(tmpDir, "sbom-index.spdx.json")
 	}
-	if err := cosign.CosignAttestKeylessWithCustomSubject(ctx, indexSBOMPath, digestRef, provider, imageCatalogID); err != nil {
+	if err := cosign.CosignAttestKeylessWithCustomSubject(ctx, indexSBOMPath, cosign.PredicateSPDX, digestRef, provider, imageCatalogID); err != nil {
 		logger.Warn("keyless SBOM attestation failed", zap.Error(err))
+	}
+
+	// Keyless SLSA provenance attestation
+	if imageBuild != nil {
+		slsaInput := cosign.SLSAProvenanceInput{
+			BuildID:    imageBuild.ID,
+			StartedOn:  imageBuild.BuildStartedAt,
+			FinishedOn: imageBuild.BuildFinishedAt,
+			ApkoYAML:   apko.LatestVersion.APKOYAML,
+			Tags:       []string{actualTag},
+		}
+		slsaPredicateBytes, err := cosign.BuildSLSAProvenancePredicate(slsaInput)
+		if err != nil {
+			logger.Warn("failed to build SLSA provenance predicate", zap.Error(err))
+		} else {
+			slsaPath := filepath.Join(tmpDir, "slsa-provenance.json")
+			if err := os.WriteFile(slsaPath, slsaPredicateBytes, 0644); err != nil {
+				logger.Warn("failed to write SLSA provenance file", zap.Error(err))
+			} else if err := cosign.CosignAttestKeylessWithCustomSubject(ctx, slsaPath, cosign.PredicateSLSAProvenance, digestRef, provider, imageCatalogID); err != nil {
+				logger.Warn("keyless SLSA provenance attestation failed", zap.Error(err))
+			}
+		}
 	}
 
 	return imageCatalogID, nil

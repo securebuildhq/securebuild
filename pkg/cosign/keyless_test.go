@@ -404,7 +404,7 @@ func TestCosignAttestKeylessWithCustomSubject(t *testing.T) {
 	}
 
 	// Call function under test
-	if err := CosignAttestKeylessWithCustomSubject(ctx, predFile.Name(), imageRef, provider, "ic_test"); err != nil {
+	if err := CosignAttestKeylessWithCustomSubject(ctx, predFile.Name(), PredicateSPDX, imageRef, provider, "ic_test"); err != nil {
 		t.Fatalf("function returned error: %v", err)
 	}
 
