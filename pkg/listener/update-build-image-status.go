@@ -654,7 +654,7 @@ func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetype
 	if _, err := os.Stat(indexSBOMPath); os.IsNotExist(err) {
 		indexSBOMPath = filepath.Join(tmpDir, "sbom-index.spdx.json")
 	}
-	if err := cosign.CosignAttestKeylessWithCustomSubject(ctx, indexSBOMPath, "https://spdx.dev/Document", digestRef, provider, imageCatalogID); err != nil {
+	if err := cosign.CosignAttestKeylessWithCustomSubject(ctx, indexSBOMPath, cosign.PredicateSPDX, digestRef, provider, imageCatalogID); err != nil {
 		logger.Warn("keyless SBOM attestation failed", zap.Error(err))
 	}
 
@@ -662,14 +662,10 @@ func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetype
 	if imageBuild != nil {
 		slsaInput := cosign.SLSAProvenanceInput{
 			BuildID:    imageBuild.ID,
-			BuilderID:  "",
 			StartedOn:  imageBuild.BuildStartedAt,
 			FinishedOn: imageBuild.BuildFinishedAt,
 			ApkoYAML:   apko.LatestVersion.APKOYAML,
 			Tags:       []string{actualTag},
-		}
-		if imageBuild.BuilderID != nil {
-			slsaInput.BuilderID = *imageBuild.BuilderID
 		}
 		slsaPredicateBytes, err := cosign.BuildSLSAProvenancePredicate(slsaInput)
 		if err != nil {

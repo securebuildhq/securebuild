@@ -14,7 +14,6 @@ func TestBuildSLSAProvenancePredicate(t *testing.T) {
 
 	input := SLSAProvenanceInput{
 		BuildID:    "abc123",
-		BuilderID:  "vm-456",
 		StartedOn:  &startedOn,
 		FinishedOn: &finishedOn,
 		ApkoYAML:   "packages:\n  - zlib\n",
@@ -76,10 +75,9 @@ func TestBuildSLSAProvenancePredicate(t *testing.T) {
 
 func TestBuildSLSAProvenancePredicate_NilTimestamps(t *testing.T) {
 	input := SLSAProvenanceInput{
-		BuildID:   "def456",
-		BuilderID: "vm-789",
-		ApkoYAML:  "packages:\n  - curl\n",
-		Tags:      []string{"v1.0.0"},
+		BuildID:  "def456",
+		ApkoYAML: "packages:\n  - curl\n",
+		Tags:     []string{"v1.0.0"},
 	}
 
 	data, err := BuildSLSAProvenancePredicate(input)

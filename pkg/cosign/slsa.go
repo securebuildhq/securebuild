@@ -20,10 +20,12 @@ const SecureBuildBuildType = "https://securebuild.com/provenance/image-rebuild/v
 // SecureBuildBuilderID is the builder.id for SecureBuild GCP VM builds.
 const SecureBuildBuilderID = "https://securebuild.com/builder/gcp-vm/v1"
 
+// PredicateSPDX is the predicateType URI for SPDX SBOM attestations.
+const PredicateSPDX = "https://spdx.dev/Document"
+
 // SLSAProvenanceInput holds the metadata needed to build a SLSA provenance predicate.
 type SLSAProvenanceInput struct {
 	BuildID    string
-	BuilderID  string
 	StartedOn  *time.Time
 	FinishedOn *time.Time
 	ApkoYAML   string

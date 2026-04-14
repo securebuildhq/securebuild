@@ -125,7 +125,7 @@ func CosignAttest(ctx context.Context, predicatePath, sbomLabel, digestRef, priv
 		cmd := exec.CommandContext(ctx, "cosign", "attest",
 			"--predicate", predicatePath,
 			"--key", privateKeyPath,
-			"--type", "https://spdx.dev/Document",
+			"--type", PredicateSPDX,
 			"--yes",
 			digestRef)
 		cmd.Env = env

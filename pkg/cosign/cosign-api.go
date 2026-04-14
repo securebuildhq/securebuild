@@ -109,7 +109,7 @@ func CosignAttestWithCustomSubject(ctx context.Context, predicatePath, sbomLabel
 	digest = strings.TrimPrefix(digest, "sha256:")
 
 	// Use the helper to build the in-toto statement
-	statement := buildCustomSubjectStatement(ctx, digest, "https://spdx.dev/Document", predicate)
+	statement := buildCustomSubjectStatement(ctx, digest, PredicateSPDX, predicate)
 
 	jsonPayload, err := json.Marshal(statement)
 	if err != nil {
