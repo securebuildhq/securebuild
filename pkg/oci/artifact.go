@@ -84,11 +84,11 @@ type Descriptor struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
-// NewOCIArtifactManifest constructs an OCI image manifest (v1.1 format with artifactType)
-// and returns its JSON bytes. Despite the name, this now produces the standard OCI image
-// manifest format that cosign and go-containerregistry can parse, rather than the
-// experimental artifact manifest format that was never finalized.
-func NewOCIArtifactManifest(subject *Descriptor, artifactType string, layers []Descriptor, annotations map[string]string) ([]byte, error) {
+// NewOCIImageManifest constructs an OCI image manifest (v1.1 format with artifactType)
+// and returns its JSON bytes. This produces the standard OCI image manifest format
+// that cosign and go-containerregistry can parse, with an empty config descriptor
+// and the provided layers, subject, and annotations.
+func NewOCIImageManifest(subject *Descriptor, artifactType string, layers []Descriptor, annotations map[string]string) ([]byte, error) {
 	if annotations == nil {
 		annotations = map[string]string{}
 	}

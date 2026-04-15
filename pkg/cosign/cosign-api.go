@@ -187,7 +187,7 @@ func CosignAttestWithCustomSubject(ctx context.Context, predicatePath, sbomLabel
 		},
 	}
 	// Generate the OCI artifact manifest
-	manifestBytes, err := oci.NewOCIArtifactManifest(&subjectDesc, "application/vnd.in-toto+json", []oci.Descriptor{layerDesc}, nil)
+	manifestBytes, err := oci.NewOCIImageManifest(&subjectDesc, "application/vnd.in-toto+json", []oci.Descriptor{layerDesc}, nil)
 	if err != nil {
 		return fmt.Errorf("failed to build OCI artifact manifest: %w", err)
 	}
@@ -318,7 +318,7 @@ func CosignSignWithKeyCustomSubject(ctx context.Context, imageRef, base64Private
 		"dev.cosignproject.cosign/keyless": "false",
 	}
 
-	manifestBytes, err := oci.NewOCIArtifactManifest(&subjectDesc, "application/vnd.dev.cosign.simplesigning.v1+json", []oci.Descriptor{layerDesc}, manifestAnnotations)
+	manifestBytes, err := oci.NewOCIImageManifest(&subjectDesc, "application/vnd.dev.cosign.simplesigning.v1+json", []oci.Descriptor{layerDesc}, manifestAnnotations)
 	if err != nil {
 		return fmt.Errorf("failed to build OCI artifact manifest: %w", err)
 	}

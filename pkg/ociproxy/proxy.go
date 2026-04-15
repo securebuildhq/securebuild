@@ -858,7 +858,7 @@ func handleLegacyCosignEndpoint(c *gin.Context) bool {
 								if len(allLayers) > 0 {
 									proxyLogger.Infow("Serving legacy .att endpoint as combined manifest from DB",
 										"imageDigest", imageDigest, "layerCount", len(allLayers))
-									combined, err := oci.NewOCIArtifactManifest(nil, entry.artifactType, allLayers, nil)
+									combined, err := oci.NewOCIImageManifest(nil, entry.artifactType, allLayers, nil)
 									if err == nil {
 										h := sha256.Sum256(combined)
 										combinedDigest := fmt.Sprintf("sha256:%x", h)
@@ -992,11 +992,11 @@ func serveArtifactManifestFromDB(c *gin.Context) bool {
 					if err == nil && len(content) > 0 {
 						// Convert old artifact manifests to OCI image manifest format on the fly
 						if mediaType == oci.MediaTypeArtifactManifest {
-							converted, _, convErr := oci.ConvertArtifactToImageManifest(content)
+							converted, convertedDigest, convErr := oci.ConvertArtifactToImageManifest(content)
 							if convErr == nil {
-								proxyLogger.Infow("Serving converted artifact manifest from DB", "digest", digest, "mediaType", oci.MediaTypeOCIManifest)
+								proxyLogger.Infow("Serving converted artifact manifest from DB", "originalDigest", digest, "convertedDigest", convertedDigest, "mediaType", oci.MediaTypeOCIManifest)
 								c.Header("Content-Type", oci.MediaTypeOCIManifest)
-								c.Header("Docker-Content-Digest", digest)
+								c.Header("Docker-Content-Digest", convertedDigest)
 								c.Header("OCI-Subject-Referrers-Support", "true")
 								c.Writer.WriteHeader(http.StatusOK)
 								c.Writer.Write(converted)
