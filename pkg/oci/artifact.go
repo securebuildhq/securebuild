@@ -38,12 +38,40 @@ type ImageCatalogDigestInfo struct {
 	IndexDigest   string
 }
 
+const (
+	// MediaTypeOCIManifest is the standard OCI image manifest v1 media type.
+	MediaTypeOCIManifest = "application/vnd.oci.image.manifest.v1+json"
+	// MediaTypeArtifactManifest is the experimental (withdrawn) artifact manifest media type.
+	MediaTypeArtifactManifest = "application/vnd.oci.artifact.manifest.v1+json"
+	// EmptyConfigMediaType is the OCI empty config descriptor media type.
+	EmptyConfigMediaType = "application/vnd.oci.empty.v1+json"
+	// EmptyConfigDigest is the sha256 digest of "{}".
+	EmptyConfigDigest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+	// EmptyConfigSize is the byte size of "{}".
+	EmptyConfigSize = 2
+)
+
+// EmptyConfigBytes is the raw bytes of the OCI empty config.
+var EmptyConfigBytes = []byte("{}")
+
 // OCIArtifactManifest is a minimal struct for application/vnd.oci.artifact.manifest.v1+json
 // See: https://github.com/opencontainers/image-spec/blob/main/artifact.md
 type OCIArtifactManifest struct {
 	SchemaVersion int               `json:"schemaVersion"`
 	MediaType     string            `json:"mediaType"`
 	ArtifactType  string            `json:"artifactType"`
+	Layers        []Descriptor      `json:"layers"`
+	Subject       *Descriptor       `json:"subject,omitempty"`
+	Annotations   map[string]string `json:"annotations,omitempty"`
+}
+
+// OCIImageManifest is an OCI image manifest v1 with artifactType support (OCI v1.1).
+// This is the format that cosign/go-containerregistry can parse.
+type OCIImageManifest struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	MediaType     string            `json:"mediaType"`
+	Config        Descriptor        `json:"config"`
+	ArtifactType  string            `json:"artifactType,omitempty"`
 	Layers        []Descriptor      `json:"layers"`
 	Subject       *Descriptor       `json:"subject,omitempty"`
 	Annotations   map[string]string `json:"annotations,omitempty"`
@@ -56,20 +84,77 @@ type Descriptor struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
-// NewOCIArtifactManifest constructs an OCI artifact manifest and returns its JSON bytes.
+// NewOCIArtifactManifest constructs an OCI image manifest (v1.1 format with artifactType)
+// and returns its JSON bytes. Despite the name, this now produces the standard OCI image
+// manifest format that cosign and go-containerregistry can parse, rather than the
+// experimental artifact manifest format that was never finalized.
 func NewOCIArtifactManifest(subject *Descriptor, artifactType string, layers []Descriptor, annotations map[string]string) ([]byte, error) {
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	manifest := OCIArtifactManifest{
+	manifest := OCIImageManifest{
 		SchemaVersion: 2,
-		MediaType:     "application/vnd.oci.artifact.manifest.v1+json",
-		ArtifactType:  artifactType,
-		Layers:        layers,
-		Subject:       subject,
-		Annotations:   annotations,
+		MediaType:     MediaTypeOCIManifest,
+		Config: Descriptor{
+			MediaType: EmptyConfigMediaType,
+			Digest:    EmptyConfigDigest,
+			Size:      EmptyConfigSize,
+		},
+		ArtifactType: artifactType,
+		Layers:       layers,
+		Subject:      subject,
+		Annotations:  annotations,
 	}
 	return json.Marshal(manifest)
+}
+
+// ConvertArtifactToImageManifest converts an old-format artifact manifest to an OCI image
+// manifest (v1.1). Returns the converted bytes and its digest. If the manifest is already
+// in image manifest format, it is returned unchanged.
+func ConvertArtifactToImageManifest(manifestBytes []byte) ([]byte, string, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(manifestBytes, &raw); err != nil {
+		return nil, "", fmt.Errorf("failed to parse manifest: %w", err)
+	}
+
+	var mediaType string
+	if mt, ok := raw["mediaType"]; ok {
+		if err := json.Unmarshal(mt, &mediaType); err != nil {
+			return nil, "", fmt.Errorf("failed to parse mediaType: %w", err)
+		}
+	}
+
+	if mediaType != MediaTypeArtifactManifest {
+		digest := "sha256:" + fmt.Sprintf("%x", sha256Sum(manifestBytes))
+		return manifestBytes, digest, nil
+	}
+
+	var artifact OCIArtifactManifest
+	if err := json.Unmarshal(manifestBytes, &artifact); err != nil {
+		return nil, "", fmt.Errorf("failed to parse artifact manifest: %w", err)
+	}
+
+	image := OCIImageManifest{
+		SchemaVersion: 2,
+		MediaType:     MediaTypeOCIManifest,
+		Config: Descriptor{
+			MediaType: EmptyConfigMediaType,
+			Digest:    EmptyConfigDigest,
+			Size:      EmptyConfigSize,
+		},
+		ArtifactType: artifact.ArtifactType,
+		Layers:       artifact.Layers,
+		Subject:      artifact.Subject,
+		Annotations:  artifact.Annotations,
+	}
+
+	converted, err := json.Marshal(image)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to marshal converted manifest: %w", err)
+	}
+
+	digest := "sha256:" + fmt.Sprintf("%x", sha256Sum(converted))
+	return converted, digest, nil
 }
 
 func RepositoryExists(ctx context.Context, repository string) (bool, error) {
