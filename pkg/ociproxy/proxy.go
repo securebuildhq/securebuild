@@ -41,6 +41,7 @@ package ociproxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -64,9 +65,6 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/oci"
 	"github.com/securebuildhq/securebuild/pkg/param"
 
-	ocidigest "github.com/opencontainers/go-digest"
-	specs "github.com/opencontainers/image-spec/specs-go"
-	ociv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/registry"
 	"github.com/securebuildhq/securebuild/pkg/team"
@@ -77,6 +75,11 @@ import (
 )
 
 var proxyLogger *zap.SugaredLogger
+
+// convertedManifestCache maps converted manifest digests to their content.
+// Populated when referrers or .att responses are built with converted digests;
+// consumed when cosign subsequently fetches those manifests by digest.
+var convertedManifestCache sync.Map // map[string][]byte
 
 // getClaims retrieves OCITokenClaims from Gin context
 func getClaims(c *gin.Context) *OCITokenClaims {
@@ -834,34 +837,44 @@ func handleLegacyCosignEndpoint(c *gin.Context) bool {
 						ctx := c.Request.Context()
 						manifests, err := oci.GetArtifactManifestsBySubjectDigest(ctx, imageDigest)
 						if err == nil && len(manifests) > 0 {
-							// For .att endpoints, return an OCI index containing ALL
-							// matching attestation manifests. This allows cosign to
-							// discover multiple attestation types (SBOM, SLSA provenance, etc.)
-							// via the legacy tag-based lookup.
+							// For .att endpoints, build a single OCI image manifest
+							// with ALL attestation DSSE envelopes as separate layers.
+							// Cosign's legacy .att tag handling expects a single manifest
+							// where each layer is an attestation envelope, NOT an OCI index.
 							if entry.suffix == ".att" {
-								var descriptors []ociv1.Descriptor
+								var allLayers []oci.Descriptor
 								for _, m := range manifests {
 									if m.ArtifactType != entry.artifactType {
 										continue
 									}
-									descriptors = append(descriptors, ociv1.Descriptor{
-										MediaType:    m.MediaType,
-										Digest:       ocidigest.Digest(m.ID),
-										Size:         m.ManifestSize,
-										ArtifactType: m.ArtifactType,
-									})
-								}
-								if len(descriptors) > 0 {
-									proxyLogger.Infow("Serving legacy .att endpoint as OCI index from DB", "imageDigest", imageDigest, "count", len(descriptors))
-									index := ociv1.Index{
-										Versioned: specs.Versioned{SchemaVersion: 2},
-										MediaType: MediaTypeImageIndex,
-										Manifests: descriptors,
+									// Fetch the original manifest to extract its layer descriptor
+									content, _, blobErr := oci.GetArtifactBlobByDigest(ctx, m.ID)
+									if blobErr != nil || len(content) == 0 {
+										continue
 									}
-									c.Header("Content-Type", MediaTypeImageIndex)
-									c.Header("OCI-Subject-Referrers-Support", "true")
-									c.JSON(http.StatusOK, index)
-									return true
+									var manifestPeek struct {
+										Layers []oci.Descriptor `json:"layers"`
+									}
+									if json.Unmarshal(content, &manifestPeek) != nil {
+										continue
+									}
+									allLayers = append(allLayers, manifestPeek.Layers...)
+								}
+								if len(allLayers) > 0 {
+									proxyLogger.Infow("Serving legacy .att endpoint as combined manifest from DB",
+										"imageDigest", imageDigest, "layerCount", len(allLayers))
+									combined, err := oci.NewOCIArtifactManifest(nil, entry.artifactType, allLayers, nil)
+									if err == nil {
+										h := sha256.Sum256(combined)
+										combinedDigest := fmt.Sprintf("sha256:%x", h)
+										convertedManifestCache.Store(combinedDigest, combined)
+										c.Header("Content-Type", oci.MediaTypeOCIManifest)
+										c.Header("Docker-Content-Digest", combinedDigest)
+										c.Writer.WriteHeader(http.StatusOK)
+										c.Writer.Write(combined)
+										return true
+									}
+									proxyLogger.Warnw("Failed to build combined .att manifest", "err", err)
 								}
 							} else {
 								// For .sig and .sbom endpoints, keep single-manifest selection.
@@ -872,80 +885,80 @@ func handleLegacyCosignEndpoint(c *gin.Context) bool {
 								// legacy .sig endpoint must surface the keyed
 								// variant so that `cosign verify --key` works.
 
-								var keyedManifest *oci.ArtifactManifest
-								var keylessManifest *oci.ArtifactManifest
+							var keyedManifest *oci.ArtifactManifest
+							var keylessManifest *oci.ArtifactManifest
 
-								// Helper to decide if the manifest represents a
-								// key-less signature based on the custom
-								// annotation we attach at upload time.
-								isKeyless := func(manifestBytes []byte) bool {
-									var tmp struct {
+							// Helper to decide if the manifest represents a
+							// key-less signature based on the custom
+							// annotation we attach at upload time.
+							isKeyless := func(manifestBytes []byte) bool {
+								var tmp struct {
+									Annotations map[string]string `json:"annotations"`
+									Layers      []struct {
 										Annotations map[string]string `json:"annotations"`
-										Layers      []struct {
-											Annotations map[string]string `json:"annotations"`
-										} `json:"layers"`
-									}
-									if err := json.Unmarshal(manifestBytes, &tmp); err != nil {
-										return false // fail-open – treat as keyed
-									}
+									} `json:"layers"`
+								}
+								if err := json.Unmarshal(manifestBytes, &tmp); err != nil {
+									return false // fail-open – treat as keyed
+								}
 
-									if v, ok := tmp.Annotations["dev.cosignproject.cosign/keyless"]; ok {
+								if v, ok := tmp.Annotations["dev.cosignproject.cosign/keyless"]; ok {
+									return v == "true"
+								}
+								// Fall back to layer-level annotation (older
+								// upload logic).
+								if len(tmp.Layers) > 0 {
+									if v, ok := tmp.Layers[0].Annotations["dev.cosignproject.cosign/keyless"]; ok {
 										return v == "true"
 									}
-									// Fall back to layer-level annotation (older
-									// upload logic).
-									if len(tmp.Layers) > 0 {
-										if v, ok := tmp.Layers[0].Annotations["dev.cosignproject.cosign/keyless"]; ok {
-											return v == "true"
-										}
-									}
-									return false
+								}
+								return false
+							}
+
+							for _, m := range manifests {
+								if m.ArtifactType != entry.artifactType {
+									continue
 								}
 
-								for _, m := range manifests {
-									if m.ArtifactType != entry.artifactType {
-										continue
-									}
-
-									content, _, err := oci.GetArtifactBlobByDigest(ctx, m.ID)
-									if err != nil || len(content) == 0 {
-										continue
-									}
-
-									// Prefer the *keyed* manifest.  Remember the
-									// first one seen as fallback.
-									if isKeyless(content) {
-										if keylessManifest == nil {
-											km := m
-											keylessManifest = &km
-										}
-									} else {
-										if keyedManifest == nil {
-											km := m
-											keyedManifest = &km
-										}
-									}
+								content, _, err := oci.GetArtifactBlobByDigest(ctx, m.ID)
+								if err != nil || len(content) == 0 {
+									continue
 								}
 
-								// Always prefer key-less signature variant; fall back to keyed
-								var chosen *oci.ArtifactManifest
-								if keylessManifest != nil {
-									chosen = keylessManifest
-								} else if keyedManifest != nil {
-									chosen = keyedManifest
-								}
-
-								if chosen != nil {
-									content, mediaType, err := oci.GetArtifactBlobByDigest(ctx, chosen.ID)
-									if err == nil && len(content) > 0 {
-										proxyLogger.Infow("Serving legacy cosign endpoint (auto-selected) from DB", "endpoint", entry.suffix, "imageDigest", imageDigest, "artifactDigest", chosen.ID, "mediaType", mediaType)
-										c.Header("Content-Type", mediaType)
-										c.Header("OCI-Subject-Referrers-Support", "true")
-										c.Writer.WriteHeader(http.StatusOK)
-										c.Writer.Write(content)
-										return true
+								// Prefer the *keyed* manifest.  Remember the
+								// first one seen as fallback.
+								if isKeyless(content) {
+									if keylessManifest == nil {
+										km := m
+										keylessManifest = &km
+									}
+								} else {
+									if keyedManifest == nil {
+										km := m
+										keyedManifest = &km
 									}
 								}
+							}
+
+							// Always prefer key-less signature variant; fall back to keyed
+							var chosen *oci.ArtifactManifest
+							if keylessManifest != nil {
+								chosen = keylessManifest
+							} else if keyedManifest != nil {
+								chosen = keyedManifest
+							}
+
+							if chosen != nil {
+								content, mediaType, err := oci.GetArtifactBlobByDigest(ctx, chosen.ID)
+								if err == nil && len(content) > 0 {
+									proxyLogger.Infow("Serving legacy cosign endpoint (auto-selected) from DB", "endpoint", entry.suffix, "imageDigest", imageDigest, "artifactDigest", chosen.ID, "mediaType", mediaType)
+									c.Header("Content-Type", mediaType)
+									c.Header("OCI-Subject-Referrers-Support", "true")
+									c.Writer.WriteHeader(http.StatusOK)
+									c.Writer.Write(content)
+									return true
+								}
+							}
 							}
 						}
 						if err == nil && len(manifests) == 0 {
@@ -983,8 +996,23 @@ func serveArtifactManifestFromDB(c *gin.Context) bool {
 					ctx := c.Request.Context()
 					content, mediaType, err := oci.GetArtifactBlobByDigest(ctx, digest)
 					if err == nil && len(content) > 0 {
+						// Convert old artifact manifests to OCI image manifest format
+						if mediaType == oci.MediaTypeArtifactManifest {
+							converted, newDigest, convErr := oci.ConvertArtifactToImageManifest(content)
+							if convErr == nil {
+								proxyLogger.Infow("Serving converted artifact manifest from DB", "originalDigest", digest, "convertedDigest", newDigest, "mediaType", oci.MediaTypeOCIManifest)
+								c.Header("Content-Type", oci.MediaTypeOCIManifest)
+								c.Header("Docker-Content-Digest", newDigest)
+								c.Header("OCI-Subject-Referrers-Support", "true")
+								c.Writer.WriteHeader(http.StatusOK)
+								c.Writer.Write(converted)
+								return true
+							}
+							proxyLogger.Warnw("Failed to convert artifact manifest, serving as-is", "digest", digest, "err", convErr)
+						}
 						proxyLogger.Infow("Serving artifact manifest from DB", "digest", digest, "mediaType", mediaType)
 						c.Header("Content-Type", mediaType)
+						c.Header("Docker-Content-Digest", digest)
 						c.Header("OCI-Subject-Referrers-Support", "true")
 						c.Writer.WriteHeader(http.StatusOK)
 						c.Writer.Write(content)
@@ -993,6 +1021,18 @@ func serveArtifactManifestFromDB(c *gin.Context) bool {
 						proxyLogger.Debugw("Artifact manifest digest not found in DB (empty content)", "digest", digest)
 					} else {
 						proxyLogger.Debugw("Artifact manifest digest not found in DB", "digest", digest, "err", err)
+					}
+
+					// Check the conversion cache for manifests whose digest changed after conversion
+					if cached, ok := convertedManifestCache.Load(digest); ok {
+						content := cached.([]byte)
+						proxyLogger.Infow("Serving converted manifest from cache", "digest", digest)
+						c.Header("Content-Type", oci.MediaTypeOCIManifest)
+						c.Header("Docker-Content-Digest", digest)
+						c.Header("OCI-Subject-Referrers-Support", "true")
+						c.Writer.WriteHeader(http.StatusOK)
+						c.Writer.Write(content)
+						return true
 					}
 				}
 			}
@@ -1012,6 +1052,15 @@ func serveArtifactBlobFromDB(c *gin.Context) bool {
 			if idx != -1 {
 				digest := path[idx+len("/blobs/"):]
 				if strings.HasPrefix(digest, "sha256:") && len(digest) == 71 {
+					// Serve OCI empty config blob for converted image manifests
+					if digest == oci.EmptyConfigDigest {
+						proxyLogger.Infow("Serving OCI empty config blob", "digest", digest)
+						c.Header("Content-Type", oci.EmptyConfigMediaType)
+						c.Header("Docker-Content-Digest", digest)
+						c.Writer.WriteHeader(http.StatusOK)
+						c.Writer.Write(oci.EmptyConfigBytes)
+						return true
+					}
 					ctx := c.Request.Context()
 					content, mediaType, err := oci.GetArtifactBlobByDigest(ctx, digest)
 					if err == nil && len(content) > 0 {

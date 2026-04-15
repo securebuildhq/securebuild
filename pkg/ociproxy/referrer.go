@@ -133,10 +133,29 @@ func (p *OCIProxy) handleReferrers(c *gin.Context, repository, digest string) {
 				}
 			}
 		}
+
+		descriptorMediaType := m.MediaType
+		descriptorDigest := m.ID
+		descriptorSize := m.ManifestSize
+
+		// Convert old artifact manifests to OCI image manifest format so cosign can parse them
+		if m.MediaType == oci.MediaTypeArtifactManifest {
+			content, _, err := oci.GetArtifactBlobByDigest(ctx, m.ID)
+			if err == nil && len(content) > 0 {
+				converted, newDigest, convErr := oci.ConvertArtifactToImageManifest(content)
+				if convErr == nil {
+					convertedManifestCache.Store(newDigest, converted)
+					descriptorMediaType = oci.MediaTypeOCIManifest
+					descriptorDigest = newDigest
+					descriptorSize = int64(len(converted))
+				}
+			}
+		}
+
 		d := ociv1.Descriptor{
-			MediaType:    m.MediaType,
-			Digest:       ocidigest.Digest(m.ID),
-			Size:         m.ManifestSize,
+			MediaType:    descriptorMediaType,
+			Digest:       ocidigest.Digest(descriptorDigest),
+			Size:         descriptorSize,
 			ArtifactType: m.ArtifactType,
 			Annotations:  annotations,
 		}
