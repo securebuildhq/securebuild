@@ -63,6 +63,10 @@ import (
 	sbimage "github.com/securebuildhq/securebuild/pkg/image"
 	"github.com/securebuildhq/securebuild/pkg/oci"
 	"github.com/securebuildhq/securebuild/pkg/param"
+
+	ocidigest "github.com/opencontainers/go-digest"
+	specs "github.com/opencontainers/image-spec/specs-go"
+	ociv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/registry"
 	"github.com/securebuildhq/securebuild/pkg/team"
@@ -830,85 +834,117 @@ func handleLegacyCosignEndpoint(c *gin.Context) bool {
 						ctx := c.Request.Context()
 						manifests, err := oci.GetArtifactManifestsBySubjectDigest(ctx, imageDigest)
 						if err == nil && len(manifests) > 0 {
-							// Two different simple-signing manifests can
-							// exist for the same image digest: a *keyed*
-							// signature (verified with a public key) and a
-							// *keyless* one (Fulcio cert inside).  The
-							// legacy .sig endpoint must surface the keyed
-							// variant so that `cosign verify --key` works.
+							// For .att endpoints, return an OCI index containing ALL
+							// matching attestation manifests. This allows cosign to
+							// discover multiple attestation types (SBOM, SLSA provenance, etc.)
+							// via the legacy tag-based lookup.
+							if entry.suffix == ".att" {
+								var descriptors []ociv1.Descriptor
+								for _, m := range manifests {
+									if m.ArtifactType != entry.artifactType {
+										continue
+									}
+									descriptors = append(descriptors, ociv1.Descriptor{
+										MediaType:    m.MediaType,
+										Digest:       ocidigest.Digest(m.ID),
+										Size:         m.ManifestSize,
+										ArtifactType: m.ArtifactType,
+									})
+								}
+								if len(descriptors) > 0 {
+									proxyLogger.Infow("Serving legacy .att endpoint as OCI index from DB", "imageDigest", imageDigest, "count", len(descriptors))
+									index := ociv1.Index{
+										Versioned: specs.Versioned{SchemaVersion: 2},
+										MediaType: MediaTypeImageIndex,
+										Manifests: descriptors,
+									}
+									c.Header("Content-Type", MediaTypeImageIndex)
+									c.Header("OCI-Subject-Referrers-Support", "true")
+									c.JSON(http.StatusOK, index)
+									return true
+								}
+							} else {
+								// For .sig and .sbom endpoints, keep single-manifest selection.
+								// Two different simple-signing manifests can
+								// exist for the same image digest: a *keyed*
+								// signature (verified with a public key) and a
+								// *keyless* one (Fulcio cert inside).  The
+								// legacy .sig endpoint must surface the keyed
+								// variant so that `cosign verify --key` works.
 
-							var keyedManifest *oci.ArtifactManifest
-							var keylessManifest *oci.ArtifactManifest
+								var keyedManifest *oci.ArtifactManifest
+								var keylessManifest *oci.ArtifactManifest
 
-							// Helper to decide if the manifest represents a
-							// key-less signature based on the custom
-							// annotation we attach at upload time.
-							isKeyless := func(manifestBytes []byte) bool {
-								var tmp struct {
-									Annotations map[string]string `json:"annotations"`
-									Layers      []struct {
+								// Helper to decide if the manifest represents a
+								// key-less signature based on the custom
+								// annotation we attach at upload time.
+								isKeyless := func(manifestBytes []byte) bool {
+									var tmp struct {
 										Annotations map[string]string `json:"annotations"`
-									} `json:"layers"`
-								}
-								if err := json.Unmarshal(manifestBytes, &tmp); err != nil {
-									return false // fail-open – treat as keyed
-								}
+										Layers      []struct {
+											Annotations map[string]string `json:"annotations"`
+										} `json:"layers"`
+									}
+									if err := json.Unmarshal(manifestBytes, &tmp); err != nil {
+										return false // fail-open – treat as keyed
+									}
 
-								if v, ok := tmp.Annotations["dev.cosignproject.cosign/keyless"]; ok {
-									return v == "true"
-								}
-								// Fall back to layer-level annotation (older
-								// upload logic).
-								if len(tmp.Layers) > 0 {
-									if v, ok := tmp.Layers[0].Annotations["dev.cosignproject.cosign/keyless"]; ok {
+									if v, ok := tmp.Annotations["dev.cosignproject.cosign/keyless"]; ok {
 										return v == "true"
 									}
-								}
-								return false
-							}
-
-							for _, m := range manifests {
-								if m.ArtifactType != entry.artifactType {
-									continue
-								}
-
-								content, _, err := oci.GetArtifactBlobByDigest(ctx, m.ID)
-								if err != nil || len(content) == 0 {
-									continue
-								}
-
-								// Prefer the *keyed* manifest.  Remember the
-								// first one seen as fallback.
-								if isKeyless(content) {
-									if keylessManifest == nil {
-										km := m
-										keylessManifest = &km
+									// Fall back to layer-level annotation (older
+									// upload logic).
+									if len(tmp.Layers) > 0 {
+										if v, ok := tmp.Layers[0].Annotations["dev.cosignproject.cosign/keyless"]; ok {
+											return v == "true"
+										}
 									}
-								} else {
-									if keyedManifest == nil {
-										km := m
-										keyedManifest = &km
+									return false
+								}
+
+								for _, m := range manifests {
+									if m.ArtifactType != entry.artifactType {
+										continue
+									}
+
+									content, _, err := oci.GetArtifactBlobByDigest(ctx, m.ID)
+									if err != nil || len(content) == 0 {
+										continue
+									}
+
+									// Prefer the *keyed* manifest.  Remember the
+									// first one seen as fallback.
+									if isKeyless(content) {
+										if keylessManifest == nil {
+											km := m
+											keylessManifest = &km
+										}
+									} else {
+										if keyedManifest == nil {
+											km := m
+											keyedManifest = &km
+										}
 									}
 								}
-							}
 
-							// Always prefer key-less signature variant; fall back to keyed
-							var chosen *oci.ArtifactManifest
-							if keylessManifest != nil {
-								chosen = keylessManifest
-							} else if keyedManifest != nil {
-								chosen = keyedManifest
-							}
+								// Always prefer key-less signature variant; fall back to keyed
+								var chosen *oci.ArtifactManifest
+								if keylessManifest != nil {
+									chosen = keylessManifest
+								} else if keyedManifest != nil {
+									chosen = keyedManifest
+								}
 
-							if chosen != nil {
-								content, mediaType, err := oci.GetArtifactBlobByDigest(ctx, chosen.ID)
-								if err == nil && len(content) > 0 {
-									proxyLogger.Infow("Serving legacy cosign endpoint (auto-selected) from DB", "endpoint", entry.suffix, "imageDigest", imageDigest, "artifactDigest", chosen.ID, "mediaType", mediaType)
-									c.Header("Content-Type", mediaType)
-									c.Header("OCI-Subject-Referrers-Support", "true")
-									c.Writer.WriteHeader(http.StatusOK)
-									c.Writer.Write(content)
-									return true
+								if chosen != nil {
+									content, mediaType, err := oci.GetArtifactBlobByDigest(ctx, chosen.ID)
+									if err == nil && len(content) > 0 {
+										proxyLogger.Infow("Serving legacy cosign endpoint (auto-selected) from DB", "endpoint", entry.suffix, "imageDigest", imageDigest, "artifactDigest", chosen.ID, "mediaType", mediaType)
+										c.Header("Content-Type", mediaType)
+										c.Header("OCI-Subject-Referrers-Support", "true")
+										c.Writer.WriteHeader(http.StatusOK)
+										c.Writer.Write(content)
+										return true
+									}
 								}
 							}
 						}
