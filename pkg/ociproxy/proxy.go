@@ -76,11 +76,6 @@ import (
 
 var proxyLogger *zap.SugaredLogger
 
-// convertedManifestCache maps converted manifest digests to their content.
-// Populated when referrers or .att responses are built with converted digests;
-// consumed when cosign subsequently fetches those manifests by digest.
-var convertedManifestCache sync.Map // map[string][]byte
-
 // getClaims retrieves OCITokenClaims from Gin context
 func getClaims(c *gin.Context) *OCITokenClaims {
 	if claims, exists := c.Get("SecureBuild_Claims"); exists {
@@ -867,7 +862,6 @@ func handleLegacyCosignEndpoint(c *gin.Context) bool {
 									if err == nil {
 										h := sha256.Sum256(combined)
 										combinedDigest := fmt.Sprintf("sha256:%x", h)
-										convertedManifestCache.Store(combinedDigest, combined)
 										c.Header("Content-Type", oci.MediaTypeOCIManifest)
 										c.Header("Docker-Content-Digest", combinedDigest)
 										c.Writer.WriteHeader(http.StatusOK)
@@ -996,13 +990,13 @@ func serveArtifactManifestFromDB(c *gin.Context) bool {
 					ctx := c.Request.Context()
 					content, mediaType, err := oci.GetArtifactBlobByDigest(ctx, digest)
 					if err == nil && len(content) > 0 {
-						// Convert old artifact manifests to OCI image manifest format
+						// Convert old artifact manifests to OCI image manifest format on the fly
 						if mediaType == oci.MediaTypeArtifactManifest {
-							converted, newDigest, convErr := oci.ConvertArtifactToImageManifest(content)
+							converted, _, convErr := oci.ConvertArtifactToImageManifest(content)
 							if convErr == nil {
-								proxyLogger.Infow("Serving converted artifact manifest from DB", "originalDigest", digest, "convertedDigest", newDigest, "mediaType", oci.MediaTypeOCIManifest)
+								proxyLogger.Infow("Serving converted artifact manifest from DB", "digest", digest, "mediaType", oci.MediaTypeOCIManifest)
 								c.Header("Content-Type", oci.MediaTypeOCIManifest)
-								c.Header("Docker-Content-Digest", newDigest)
+								c.Header("Docker-Content-Digest", digest)
 								c.Header("OCI-Subject-Referrers-Support", "true")
 								c.Writer.WriteHeader(http.StatusOK)
 								c.Writer.Write(converted)
@@ -1023,17 +1017,6 @@ func serveArtifactManifestFromDB(c *gin.Context) bool {
 						proxyLogger.Debugw("Artifact manifest digest not found in DB", "digest", digest, "err", err)
 					}
 
-					// Check the conversion cache for manifests whose digest changed after conversion
-					if cached, ok := convertedManifestCache.Load(digest); ok {
-						content := cached.([]byte)
-						proxyLogger.Infow("Serving converted manifest from cache", "digest", digest)
-						c.Header("Content-Type", oci.MediaTypeOCIManifest)
-						c.Header("Docker-Content-Digest", digest)
-						c.Header("OCI-Subject-Referrers-Support", "true")
-						c.Writer.WriteHeader(http.StatusOK)
-						c.Writer.Write(content)
-						return true
-					}
 				}
 			}
 		}

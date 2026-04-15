@@ -138,18 +138,11 @@ func (p *OCIProxy) handleReferrers(c *gin.Context, repository, digest string) {
 		descriptorDigest := m.ID
 		descriptorSize := m.ManifestSize
 
-		// Convert old artifact manifests to OCI image manifest format so cosign can parse them
+		// Advertise old artifact manifests as OCI image manifests so cosign can parse them.
+		// The actual conversion happens on the fly in serveArtifactManifestFromDB when
+		// the client fetches the manifest by its original digest.
 		if m.MediaType == oci.MediaTypeArtifactManifest {
-			content, _, err := oci.GetArtifactBlobByDigest(ctx, m.ID)
-			if err == nil && len(content) > 0 {
-				converted, newDigest, convErr := oci.ConvertArtifactToImageManifest(content)
-				if convErr == nil {
-					convertedManifestCache.Store(newDigest, converted)
-					descriptorMediaType = oci.MediaTypeOCIManifest
-					descriptorDigest = newDigest
-					descriptorSize = int64(len(converted))
-				}
-			}
+			descriptorMediaType = oci.MediaTypeOCIManifest
 		}
 
 		d := ociv1.Descriptor{
