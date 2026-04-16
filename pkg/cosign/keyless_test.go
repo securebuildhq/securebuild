@@ -87,7 +87,7 @@ func TestCosignSignKeylessWithCustomSubject(t *testing.T) {
 	originalTlogUpload := tlogUpload
 	originalStoreBlob := storeArtifactBlob
 	originalGetBlob := getArtifactBlobByDigest
-	originalNewManifest := newOCIArtifactManifest
+	originalNewManifest := newOCIImageManifest
 	originalStoreManifest := storeFullArtifactManifest
 
 	defer func() {
@@ -96,7 +96,7 @@ func TestCosignSignKeylessWithCustomSubject(t *testing.T) {
 		tlogUpload = originalTlogUpload
 		storeArtifactBlob = originalStoreBlob
 		getArtifactBlobByDigest = originalGetBlob
-		newOCIArtifactManifest = originalNewManifest
+		newOCIImageManifest = originalNewManifest
 		storeFullArtifactManifest = originalStoreManifest
 	}()
 
@@ -150,11 +150,11 @@ func TestCosignSignKeylessWithCustomSubject(t *testing.T) {
 		return []byte("{\"schemaVersion\":2}"), "application/vnd.oci.image.manifest.v1+json", nil
 	}
 
-	// newOCIArtifactManifest captures subject and layers
+	// newOCIImageManifest captures subject and layers
 	var capturedSubjectDigest string
 	var capturedLayerSig string
 	var capturedLayerAnn map[string]string
-	newOCIArtifactManifest = func(subject *oci.Descriptor, artifactType string, layers []oci.Descriptor, ann map[string]string) ([]byte, error) {
+	newOCIImageManifest = func(subject *oci.Descriptor, artifactType string, layers []oci.Descriptor, ann map[string]string) ([]byte, error) {
 		capturedSubjectDigest = subject.Digest
 		if len(layers) != 1 {
 			t.Fatalf("expected 1 layer, got %d", len(layers))
@@ -320,7 +320,7 @@ func TestCosignAttestKeylessWithCustomSubject(t *testing.T) {
 	// Save originals
 	origStoreBlob := storeArtifactBlob
 	origGetBlob := getArtifactBlobByDigest
-	origNewManifest := newOCIArtifactManifest
+	origNewManifest := newOCIImageManifest
 	origStoreManifest := storeFullArtifactManifest
 	origNewFulcio := newFulcioClient
 	origGetRekor := getRekorClient
@@ -329,7 +329,7 @@ func TestCosignAttestKeylessWithCustomSubject(t *testing.T) {
 	defer func() {
 		storeArtifactBlob = origStoreBlob
 		getArtifactBlobByDigest = origGetBlob
-		newOCIArtifactManifest = origNewManifest
+		newOCIImageManifest = origNewManifest
 		storeFullArtifactManifest = origStoreManifest
 		newFulcioClient = origNewFulcio
 		getRekorClient = origGetRekor
@@ -354,7 +354,7 @@ func TestCosignAttestKeylessWithCustomSubject(t *testing.T) {
 		}
 		return []byte("{\"schemaVersion\":2}"), "application/vnd.oci.image.manifest.v1+json", nil
 	}
-	newOCIArtifactManifest = func(subject *oci.Descriptor, artifactType string, layers []oci.Descriptor, ann map[string]string) ([]byte, error) {
+	newOCIImageManifest = func(subject *oci.Descriptor, artifactType string, layers []oci.Descriptor, ann map[string]string) ([]byte, error) {
 		manifestArtifactType = artifactType
 		if len(layers) > 0 {
 			capturedLayerAnn = layers[0].Annotations

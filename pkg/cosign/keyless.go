@@ -103,7 +103,7 @@ var tlogUploadDSSE = cosign.TLogUploadDSSEEnvelope
 // OCI DB helpers
 var storeArtifactBlob = oci.StoreArtifactBlob
 var getArtifactBlobByDigest = oci.GetArtifactBlobByDigest
-var newOCIArtifactManifest = oci.NewOCIArtifactManifest
+var newOCIImageManifest = oci.NewOCIImageManifest
 var storeFullArtifactManifest = oci.StoreFullArtifactManifest
 
 // CosignSignKeylessWithCustomSubject performs keyless signing of an image using an
@@ -322,7 +322,7 @@ func CosignSignKeylessWithCustomSubject(ctx context.Context, imageRef string, oi
 		"dev.cosignproject.cosign/keyless": "true",
 	}
 
-	manifestBytes, err := newOCIArtifactManifest(&subjectDesc, "application/vnd.dev.cosign.simplesigning.v1+json", []oci.Descriptor{layerDesc}, manifestAnnotations)
+	manifestBytes, err := newOCIImageManifest(&subjectDesc, "application/vnd.dev.cosign.simplesigning.v1+json", []oci.Descriptor{layerDesc}, manifestAnnotations)
 	if err != nil {
 		return fmt.Errorf("failed to build OCI artifact manifest: %w", err)
 	}
@@ -549,7 +549,7 @@ func CosignAttestKeylessWithCustomSubject(
 		},
 	}
 
-	manifestBytes, err := newOCIArtifactManifest(&subjectDesc, "application/vnd.in-toto+json", []oci.Descriptor{layerDesc}, nil)
+	manifestBytes, err := newOCIImageManifest(&subjectDesc, "application/vnd.in-toto+json", []oci.Descriptor{layerDesc}, nil)
 	if err != nil {
 		return fmt.Errorf("failed to build OCI artifact manifest: %w", err)
 	}
