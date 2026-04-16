@@ -29,6 +29,15 @@ seedData:
         - column: apko_version_id
           value:
             str: "test-apko-version-id"
+        - column: digest_x86
+          value:
+            str: "sha256:0000000000000000000000000000000000000000000000000000000000000001"
+        - column: digest_aarch64
+          value:
+            str: "sha256:0000000000000000000000000000000000000000000000000000000000000002"
+        - column: index_digest
+          value:
+            str: "sha256:0000000000000000000000000000000000000000000000000000000000000003"
         - column: is_published
           value:
             str: "true"
