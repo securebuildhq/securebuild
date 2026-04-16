@@ -31,6 +31,7 @@ func computeDigest(data []byte) string {
 // TestOCIProxyAttestationManifests tests the OCI proxy's attestation manifest handling:
 // referrers API, manifest fetch with conversion, legacy .att endpoint, and empty config blob.
 func TestOCIProxyAttestationManifests(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
