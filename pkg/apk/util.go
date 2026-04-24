@@ -51,8 +51,54 @@ func ParseAPKFilename(filename string) (string, string, string, error) {
 	return name, version, rel, nil
 }
 
+// readSingleGzipStream decompresses exactly one gzip member at the start of
+// data and returns the raw (still-compressed) bytes that member occupies plus
+// the unread tail. It uses Multistream(false) so concatenated gzip members
+// (as found in .apk files) are walked one at a time.
+//
+// Fully decompressing the member is what distinguishes real stream boundaries
+// from stray 1f 8b byte sequences inside deflate output.
+func readSingleGzipStream(data []byte) (stream []byte, rest []byte, err error) {
+	reader := bytes.NewReader(data)
+	gzipReader, err := gzip.NewReader(reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	gzipReader.Multistream(false)
+	_, copyErr := io.Copy(io.Discard, gzipReader)
+	closeErr := gzipReader.Close()
+	if copyErr != nil {
+		return nil, nil, fmt.Errorf("decompress gzip stream: %w", copyErr)
+	}
+	if closeErr != nil {
+		return nil, nil, fmt.Errorf("close gzip reader: %w", closeErr)
+	}
+	consumed := len(data) - reader.Len()
+	return data[:consumed], data[consumed:], nil
+}
+
+// extractAPKStreams walks the concatenated gzip members of an APK (signature,
+// control, data — or just control, data for unsigned APKs) and returns their
+// raw compressed byte slices in order.
+func extractAPKStreams(apkData []byte) ([][]byte, error) {
+	var streams [][]byte
+	rest := apkData
+	for len(rest) > 0 {
+		stream, next, err := readSingleGzipStream(rest)
+		if err != nil {
+			break
+		}
+		streams = append(streams, stream)
+		rest = next
+	}
+	if len(streams) == 0 {
+		return nil, fmt.Errorf("no gzip streams found")
+	}
+	return streams, nil
+}
+
 // generateAlpineChecksum generates the C: field checksum for Alpine APKINDEX
-// This extracts and hashes the control (second) gzip stream from the APK
+// by hashing the control (PKGINFO-containing) gzip stream of the APK.
 func generateAlpineChecksum(filepath string) (string, error) {
 	file, err := os.Open(filepath)
 	if err != nil {
@@ -60,171 +106,50 @@ func generateAlpineChecksum(filepath string) (string, error) {
 	}
 	defer file.Close()
 
-	// Read the entire APK file
 	apkData, err := io.ReadAll(file)
 	if err != nil {
 		return "", fmt.Errorf("failed to read APK file: %w", err)
 	}
 
-	// Try to find the control gzip stream using multiple approaches
-	var controlStream []byte
-
-	// First, try the standard approach (second gzip stream)
-	controlStream, err = extractControlStream(apkData)
+	controlStream, err := extractControlStream(apkData)
 	if err != nil {
-		// If that fails, try to find a control stream by looking for .PKGINFO
-		controlStream, err = findControlStreamByContent(apkData)
-		if err != nil {
-			return "", fmt.Errorf("failed to extract control stream: %w", err)
-		}
+		return "", fmt.Errorf("failed to extract control stream: %w", err)
 	}
 
-	// Calculate SHA1 of the control stream
 	hasher := sha1.New()
 	hasher.Write(controlStream)
 	hashSum := hasher.Sum(nil)
-
-	// Encode to base64 and prefix with Q1
-	checksum := "Q1" + base64.StdEncoding.EncodeToString(hashSum)
-
-	return checksum, nil
+	return "Q1" + base64.StdEncoding.EncodeToString(hashSum), nil
 }
 
-// extractControlStream finds and extracts the control (second) gzip stream from APK data
+// extractControlStream returns the raw compressed bytes of the gzip member
+// that contains .PKGINFO (the "control" stream in APK terminology).
 func extractControlStream(apkData []byte) ([]byte, error) {
-	// Scan for gzip magic bytes to find the second gzip stream
-	return findAndExtractSecondGzipStream(apkData)
-}
-
-// findAndExtractSecondGzipStream scans for the second gzip magic header
-func findAndExtractSecondGzipStream(data []byte) ([]byte, error) {
-	gzipMagic := []byte{0x1f, 0x8b}
-
-	// Find all gzip magic occurrences
-	var gzipPositions []int
-	for i := 0; i < len(data)-1; i++ {
-		if data[i] == gzipMagic[0] && data[i+1] == gzipMagic[1] {
-			gzipPositions = append(gzipPositions, i)
+	streams, err := extractAPKStreams(apkData)
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range streams {
+		if containsPKGINFO(s) {
+			return s, nil
 		}
 	}
-
-	if len(gzipPositions) < 2 {
-		return nil, fmt.Errorf("could not find second gzip stream")
-	}
-
-	// Extract from second gzip position to third (or end of file)
-	secondStart := gzipPositions[1]
-	var secondEnd int
-	if len(gzipPositions) > 2 {
-		secondEnd = gzipPositions[2]
-	} else {
-		secondEnd = len(data)
-	}
-
-	controlStream := data[secondStart:secondEnd]
-
-	// Validate it's actually a valid gzip stream
-	reader := bytes.NewReader(controlStream)
-	gzipReader, err := gzip.NewReader(reader)
-	if err != nil {
-		return nil, fmt.Errorf("invalid gzip stream at second position: %w", err)
-	}
-	gzipReader.Close()
-
-	return controlStream, nil
+	return nil, fmt.Errorf("no control stream (containing .PKGINFO) found")
 }
 
-// Alternative: extract control stream by parsing APK structure properly
-func extractControlStreamProper(apkData []byte) ([]byte, error) {
-	reader := bytes.NewReader(apkData)
-
-	// APK structure: [signature stream][control stream][data stream]
-	// We need to read the control stream specifically
-
-	// Skip signature stream if present (first gzip)
-	firstGzip, err := gzip.NewReader(reader)
-	if err != nil {
-		return nil, fmt.Errorf("no signature stream found: %w", err)
-	}
-
-	// Read signature stream completely
-	_, err = io.Copy(io.Discard, firstGzip)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read signature stream: %w", err)
-	}
-	firstGzip.Close()
-
-	// Current reader position should be at control stream
-	remainingData := make([]byte, reader.Len())
-	n, err := reader.Read(remainingData)
-	if err != nil && err != io.EOF {
-		return nil, fmt.Errorf("failed to read remaining data: %w", err)
-	}
-	remainingData = remainingData[:n]
-
-	// Find next gzip stream (control stream)
-	return findFirstGzipStream(remainingData)
-}
-
-func findFirstGzipStream(data []byte) ([]byte, error) {
-	gzipMagic := []byte{0x1f, 0x8b}
-
-	for i := 0; i < len(data)-1; i++ {
-		if data[i] == gzipMagic[0] && data[i+1] == gzipMagic[1] {
-			// Found potential gzip start, find its end
-			reader := bytes.NewReader(data[i:])
-			gzipReader, err := gzip.NewReader(reader)
-			if err != nil {
-				continue // Not a valid gzip, keep searching
-			}
-
-			// Read the gzip stream to find its end
-			var buf bytes.Buffer
-			_, err = io.Copy(&buf, gzipReader)
-			gzipReader.Close()
-
-			if err != nil {
-				continue // Invalid gzip stream
-			}
-
-			// Calculate how much data the gzip reader consumed
-			bytesRead := len(data[i:]) - reader.Len()
-			return data[i : i+bytesRead], nil
-		}
-	}
-
-	return nil, fmt.Errorf("no valid gzip stream found")
-}
-
-// extractDataStream finds the data stream (third gzip stream)
+// extractDataStream returns the raw compressed bytes of the gzip member
+// containing the package's file payload.
 func extractDataStream(apkData []byte) ([]byte, error) {
-	gzipMagic := []byte{0x1f, 0x8b}
-
-	// Find all gzip magic occurrences
-	var gzipPositions []int
-	for i := 0; i < len(apkData)-1; i++ {
-		if apkData[i] == gzipMagic[0] && apkData[i+1] == gzipMagic[1] {
-			gzipPositions = append(gzipPositions, i)
+	streams, err := extractAPKStreams(apkData)
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range streams {
+		if containsFileData(s) {
+			return s, nil
 		}
 	}
-
-	if len(gzipPositions) < 3 {
-		return nil, fmt.Errorf("could not find data stream (third gzip)")
-	}
-
-	// Extract from third gzip position to end
-	dataStart := gzipPositions[2]
-	dataStream := apkData[dataStart:]
-
-	// Validate it's a valid gzip stream
-	reader := bytes.NewReader(dataStream)
-	gzipReader, err := gzip.NewReader(reader)
-	if err != nil {
-		return nil, fmt.Errorf("invalid data stream gzip: %w", err)
-	}
-	gzipReader.Close()
-
-	return dataStream, nil
+	return nil, fmt.Errorf("no data stream (containing file payload) found")
 }
 
 func calculateInstalledSize(filepath string) (int64, error) {
@@ -234,38 +159,24 @@ func calculateInstalledSize(filepath string) (int64, error) {
 	}
 	defer file.Close()
 
-	// Read entire APK
 	apkData, err := io.ReadAll(file)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read APK: %w", err)
 	}
 
-	// Try to find the data stream using multiple approaches
-	var dataStream []byte
-
-	// First, try the standard approach (third gzip stream)
-	dataStream, err = extractDataStream(apkData)
+	dataStream, err := extractDataStream(apkData)
 	if err != nil {
-		// If that fails, try to find any stream with actual file data
-		dataStream, err = findDataStreamByContent(apkData)
-		if err != nil {
-			// If we still can't find it, return 0 (unknown size)
-			return 0, nil
-		}
+		return 0, fmt.Errorf("failed to extract data stream: %w", err)
 	}
 
-	// Decompress and calculate total size
-	reader := bytes.NewReader(dataStream)
-	gzipReader, err := gzip.NewReader(reader)
+	gzipReader, err := gzip.NewReader(bytes.NewReader(dataStream))
 	if err != nil {
 		return 0, fmt.Errorf("failed to create gzip reader for data stream: %w", err)
 	}
 	defer gzipReader.Close()
 
-	// Parse tar and sum file sizes
 	tarReader := tar.NewReader(gzipReader)
 	var totalSize int64
-
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -275,7 +186,6 @@ func calculateInstalledSize(filepath string) (int64, error) {
 			return 0, fmt.Errorf("failed to read tar entry: %w", err)
 		}
 
-		// Only count regular files (not directories, symlinks, etc.)
 		if header.Typeflag == tar.TypeReg {
 			totalSize += header.Size
 		}
@@ -380,50 +290,6 @@ func AnalyzeAPKStructure(filepath string) (map[string]interface{}, error) {
 	return analysis, nil
 }
 
-// findControlStreamByContent searches for a gzip stream containing .PKGINFO
-func findControlStreamByContent(data []byte) ([]byte, error) {
-	gzipMagic := []byte{0x1f, 0x8b}
-
-	// Find all potential gzip magic occurrences
-	for i := 0; i < len(data)-1; i++ {
-		if data[i] == gzipMagic[0] && data[i+1] == gzipMagic[1] {
-			// Try to extract this gzip stream
-			stream, err := extractSingleGzipStream(data[i:])
-			if err != nil {
-				continue // Not a valid gzip, keep searching
-			}
-
-			// Check if this stream contains .PKGINFO (indicating it's the control stream)
-			if containsPKGINFO(stream) {
-				return stream, nil
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("no control stream containing .PKGINFO found")
-}
-
-// extractSingleGzipStream extracts a single gzip stream starting from the given position
-func extractSingleGzipStream(data []byte) ([]byte, error) {
-	reader := bytes.NewReader(data)
-	gzipReader, err := gzip.NewReader(reader)
-	if err != nil {
-		return nil, err
-	}
-	defer gzipReader.Close()
-
-	// Read the entire gzip stream to determine its boundaries
-	var buf bytes.Buffer
-	_, err = io.Copy(&buf, gzipReader)
-	if err != nil {
-		return nil, err
-	}
-
-	// Calculate how much data the gzip reader consumed
-	bytesRead := len(data) - reader.Len()
-	return data[:bytesRead], nil
-}
-
 // containsPKGINFO checks if a gzip stream contains .PKGINFO file
 func containsPKGINFO(gzipData []byte) bool {
 	reader := bytes.NewReader(gzipData)
@@ -449,29 +315,6 @@ func containsPKGINFO(gzipData []byte) bool {
 	}
 
 	return false
-}
-
-// findDataStreamByContent searches for a gzip stream containing actual file data
-func findDataStreamByContent(data []byte) ([]byte, error) {
-	gzipMagic := []byte{0x1f, 0x8b}
-
-	// Find all potential gzip magic occurrences
-	for i := 0; i < len(data)-1; i++ {
-		if data[i] == gzipMagic[0] && data[i+1] == gzipMagic[1] {
-			// Try to extract this gzip stream
-			stream, err := extractSingleGzipStream(data[i:])
-			if err != nil {
-				continue // Not a valid gzip, keep searching
-			}
-
-			// Check if this stream contains actual file data (not control files)
-			if containsFileData(stream) {
-				return stream, nil
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("no data stream containing file data found")
 }
 
 // containsFileData checks if a gzip stream contains actual file data (not just control files)
