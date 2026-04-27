@@ -86,7 +86,9 @@ func AddAPKToIndex(ctx context.Context, apkMeta map[string]string, pathToIndexTa
 	}
 	if v, ok := apkMeta["maintainer"]; ok {
 		indexMeta["m"] = v
-		indexMeta["o"] = v // origin maintainer
+	}
+	if v, ok := apkMeta["origin"]; ok {
+		indexMeta["o"] = v
 	}
 	if v, ok := apkMeta["depend"]; ok {
 		indexMeta["D"] = v
