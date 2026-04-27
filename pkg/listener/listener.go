@@ -223,17 +223,29 @@ func (l *Listener) processQueue(ctx context.Context, processor *queueProcessor) 
 	}
 }
 
-// processMessagesForQueue handles a single iteration of message processing
-func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queueProcessor) bool {
-	// Use a pooled connection for queue operations
+// queueMessage is a single locked work-queue row.
+type queueMessage struct {
+	id           string
+	payload      []byte
+	attemptCount int
+}
+
+// fetchAndLockMessages acquires a pooled connection, runs queue stats and locks
+// the next batch of messages, then releases the connection before returning.
+// Holding the pool connection only for the duration of the queries (instead of
+// the full processing iteration) avoids pool starvation while goroutines wait
+// for worker slots or run handlers that acquire their own connections.
+//
+// A non-nil error indicates a transient pool acquisition failure and the
+// caller should retry. Fatal query errors are logged here and surfaced as an
+// empty result so the caller stops polling until the next notification.
+func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queueProcessor) ([]queueMessage, error) {
 	poolConn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
 	if err != nil {
-		logger.Warn("failed to get pooled connection in time for listener, continuing with next iteration", zap.String("channel", processor.channel), zap.Error(err))
-		return true
+		return nil, err
 	}
-	defer poolConn.Release() // This defer will execute at the end of this function
+	defer poolConn.Release()
 
-	// First get queue statistics
 	var total, inFlight, available int
 	var oldestMessageCreatedAt sql.NullTime
 	err = poolConn.QueryRow(ctx, fmt.Sprintf(`
@@ -245,30 +257,28 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 		FROM %s
 		WHERE channel = $1
 		AND completed_at IS NULL`, WorkQueueTable), processor.channel).Scan(&total, &inFlight, &available, &oldestMessageCreatedAt)
-
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to get queue statistics: %w", err))
-		return false
-	} else {
-		if oldestMessageCreatedAt.Valid {
-			logger.Info("queue status",
-				zap.String("channel", processor.channel),
-				zap.Int("total", total),
-				zap.Int("in_flight", inFlight),
-				zap.Int("available", available),
-				zap.String("oldest_message_created_at", oldestMessageCreatedAt.Time.UTC().Format(time.RFC3339)))
-		} else {
-			logger.Info("queue status",
-				zap.String("channel", processor.channel),
-				zap.Int("total", total),
-				zap.Int("in_flight", inFlight),
-				zap.Int("available", available))
-		}
-
-		// Report queue size metrics to Datadog
-		channelTag := fmt.Sprintf("channel:%s", processor.channel)
-		datadog.Gauge("securebuild.worker.queue.total", float64(total), []string{channelTag})
+		return nil, nil
 	}
+
+	if oldestMessageCreatedAt.Valid {
+		logger.Info("queue status",
+			zap.String("channel", processor.channel),
+			zap.Int("total", total),
+			zap.Int("in_flight", inFlight),
+			zap.Int("available", available),
+			zap.String("oldest_message_created_at", oldestMessageCreatedAt.Time.UTC().Format(time.RFC3339)))
+	} else {
+		logger.Info("queue status",
+			zap.String("channel", processor.channel),
+			zap.Int("total", total),
+			zap.Int("in_flight", inFlight),
+			zap.Int("available", available))
+	}
+
+	channelTag := fmt.Sprintf("channel:%s", processor.channel)
+	datadog.Gauge("securebuild.worker.queue.total", float64(total), []string{channelTag})
 
 	// Query and lock unprocessed messages atomically
 	// Order by priority DESC (higher priority first), then created_at ASC (oldest first)
@@ -300,29 +310,30 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 		processor.channel, processor.maxDuration.String())
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to query messages: %w", err))
-		return false
+		return nil, nil
 	}
+	defer rows.Close()
 
-	// Count how many messages we're about to process
-	messages := make([]struct {
-		id           string
-		payload      []byte
-		attemptCount int
-	}, 0)
-
+	var messages []queueMessage
 	for rows.Next() {
-		var msg struct {
-			id           string
-			payload      []byte
-			attemptCount int
-		}
+		var msg queueMessage
 		if err := rows.Scan(&msg.id, &msg.payload, &msg.attemptCount); err != nil {
 			logger.Error(fmt.Errorf("failed to scan message: %w", err))
 			continue
 		}
 		messages = append(messages, msg)
 	}
-	rows.Close()
+
+	return messages, nil
+}
+
+// processMessagesForQueue handles a single iteration of message processing
+func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queueProcessor) bool {
+	messages, err := l.fetchAndLockMessages(ctx, processor)
+	if err != nil {
+		logger.Warn("failed to get pooled connection in time for listener, continuing with next iteration", zap.String("channel", processor.channel), zap.Error(err))
+		return true
+	}
 
 	if len(messages) > 0 {
 		logger.Info("processing messages",
