@@ -62,7 +62,7 @@ func InitPostgres(ctx context.Context) error {
 	}
 
 	// Set pool size
-	config.MaxConns = 20
+	config.MaxConns = 40
 	config.MaxConnIdleTime = 30 * time.Second
 
 	// Create pool - use traced version if Datadog is enabled
@@ -128,11 +128,6 @@ func GetPooledPostgresSessionWithTimeout(ctx context.Context, timeout time.Durat
 
 	if !exists {
 		return nil, fmt.Errorf("postgres pool not initialized for DBURI %s - call InitPostgres first", maskDBURI(dbURI))
-	}
-
-	// Test connection with timeout
-	if err := pool.Ping(timeoutCtx); err != nil {
-		return nil, fmt.Errorf("pool ping failed: %w", err)
 	}
 
 	conn, err := pool.Acquire(timeoutCtx)
