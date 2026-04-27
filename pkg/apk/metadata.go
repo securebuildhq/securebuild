@@ -88,59 +88,41 @@ func ExtractAPKMetadataOptimized(apkPath string) (map[string]string, error) {
 	return metadata, nil
 }
 
-// extractAllMetadataFromAPKData extracts all needed data from APK in single pass
+// extractAllMetadataFromAPKData walks the APK's gzip members (signature,
+// control, data) in order and pulls out the .PKGINFO bytes, the raw control
+// stream (used for the APKINDEX C: checksum), and the installed size.
+//
+// It uses extractAPKStreams rather than scanning for 1f 8b magic bytes, because
+// those magic bytes can legitimately appear inside deflate output and truncate
+// a stream into a shorter-but-still-valid-looking slice — which is how the
+// APKINDEX control-hash drift bug entered the catalog.
 func extractAllMetadataFromAPKData(apkData []byte) (pkgInfoContent []byte, controlStream []byte, installedSize int64, err error) {
-	gzipMagic := []byte{0x1f, 0x8b}
-
-	// Find all gzip stream positions
-	var gzipPositions []int
-	for i := 0; i < len(apkData)-1; i++ {
-		if apkData[i] == gzipMagic[0] && apkData[i+1] == gzipMagic[1] {
-			gzipPositions = append(gzipPositions, i)
-		}
+	streams, err := extractAPKStreams(apkData)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("extract gzip streams: %w", err)
 	}
 
-	if len(gzipPositions) == 0 {
-		return nil, nil, 0, fmt.Errorf("no gzip streams found in APK")
-	}
-
-	// Process each gzip stream to find what we need
-	for i, pos := range gzipPositions {
-		// Determine stream boundaries
-		var streamEnd int
-		if i+1 < len(gzipPositions) {
-			streamEnd = gzipPositions[i+1]
-		} else {
-			streamEnd = len(apkData)
-		}
-
-		streamData := apkData[pos:streamEnd]
-
-		// Try to read this gzip stream
-		reader := bytes.NewReader(streamData)
-		gzipReader, err := gzip.NewReader(reader)
+	for _, streamData := range streams {
+		gzipReader, err := gzip.NewReader(bytes.NewReader(streamData))
 		if err != nil {
-			continue // Not a valid gzip, try next
+			continue
 		}
 
-		// Check what's in this stream
 		tarReader := tar.NewReader(gzipReader)
 		streamContainsPKGINFO := false
 		streamContainsFiles := false
 		var streamInstalledSize int64
 
-		// Scan through tar entries in this stream
 		for {
 			header, err := tarReader.Next()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
-				break // Invalid tar, try next gzip stream
+				break
 			}
 
 			if header.Name == ".PKGINFO" && pkgInfoContent == nil {
-				// Found .PKGINFO - extract content
 				content, readErr := io.ReadAll(tarReader)
 				if readErr == nil {
 					pkgInfoContent = content
@@ -151,7 +133,6 @@ func extractAllMetadataFromAPKData(apkData []byte) (pkgInfoContent []byte, contr
 				header.Name != ".PKGINFO" &&
 				header.Name != "APKINDEX" &&
 				header.Name != "DESCRIPTION" {
-				// Regular file (not control file) - count towards installed size
 				streamContainsFiles = true
 				streamInstalledSize += header.Size
 			}
@@ -159,17 +140,12 @@ func extractAllMetadataFromAPKData(apkData []byte) (pkgInfoContent []byte, contr
 
 		gzipReader.Close()
 
-		// Identify stream type and save needed data
 		if streamContainsPKGINFO && controlStream == nil {
-			// This is the control stream - save for Alpine checksum
-			controlStream = make([]byte, len(streamData))
-			copy(controlStream, streamData)
+			controlStream = streamData
 		} else if streamContainsFiles && installedSize == 0 {
-			// This is the data stream - use calculated size
 			installedSize = streamInstalledSize
 		}
 
-		// Early exit if we have everything we need
 		if pkgInfoContent != nil && controlStream != nil && installedSize > 0 {
 			break
 		}
@@ -215,43 +191,42 @@ func extractPKGINFOFromAPK(apkPath string) ([]byte, error) {
 	return findPKGINFOInAPK(apkData)
 }
 
-// findPKGINFOInAPK searches through all gzip streams in APK data to find .PKGINFO
+// findPKGINFOInAPK walks the APK's gzip members and returns the contents of
+// the .PKGINFO entry. It intentionally does not scan for 1f 8b magic bytes —
+// those can appear inside deflate output and produce truncated "streams" that
+// still look valid to gzip.NewReader's header-only validation.
 func findPKGINFOInAPK(apkData []byte) ([]byte, error) {
-	gzipMagic := []byte{0x1f, 0x8b}
+	streams, err := extractAPKStreams(apkData)
+	if err != nil {
+		return nil, fmt.Errorf("extract gzip streams: %w", err)
+	}
 
-	// Find all potential gzip magic occurrences
-	for i := 0; i < len(apkData)-1; i++ {
-		if apkData[i] == gzipMagic[0] && apkData[i+1] == gzipMagic[1] {
-			// Try to read this gzip stream
-			reader := bytes.NewReader(apkData[i:])
-			gzipReader, err := gzip.NewReader(reader)
-			if err != nil {
-				continue // Not a valid gzip, keep searching
-			}
-
-			// Search for .PKGINFO in this stream
-			tarReader := tar.NewReader(gzipReader)
-			for {
-				header, err := tarReader.Next()
-				if err == io.EOF {
-					break
-				}
-				if err != nil {
-					break // Invalid tar, try next gzip stream
-				}
-
-				if header.Name == ".PKGINFO" {
-					// Found .PKGINFO, read its content
-					content, err := io.ReadAll(tarReader)
-					gzipReader.Close()
-					if err != nil {
-						return nil, fmt.Errorf("failed to read .PKGINFO content: %w", err)
-					}
-					return content, nil
-				}
-			}
-			gzipReader.Close()
+	for _, streamData := range streams {
+		gzipReader, err := gzip.NewReader(bytes.NewReader(streamData))
+		if err != nil {
+			continue
 		}
+
+		tarReader := tar.NewReader(gzipReader)
+		for {
+			header, err := tarReader.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				break
+			}
+
+			if header.Name == ".PKGINFO" {
+				content, readErr := io.ReadAll(tarReader)
+				gzipReader.Close()
+				if readErr != nil {
+					return nil, fmt.Errorf("failed to read .PKGINFO content: %w", readErr)
+				}
+				return content, nil
+			}
+		}
+		gzipReader.Close()
 	}
 
 	return nil, fmt.Errorf(".PKGINFO not found in any gzip stream")
