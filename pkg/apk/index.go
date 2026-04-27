@@ -74,7 +74,6 @@ func extractAPKIndexFromArchive(data []byte) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to read APKINDEX content: %w", err)
 			}
-			fmt.Printf("DEBUG: Extracted APKINDEX content: %d bytes\n", len(indexContent))
 			return indexContent, nil
 		}
 
@@ -147,8 +146,10 @@ func writeAPKIndex(path string, index *APKIndex) error {
 		}
 
 		buf.WriteString(fmt.Sprintf("L:%s\n", strings.TrimSpace(meta["L"])))
-		buf.WriteString(fmt.Sprintf("o:%s\n", strings.TrimSpace(meta["m"])))
-		// buf.WriteString(fmt.Sprintf("m:%s\n", strings.TrimSpace(meta["m"])))
+		buf.WriteString(fmt.Sprintf("o:%s\n", strings.TrimSpace(meta["o"])))
+		if m := strings.TrimSpace(meta["m"]); m != "" {
+			buf.WriteString(fmt.Sprintf("m:%s\n", m))
+		}
 		buf.WriteString(fmt.Sprintf("t:%d\n", 1700000000)) // TODO: real epoch
 
 		if meta["c"] != "" {
