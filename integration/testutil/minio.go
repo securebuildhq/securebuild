@@ -2,6 +2,11 @@ package testutil
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
 	"fmt"
 	"testing"
 	"time"
@@ -132,6 +137,32 @@ func SetupMinIOEnv(t *testing.T, m *MinIOStorage) {
 
 // GenerateTestRSAPrivateKey generates a base64-encoded PEM RSA private key for testing
 func GenerateTestRSAPrivateKey() string {
-	// This is a test RSA private key (1024 bit), base64 encoded - DO NOT use in production
-	return "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlDWGdJQkFBS0JnUURmdkNRakRUcmVKYXdrYzAyMm1vbU1nQnBlVWNEaWNyU1pONkFKZ0dJOVVOdWt1ODF3CldSTnNxTXR0SWRWMlBYTllkVnhHN3kzanBoQnpJK1d6eUZiN2FxVWR1NzVKdzZLdUQrbmJKMkpQbG55dlpIbnUKWERab1N1M0ZpL21Cdy9KUzRqR3RTVGlTckMzWjhyTDAvT1lMcXFmcXpVRW5MeWFpQXpiSmlMc2R0UUlEQVFBQgpBb0dCQU1ndXdHNlVVYzJlQzIzNXROampZSnJUcThRa2hkNlhIenZQNTJOWStZMC9JYWM5V2MxaUJkMDlFZmF0ClJSOHNVRjRmYzljTC9oVW42cVA2eEhXZGxTUm1RU0haYUVyZ2VxcHFXT2E4NHorVHdWczlPUW81dW9QbzhmL2cKOXdSNksxQ0hkbDlpcHhmUzduM0RJRS95NHpCTkVsSGZDKythNGMwOTRrSi9uWTlCQWtFQSt2SWc3dkQ0LzRVeAphdHcxZmFNVFc5M05adGRUVHpXWG8zclRwMGlndkd6WkgwNUU2cU1JS0hLK09sMVpDU1BjTjZpUFpPZUNPTlFLCks3eDVUVFllRFFKQkFPUTl0cmZqclB3M29rcHNSQjJBUjJJdDNib3NrUDlZQkwxMkxBWVJWSDExamhPQXIybmMKK3Y2QThjaTlteG1ZbDRLejY5SkJmN04rZC9TYnZxdG52RWtDUVFDTmtuNEw3enk2Z3Z6L0tWNndFNGsvWWFHWQpyRS9ldHdCbWhVdlU2ejlyTGdsTUJROFNSSW04c0FjcnpEQUgzUWhIQ2p4ams4dytuVGxqdFQvRjFJc2RBa0F4CjhxZDMycVZTbE1JNVV6UWMyS1BHZ284UlhRdG1OZGJqdDJhdTlUL3VMTG1vM3ZLRVVrM0RRR2lwSzRVenRzY0IKWFdwd0d0RmRjSUhEMEFtTDdTbXhBa0VBOUJ2QWsyL3lnQnFNamhRSGhpT0F2VUwrcE1RZmZlSm8wc1cram9FUQpzMDM4clBPbXJCLzlUUExwcG5Jc3dsQzBtUExoRE1CZTlnUk1qQzAvWVlvbWRBPT0KLS0tLS1FTkQgUlNBIFBSSVZBVEUgS0VZLS0tLS0K"
+	// Generate a fresh 2048-bit RSA key so CRT parameters are consistent.
+	// Go 1.26+ enforces dP/dQ consistency during parsing.
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate test RSA key: %v", err))
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(priv),
+	})
+	return base64.StdEncoding.EncodeToString(pemBytes)
+}
+
+// GenerateTestRSAPublicKey generates a base64-encoded PEM RSA public key for testing
+func GenerateTestRSAPublicKey() string {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate test RSA key: %v", err))
+	}
+	pubBytes, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal public key: %v", err))
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubBytes,
+	})
+	return base64.StdEncoding.EncodeToString(pemBytes)
 }
