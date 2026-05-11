@@ -115,7 +115,7 @@ func generateSelfSignedCert(certFile, keyFile string) error {
 
 // startMockTokenService starts a mock token authentication service on localhost
 // This service validates credentials and issues JWT tokens
-func startMockTokenService(t *testing.T, privateKey *rsa.PrivateKey, cert *x509.Certificate, staticUsername, staticPassword string) (*http.Server, int) {
+func startMockTokenService(t *testing.T, privateKey *rsa.PrivateKey, cert *x509.Certificate, certFile, keyFile, staticUsername, staticPassword string) (*http.Server, int) {
 	t.Helper()
 
 	// Find an available port
@@ -225,7 +225,7 @@ func startMockTokenService(t *testing.T, privateKey *rsa.PrivateKey, cert *x509.
 	}
 
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
 			t.Logf("Mock token service error: %v", err)
 		}
 	}()
@@ -295,12 +295,12 @@ func SetupTestRegistry(ctx context.Context, t *testing.T) *TestRegistry {
 	staticPassword := "serviceaccount-secret-token"
 
 	// Step 1: Start mock token service on localhost with certificate and static credentials
-	tokenServer, tokenPort := startMockTokenService(t, tokenPrivateKey, tokenCert, staticUsername, staticPassword)
+	tokenServer, tokenPort := startMockTokenService(t, tokenPrivateKey, tokenCert, certFile, keyFile, staticUsername, staticPassword)
 
 	// Step 1: Configure registry to use token auth
 	// The realm tells clients where to get tokens - localhost is correct since clients run on the host
 	// The registry itself never calls the auth service, it only validates tokens using the certificate
-	tokenRealm := fmt.Sprintf("http://localhost:%d/v2/token", tokenPort)
+	tokenRealm := fmt.Sprintf("https://localhost:%d/v2/token", tokenPort)
 
 	registryReq := testcontainers.ContainerRequest{
 		Image:        "registry:3.0.0",

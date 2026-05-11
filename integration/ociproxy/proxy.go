@@ -34,10 +34,11 @@ func setupTestProxy(ctx context.Context, t *testing.T, testDB *testutil.TestData
 	fmt.Println("Starting OCI Proxy server...")
 
 	// Find a random available port
-	listener, err := net.Listen("tcp", "localhost:0")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err, "Failed to find available port")
 
-	proxyAddress := listener.Addr().String()
+	port := listener.Addr().(*net.TCPAddr).Port
+	proxyAddress := fmt.Sprintf("localhost:%d", port)
 	listener.Close()
 
 	fmt.Printf("Using random port: %s\n", proxyAddress)
