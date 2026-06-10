@@ -11,7 +11,7 @@
     "report": "playwright show-report"
   },
   "devDependencies": {
-    "@playwright/test": "^1.59.1",
+    "@playwright/test": "^1.60.0",
     "@testcontainers/postgresql": "^11.13.0",
     "@types/node": "^25.5.0",
     "testcontainers": "^11.10.0",
