@@ -111,36 +111,50 @@ func startOTel(serviceName string) func() {
 }
 
 // buildOTelResource constructs the OTel resource describing this service.
-// Service name comes from OTEL_SERVICE_NAME if set, otherwise the provided
-// serviceName. Environment and version reuse the existing DD_ENV / DD_VERSION
-// env vars and are mapped to deployment.environment and service.version.
+//
+// Precedence (matches the TypeScript NodeSDK so the worker and app agree):
+// the standard OTel env vars are authoritative, DD_* vars are only fallbacks.
+// resource.Merge is last-value-wins, so we layer lowest-to-highest priority:
+//
+//	DD_ENV/DD_VERSION fallback  <  resource.Default() (OTEL_RESOURCE_ATTRIBUTES /
+//	OTEL_SERVICE_NAME from the env)  <  explicit service.name
+//
+// service.name is applied last so our value (OTEL_SERVICE_NAME, else the
+// provided serviceName) beats resource.Default()'s "unknown_service" fallback,
+// while deployment.environment / service.version from OTEL_RESOURCE_ATTRIBUTES
+// override the DD_* fallbacks rather than being clobbered by them.
 func buildOTelResource(ctx context.Context, serviceName string) (*resource.Resource, error) {
 	service := os.Getenv("OTEL_SERVICE_NAME")
 	if service == "" {
 		service = serviceName
 	}
 
-	// service.name is always set explicitly so it wins over resource.Default()'s
-	// "unknown_service" fallback. deployment.environment and service.version are
-	// only injected from the DD_* vars when those are explicitly set, so they act
-	// as fallbacks and do NOT clobber values supplied via OTEL_RESOURCE_ATTRIBUTES
-	// (which resource.Default() reads from the environment). resource.Merge gives
-	// last-value-wins, so explicit attrs here override resource.Default().
-	attrs := []attribute.KeyValue{
-		semconv.ServiceName(service),
-	}
-
+	var fallback []attribute.KeyValue
 	if env := os.Getenv("DD_ENV"); env != "" {
-		attrs = append(attrs, attribute.String("deployment.environment", env))
+		fallback = append(fallback, attribute.String("deployment.environment", env))
 	}
-
 	if version := os.Getenv("DD_VERSION"); version != "" {
-		attrs = append(attrs, semconv.ServiceVersion(version))
+		fallback = append(fallback, semconv.ServiceVersion(version))
 	}
 
-	return resource.Merge(
+	// Our attributes are schema-less so they never conflict with the schema URL
+	// carried by resource.Default() (their semconv versions differ). Merging a
+	// schemaless resource keeps the other resource's schema URL and avoids
+	// ErrSchemaURLConflict, which would otherwise discard everything below.
+
+	// DD_* fallbacks, overridden by OTEL_* env values from resource.Default().
+	res, err := resource.Merge(
+		resource.NewSchemaless(fallback...),
 		resource.Default(),
-		resource.NewWithAttributes(semconv.SchemaURL, attrs...),
+	)
+	if err != nil {
+		return res, err
+	}
+
+	// Explicit service.name wins over Default()'s "unknown_service".
+	return resource.Merge(
+		res,
+		resource.NewSchemaless(semconv.ServiceName(service)),
 	)
 }
 
