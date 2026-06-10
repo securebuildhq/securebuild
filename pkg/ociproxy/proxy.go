@@ -60,7 +60,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/jackc/pgx/v5"
-	"github.com/securebuildhq/securebuild/pkg/datadog"
 	sbimage "github.com/securebuildhq/securebuild/pkg/image"
 	"github.com/securebuildhq/securebuild/pkg/oci"
 	"github.com/securebuildhq/securebuild/pkg/param"
@@ -69,9 +68,9 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/registry"
 	"github.com/securebuildhq/securebuild/pkg/team"
 	teamtypes "github.com/securebuildhq/securebuild/pkg/team/types"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"github.com/tuvistavie/securerandom"
 	"go.uber.org/zap"
-	gintrace "gopkg.in/DataDog/dd-trace-go.v1/contrib/gin-gonic/gin"
 )
 
 var proxyLogger *zap.SugaredLogger
@@ -198,10 +197,9 @@ func StartProxy(ctx context.Context, listenAddr string) error {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
-	// Add Datadog APM tracing middleware if enabled
-	if datadog.IsEnabled() {
-		router.Use(gintrace.Middleware("securebuild-oci-proxy"))
-	}
+	// Add APM tracing middleware for the active telemetry backend
+	// (no-op passthrough when telemetry is disabled).
+	router.Use(telemetry.GinMiddleware("securebuild-oci-proxy"))
 
 	router.Use(securityHeadersMiddleware()) // Add security headers to all responses
 	router.Use(p.enrichRequestContext())    // Enrich request context with param and DBURI

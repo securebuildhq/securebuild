@@ -15,13 +15,14 @@ export async function register() {
       console.log(`[E2E:${port}] DB_URI: ${process.env.DB_URI ? 'configured' : 'MISSING!'}`);
     }
 
-    // Only load tracer if Datadog is actually enabled
-    const rawFlag = String(process.env.DD_ENABLED || '').toLowerCase();
-    const isEnabled = rawFlag === 'true' || rawFlag === '1';
+    const { resolveTelemetryBackend } = await import('./lib/observability/backend');
+    const backend = resolveTelemetryBackend();
 
-    if (isEnabled) {
-      // Load the tracer only when explicitly enabled
+    if (backend === 'datadog') {
       await import('./datadog/tracer');
+    } else if (backend === 'otlp') {
+      await import('./otel/instrumentation');
     }
+    // backend === 'none' → do nothing
   }
 }

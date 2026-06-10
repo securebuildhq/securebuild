@@ -10,19 +10,23 @@ import (
 
 	syftpkg "github.com/anchore/syft/syft/pkg"
 	"github.com/securebuildhq/securebuild/pkg/anchore"
-	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	"github.com/securebuildhq/securebuild/pkg/image"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/security"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"go.uber.org/zap"
-	"gopkg.in/DataDog/dd-trace-go.v1/ddtrace/tracer"
 )
 
 func ScanExternalImage(ctx context.Context, digest string) (results map[string]string, err error) {
-	span, ctx := datadog.StartSpan(ctx, "scan.ScanExternalImage")
-	defer func() { span.Finish(tracer.WithError(err)) }()
+	span, ctx := telemetry.StartSpan(ctx, "scan.ScanExternalImage")
+	defer func() {
+		if err != nil {
+			span.SetTag("error", err)
+		}
+		span.Finish()
+	}()
 
 	// Get all stored SBOMs for this digest
 	sboms, err := externalimage.GetExternalImageSBOMs(ctx, digest)

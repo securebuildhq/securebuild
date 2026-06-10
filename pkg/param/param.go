@@ -69,11 +69,11 @@ type Param struct {
 	OIDCGCPAttestorAccount string `yaml:"oidc_gcp_attestor_account"`
 	OIDCGCPAttestorKeyJSON string `yaml:"oidc_gcp_attestor_key_json"`
 
-	R2BucketName       string `yaml:"r2_bucket_name"`
-	R2FeedBucketName   string `yaml:"r2_feed_bucket_name"`
-	R2AccessKey        string `yaml:"r2_access_key"`
-	R2SecretKey        string `yaml:"r2_secret_key"`
-	R2Endpoint         string `yaml:"r2_endpoint"`
+	R2BucketName     string `yaml:"r2_bucket_name"`
+	R2FeedBucketName string `yaml:"r2_feed_bucket_name"`
+	R2AccessKey      string `yaml:"r2_access_key"`
+	R2SecretKey      string `yaml:"r2_secret_key"`
+	R2Endpoint       string `yaml:"r2_endpoint"`
 	// R2Region is the SigV4 signing region for S3-compatible APIs. Cloudflare R2 uses "auto" (default when empty). AWS S3 requires the bucket region (e.g. us-east-1).
 	R2Region           string `yaml:"r2_region"`
 	R2UseDynamicFolder bool   `yaml:"r2_use_dynamic_folder"`
@@ -131,6 +131,15 @@ type Param struct {
 	AuthMethod        string `yaml:"auth_method"`
 	AdminUserEmail    string `yaml:"admin_user_email"`
 	AdminUserPassword string `yaml:"admin_user_password"`
+
+	// Telemetry/observability backend selection.
+	// One of "datadog", "otlp", or "" / "none". When empty, the telemetry
+	// package falls back to DD_ENABLED for backwards compatibility.
+	// The telemetry package reads TELEMETRY_BACKEND from the environment
+	// directly (it cannot import param to avoid an import cycle), so this
+	// field exists so the value can be carried through Doppler and surfaced
+	// as the TELEMETRY_BACKEND environment variable by the deployment.
+	TelemetryBackend string `yaml:"telemetry_backend"`
 }
 
 // Use a simple string as context key to avoid type compatibility issues

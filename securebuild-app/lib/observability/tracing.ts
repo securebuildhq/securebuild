@@ -1,4 +1,21 @@
-import type { Span, Tracer } from 'dd-trace';
+/**
+ * Vendor-agnostic tracing facade.
+ *
+ * Internally uses @opentelemetry/api, which:
+ *  - is satisfied by @opentelemetry/sdk-node when TELEMETRY_BACKEND=otlp
+ *  - is satisfied by dd-trace's built-in OTel API interop when TELEMETRY_BACKEND=datadog
+ *  - falls back to the built-in no-op tracer when TELEMETRY_BACKEND=none
+ *
+ * All exported signatures (getActiveSpan, withTrace, traceServerAction, traceFunction)
+ * remain identical to the previous dd-trace-based implementation so existing
+ * call sites in server action files require no changes.
+ */
+
+import { trace, SpanStatusCode } from '@opentelemetry/api';
+import type { Span } from '@opentelemetry/api';
+
+// Re-export Span so callers that type-reference it can import from this module.
+export type { Span };
 
 type Tags = Record<string, unknown>;
 
@@ -17,61 +34,36 @@ type TracedFunction<T extends (...args: any[]) => any> = (
   ...args: Parameters<T>
 ) => Promise<Awaited<ReturnType<T>>>;
 
-function applyTags(span?: Span, tags?: Tags) {
-  if (!span || !tags) return;
-  for (const [key, value] of Object.entries(tags)) {
-    span.setTag(key, value as any);
-  }
+/** Instrument name used when requesting a Tracer from the OTel API. */
+const TRACER_NAME = 'securebuild-app';
+
+function getOtelTracer() {
+  return trace.getTracer(TRACER_NAME);
 }
 
-// Lazy-load tracer only when tracing is enabled
-// Using undefined to distinguish between "not loaded yet" and "loaded but null"
-let tracerCache: Tracer | null | undefined = undefined;
-
-function getTracer(): Tracer | null {
-  // Return cached result if already loaded (prevents race conditions and multiple initializations)
-  if (tracerCache !== undefined) {
-    return tracerCache;
-  }
-
-  // Check if tracing is enabled at runtime (consistent with datadog/tracer.ts and instrumentation.ts)
-  const rawFlag = String(process.env.DD_ENABLED || '').toLowerCase();
-  const isEnabled = rawFlag === 'true' || rawFlag === '1';
-
-  if (!isEnabled) {
-    tracerCache = null;
-    return null;
-  }
-
-  // Lazy load the tracer module only when needed
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const tracerModule = require('@/datadog/tracer');
-    const tracer = tracerModule.default || tracerModule;
-
-    if (tracer && typeof (tracer as any).trace === 'function') {
-      tracerCache = tracer as Tracer;
-      return tracerCache;
+function applyTags(span: Span | undefined, tags?: Tags) {
+  if (!span || !tags) return;
+  for (const [key, value] of Object.entries(tags)) {
+    // OTel attribute values must be primitive or arrays of primitives
+    if (
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+    ) {
+      span.setAttribute(key, value);
+    } else if (value !== null && value !== undefined) {
+      span.setAttribute(key, String(value));
     }
-  } catch (err) {
-    console.warn('Failed to load tracer:', err);
   }
-
-  tracerCache = null;
-  return null;
 }
 
 /**
- * Get the currently active span from the tracer's scope.
- * This can be used to pass span context to database calls.
+ * Get the currently active span from the OTel context.
+ * Returns undefined when no span is active (including no-op tracer path).
  */
 export function getActiveSpan(): Span | undefined {
-  const activeTracer = getTracer();
-  if (!activeTracer || !activeTracer.scope) {
-    return undefined;
-  }
-  const active = activeTracer.scope().active();
-  return active || undefined;
+  const span = trace.getActiveSpan();
+  return span ?? undefined;
 }
 
 export async function withTrace<T>(
@@ -79,23 +71,24 @@ export async function withTrace<T>(
   fn: (span?: Span) => Promise<T> | T,
   options?: TraceOptions,
 ): Promise<T> {
-  const activeTracer = getTracer();
-  if (!activeTracer) {
-    return fn(undefined);
-  }
+  const otelTracer = getOtelTracer();
 
-  return activeTracer.trace(name, { resource: options?.resource }, async (span?: Span) => {
-    if (span) {
-      span.setTag('component', 'application');
-      applyTags(span, options?.tags);
+  return otelTracer.startActiveSpan(name, async (span: Span) => {
+    // Set resource/route as a span attribute (OTel equivalent of dd resource.name)
+    if (options?.resource) {
+      span.setAttribute('resource.name', options.resource);
     }
+    span.setAttribute('component', 'application');
+    applyTags(span, options?.tags);
+
     try {
       const result = await fn(span);
+      span.end();
       return result;
     } catch (error) {
-      if (span) {
-        span.setTag('error', error as any);
-      }
+      span.recordException(error as Error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: String(error) });
+      span.end();
       throw error;
     }
   });
@@ -135,17 +128,21 @@ export function traceServerAction<T extends (...args: any[]) => any>(
 
   const traced: TracedFunction<T> = async (...args: Parameters<T>) => {
     const baseTags = options?.getTags?.(...args);
-    return withTrace(spanName, async (span) => {
-      if (span) {
-        span.setTag('component', 'server-action');
-      }
-      applyTags(span, baseTags);
-      const result = await fn(...args);
-      if (span && options?.onResult) {
-        options.onResult(span, args, result as Awaited<ReturnType<T>>);
-      }
-      return result;
-    }, { resource: options?.resource });
+    return withTrace(
+      spanName,
+      async (span) => {
+        if (span) {
+          span.setAttribute('component', 'server-action');
+          applyTags(span, baseTags);
+        }
+        const result = await fn(...args);
+        if (span && options?.onResult) {
+          options.onResult(span, args, result as Awaited<ReturnType<T>>);
+        }
+        return result;
+      },
+      { resource: options?.resource },
+    );
   };
 
   return traced;
@@ -158,16 +155,19 @@ export function traceFunction<T extends (...args: any[]) => any>(
 ): TracedFunction<T> {
   const traced: TracedFunction<T> = async (...args: Parameters<T>) => {
     const baseTags = options?.getTags?.(...args);
-    return withTrace(name, async (span) => {
-      applyTags(span, baseTags);
-      const result = await fn(...args);
-      if (span && options?.onResult) {
-        options.onResult(span, args, result as Awaited<ReturnType<T>>);
-      }
-      return result;
-    }, options);
+    return withTrace(
+      name,
+      async (span) => {
+        applyTags(span, baseTags);
+        const result = await fn(...args);
+        if (span && options?.onResult) {
+          options.onResult(span, args, result as Awaited<ReturnType<T>>);
+        }
+        return result;
+      },
+      options,
+    );
   };
 
   return traced;
 }
-
