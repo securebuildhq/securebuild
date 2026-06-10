@@ -93,16 +93,19 @@ func startOTel(serviceName string) func() {
 	logger.Info("opentelemetry telemetry initialized", zap.String("service", serviceName))
 
 	return func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		if err := tracerProvider.Shutdown(shutdownCtx); err != nil {
-			logger.Warn("failed to shut down otel tracer provider", zap.Error(err))
-		}
-		if meterProvider != nil {
-			if err := meterProvider.Shutdown(shutdownCtx); err != nil {
-				logger.Warn("failed to shut down otel meter provider", zap.Error(err))
+		// Each provider gets its own timeout so a slow tracer shutdown can't
+		// consume the budget and starve the meter shutdown.
+		shutdownProvider := func(name string, fn func(context.Context) error) {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := fn(shutdownCtx); err != nil {
+				logger.Warn("failed to shut down otel provider", zap.String("provider", name), zap.Error(err))
 			}
+		}
+
+		shutdownProvider("tracer", tracerProvider.Shutdown)
+		if meterProvider != nil {
+			shutdownProvider("meter", meterProvider.Shutdown)
 		}
 	}
 }
