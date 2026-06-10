@@ -72,6 +72,23 @@ try {
   });
 
   sdk.start();
+
+  // Flush buffered spans/metrics on shutdown so the batch processors don't drop
+  // in-flight data when the container receives SIGTERM/SIGINT. We exit after the
+  // flush: adding a signal listener overrides Node's default terminate behaviour,
+  // so the handler is responsible for ending the process.
+  let shuttingDown = false;
+  const shutdown = (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    sdk
+      .shutdown()
+      .then(() => console.log(`[otel] tracing shut down (${signal})`))
+      .catch((err) => console.error('[otel] error shutting down tracing', err))
+      .finally(() => process.exit(0));
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
 } catch (err) {
   // Never crash the app if OTel initialisation fails
   console.error('[otel] failed to initialize tracing', err);

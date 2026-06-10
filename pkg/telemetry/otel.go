@@ -120,14 +120,18 @@ func buildOTelResource(ctx context.Context, serviceName string) (*resource.Resou
 		service = serviceName
 	}
 
-	env := os.Getenv("DD_ENV")
-	if env == "" {
-		env = "development"
-	}
-
+	// service.name is always set explicitly so it wins over resource.Default()'s
+	// "unknown_service" fallback. deployment.environment and service.version are
+	// only injected from the DD_* vars when those are explicitly set, so they act
+	// as fallbacks and do NOT clobber values supplied via OTEL_RESOURCE_ATTRIBUTES
+	// (which resource.Default() reads from the environment). resource.Merge gives
+	// last-value-wins, so explicit attrs here override resource.Default().
 	attrs := []attribute.KeyValue{
 		semconv.ServiceName(service),
-		attribute.String("deployment.environment", env),
+	}
+
+	if env := os.Getenv("DD_ENV"); env != "" {
+		attrs = append(attrs, attribute.String("deployment.environment", env))
 	}
 
 	if version := os.Getenv("DD_VERSION"); version != "" {
