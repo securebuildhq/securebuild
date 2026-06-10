@@ -24,6 +24,8 @@ jobs:
     needs: check-changes
     if: needs.check-changes.outputs.run-app == 'true'
     runs-on: ubuntu-latest
+    # Cap the job so a stalled setup step can't run to GitHub's 6h default.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +69,9 @@ jobs:
         working-directory: e2e
 
     - name: Install Playwright browsers and dependencies
+      # Browser download currently stalls at 100% in finalization (cdn.playwright.dev);
+      # fail this step fast instead of hanging the whole job until the cap above.
+      timeout-minutes: 8
       run: |
         cd e2e
         npx playwright install --with-deps chromium
