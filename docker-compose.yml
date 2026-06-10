@@ -42,6 +42,14 @@ services:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
       SECUREBUILD_CONFIG_SOURCE: /securebuild-config.yaml
       PIPELINE_DIR: /var/run/securebuild/pipelines
+      # Observability. Default "none" keeps dev quiet; set TELEMETRY_BACKEND=otlp (or datadog) to enable.
+      # Containers reach the host-installed Alloy agent via the docker host gateway.
+      TELEMETRY_BACKEND: ${TELEMETRY_BACKEND:-none}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4318}
+      OTEL_SERVICE_NAME: securebuild-worker
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=development}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
       - ${REPO_ROOT}/dev-pipelines:/var/run/securebuild/pipelines
@@ -58,6 +66,12 @@ services:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
       HOSTNAME: "0.0.0.0"
       PIPELINE_DIR: /var/run/securebuild/pipelines
+      TELEMETRY_BACKEND: ${TELEMETRY_BACKEND:-none}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4318}
+      OTEL_SERVICE_NAME: securebuild-app
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=development}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${REPO_ROOT}/securebuild-app/.env.local:/app/.env.local:ro
       - ${REPO_ROOT}/dev-pipelines:/var/run/securebuild/pipelines
@@ -72,6 +86,12 @@ services:
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
       SECUREBUILD_CONFIG_SOURCE: /securebuild-config.yaml
+      TELEMETRY_BACKEND: ${TELEMETRY_BACKEND:-none}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4318}
+      OTEL_SERVICE_NAME: securebuild-apk-proxy
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=development}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
     ports:
@@ -85,6 +105,12 @@ services:
     environment:
       DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
       SECUREBUILD_CONFIG_SOURCE: /securebuild-config.yaml
+      TELEMETRY_BACKEND: ${TELEMETRY_BACKEND:-none}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4318}
+      OTEL_SERVICE_NAME: securebuild-oci-proxy
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=development}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
     ports:

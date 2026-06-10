@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	extimgtypes "github.com/securebuildhq/securebuild/pkg/externalimage/types"
 	image "github.com/securebuildhq/securebuild/pkg/image"
@@ -15,8 +14,8 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/sbom"
 	"github.com/securebuildhq/securebuild/pkg/scan"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"go.uber.org/zap"
-	"gopkg.in/DataDog/dd-trace-go.v1/ddtrace/tracer"
 )
 
 // contextKey is an unexported type for context keys in this package.
@@ -69,7 +68,7 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		// stale digest.
 		// Mark as non-retryable since the digest will never be found again.
 		if errors.Is(err, externalimage.ErrExternalImageNotFound) {
-			datadog.Increment(datadog.MetricExternalImageSBOMFailed, []string{datadog.TagChannelExternalImageSBOM, externalimage.ReasonForDatadogMetric(err)})
+			telemetry.Increment(telemetry.MetricExternalImageSBOMFailed, []string{telemetry.TagChannelExternalImageSBOM, externalimage.ReasonForDatadogMetric(err)})
 			return NewNonRetryableError(err)
 		}
 		return fmt.Errorf("failed to get external image: %w", err)
@@ -127,7 +126,7 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 				// Continue anyway - the SBOM exists and we can run the scan
 			} else {
 				logger.Info("SBOM succeeded", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
-				datadog.Increment(datadog.MetricExternalImageSBOMSucceeded, []string{datadog.TagChannelExternalImageSBOM})
+				telemetry.Increment(telemetry.MetricExternalImageSBOMSucceeded, []string{telemetry.TagChannelExternalImageSBOM})
 			}
 
 			return RunScanForDigest(ctx, p.Digest)
@@ -188,7 +187,7 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		// Continue anyway - the SBOM data was stored successfully
 	} else {
 		logger.Info("SBOM succeeded", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
-		datadog.Increment(datadog.MetricExternalImageSBOMSucceeded, []string{datadog.TagChannelExternalImageSBOM})
+		telemetry.Increment(telemetry.MetricExternalImageSBOMSucceeded, []string{telemetry.TagChannelExternalImageSBOM})
 	}
 
 	// Initialize scan status to 'queued' for all architectures
@@ -232,8 +231,13 @@ func extractArchFromPlatform(platform string) string {
 // storeScanResults parses and stores scan results per architecture.
 // The span is started inside this function so the traced operation is the function itself.
 func storeScanResults(ctx context.Context, digest string, scanResults map[string]string, attempt, maxAttempts int) (successCount int, err error) {
-	span, ctx := datadog.StartSpan(ctx, "listener.external_image_scan.store_results")
-	defer func() { span.Finish(tracer.WithError(err)) }()
+	span, ctx := telemetry.StartSpan(ctx, "listener.external_image_scan.store_results")
+	defer func() {
+		if err != nil {
+			span.SetTag("error", err)
+		}
+		span.Finish()
+	}()
 
 	for arch, scanResult := range scanResults {
 		parsedResults, parseErr := image.ParseScanResultDetails(scanResult)
@@ -355,7 +359,7 @@ func RunScanForDigest(ctx context.Context, digest string) error {
 	// Only count as succeeded when (1) scan returned results for every expected arch, and
 	// (2) we successfully stored every result (parse/marshal/save for each arch).
 	if len(storedSBOMs) > 0 && allExpectedArchsGotScanResults && successCount == len(scanResults) {
-		datadog.Increment(datadog.MetricExternalImageScanSucceeded, []string{datadog.TagChannelExternalImageScan})
+		telemetry.Increment(telemetry.MetricExternalImageScanSucceeded, []string{telemetry.TagChannelExternalImageScan})
 	}
 
 	return nil
@@ -367,7 +371,7 @@ func recordSBOMFailure(ctx context.Context, digest string, reason error, retryab
 		logger.Warn("failed to record SBOM failure for digest", zap.String("digest", digest), zap.Error(recordErr), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", retryable))
 	}
 	if !retryable {
-		datadog.Increment(datadog.MetricExternalImageSBOMFailed, []string{datadog.TagChannelExternalImageSBOM, externalimage.ReasonForDatadogMetric(reason)})
+		telemetry.Increment(telemetry.MetricExternalImageSBOMFailed, []string{telemetry.TagChannelExternalImageSBOM, externalimage.ReasonForDatadogMetric(reason)})
 	}
 }
 
@@ -383,6 +387,6 @@ func recordScanFailure(ctx context.Context, digest, arch string, reason error, r
 		logger.Warn("failed to record scan failure", zap.String("digest", digest), zap.String("arch", arch), zap.Error(recordErr), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", retryable))
 	}
 	if !retryable {
-		datadog.Increment(datadog.MetricExternalImageScanFailed, []string{datadog.TagChannelExternalImageScan, externalimage.ReasonForDatadogMetric(reason)})
+		telemetry.Increment(telemetry.MetricExternalImageScanFailed, []string{telemetry.TagChannelExternalImageScan, externalimage.ReasonForDatadogMetric(reason)})
 	}
 }

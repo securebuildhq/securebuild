@@ -12,7 +12,6 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/builder"
 	"github.com/securebuildhq/securebuild/pkg/buildqueue"
-	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/dynamicparam"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	"github.com/securebuildhq/securebuild/pkg/githubsync"
@@ -26,6 +25,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/pipeline"
 	"github.com/securebuildhq/securebuild/pkg/scan"
 	"github.com/securebuildhq/securebuild/pkg/security"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"github.com/securebuildhq/securebuild/pkg/updater"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -46,7 +46,7 @@ func RunCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Initialize Datadog tracer if enabled
-			stopTracer := datadog.Start("securebuild-worker")
+			stopTracer := telemetry.Start("securebuild-worker")
 			defer stopTracer()
 
 			initSource, err := param.ResolveInitSource()

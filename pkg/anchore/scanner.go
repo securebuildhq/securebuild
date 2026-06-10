@@ -27,11 +27,10 @@ import (
 	"github.com/anchore/syft/syft/format/syftjson"
 	"github.com/anchore/syft/syft/sbom"
 	"github.com/anchore/syft/syft/source/stereoscopesource"
-	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"go.uber.org/zap"
-	"gopkg.in/DataDog/dd-trace-go.v1/ddtrace/tracer"
 )
 
 // GrypeScanner wraps the Grype library for scanning SBOMs
@@ -152,8 +151,13 @@ func NewGrypeScanner(ctx context.Context, useCustomDB bool) (*GrypeScanner, erro
 // ScanSBOMForCVEs scans a Syft SBOM and returns Grype's official JSON format
 // This is the preferred method that preserves all Grype data without custom conversions
 func (s *GrypeScanner) ScanSBOMForCVEs(ctx context.Context, sbomJSON string) (result string, err error) {
-	span, ctx := datadog.StartSpan(ctx, "anchore.ScanSBOMForCVEs")
-	defer func() { span.Finish(tracer.WithError(err)) }()
+	span, ctx := telemetry.StartSpan(ctx, "anchore.ScanSBOMForCVEs")
+	defer func() {
+		if err != nil {
+			span.SetTag("error", err)
+		}
+		span.Finish()
+	}()
 
 	// Parse the SBOM
 	sbomObj, err := s.ParseSBOM(sbomJSON)

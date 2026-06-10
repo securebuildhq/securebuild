@@ -1,5 +1,6 @@
 import type { Tracer, Span, init as ddTraceInit } from 'dd-trace';
 import type { IncomingMessage } from 'http';
+import { getRoutePattern } from '../otel/route-patterns';
 
 const rawFlag = String(process.env.DD_ENABLED || '').toLowerCase();
 const isEnabled = rawFlag === 'true' || rawFlag === '1';
@@ -76,37 +77,6 @@ if (isEnabled) {
     console.error('[datadog] failed to initialize tracing', err);
     tracer = null;
   }
-}
-
-// Function to convert actual paths to route patterns
-const getRoutePattern = (path: string): string => {
-  // Define route patterns for dynamic routes
-  const routePatterns = [
-    // API routes
-    { pattern: /^\/api\/execution-details\/[^/]+$/, replacement: '/api/execution-details/[id]' },
-    { pattern: /^\/api\/package-details\/[^/]+$/, replacement: '/api/package-details/[id]' },
-    { pattern: /^\/api\/package-executions\/[^/]+$/, replacement: '/api/package-executions/[id]' },
-    { pattern: /^\/api\/image-scan\/[^/]+$/, replacement: '/api/image-scan/[id]' },
-    { pattern: /^\/api\/image-apko\/[^/]+$/, replacement: '/api/image-apko/[id]' },
-    { pattern: /^\/api\/image-test\/[^/]+$/, replacement: '/api/image-test/[id]' },
-    { pattern: /^\/api\/v1\/image\/[^/]+\/scan$/, replacement: '/api/v1/image/[id]/scan' },
-    // Page routes (capture suffix to preserve sub-routes)
-    { pattern: /^\/packages\/[^/]+(.*)$/, replacement: '/packages/[id]$1' },
-    { pattern: /^\/builds\/[^/]+(.*)$/, replacement: '/builds/[id]$1' },
-    { pattern: /^\/images\/[^/]+(.*)$/, replacement: '/images/[id]$1' },
-    { pattern: /^\/executions\/[^/]+(.*)$/, replacement: '/executions/[id]$1' },
-    { pattern: /^\/package-families\/[^/]+(.*)$/, replacement: '/package-families/[id]$1' },
-    { pattern: /^\/catalog\/[^/]+(.*)$/, replacement: '/catalog/[id]$1' },
-  ];
-
-  for (const { pattern, replacement } of routePatterns) {
-    if (pattern.test(path)) {
-      return path.replace(pattern, replacement);
-    }
-  }
-
-  // Return original path if no pattern matches
-  return path;
 }
 
 export default tracer;

@@ -8,9 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/param"
-	pgxtrace "gopkg.in/DataDog/dd-trace-go.v1/contrib/jackc/pgx.v5"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 )
 
 var (
@@ -65,13 +64,9 @@ func InitPostgres(ctx context.Context) error {
 	config.MaxConns = 40
 	config.MaxConnIdleTime = 30 * time.Second
 
-	// Create pool - use traced version if Datadog is enabled
-	var pool *pgxpool.Pool
-	if datadog.IsEnabled() {
-		pool, err = pgxtrace.NewPoolWithConfig(context.Background(), config)
-	} else {
-		pool, err = pgxpool.NewWithConfig(context.Background(), config)
-	}
+	// Create pool - telemetry routes to the traced pool for the active backend
+	// (Datadog or OTLP), or a plain pool when telemetry is disabled.
+	pool, err := telemetry.NewPgxPool(context.Background(), config)
 	if err != nil {
 		return fmt.Errorf("failed to create pool: %w", err)
 	}

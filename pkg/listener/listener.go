@@ -9,10 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"go.uber.org/zap"
 )
 
@@ -278,7 +278,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 	}
 
 	channelTag := fmt.Sprintf("channel:%s", processor.channel)
-	datadog.Gauge("securebuild.worker.queue.total", float64(total), []string{channelTag})
+	telemetry.Gauge("securebuild.worker.queue.total", float64(total), []string{channelTag})
 
 	// Query and lock unprocessed messages atomically
 	// Order by priority DESC (higher priority first), then created_at ASC (oldest first)

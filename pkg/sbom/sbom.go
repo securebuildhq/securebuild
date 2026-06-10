@@ -14,12 +14,11 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	registrypkg "github.com/securebuildhq/securebuild/pkg/registry"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"go.uber.org/zap"
-	"gopkg.in/DataDog/dd-trace-go.v1/ddtrace/tracer"
 )
 
 // DockerHubTokenResponse represents the response from Docker Hub auth
@@ -40,8 +39,13 @@ type SBOMResult struct {
 }
 
 func FetchSBOM(ctx context.Context, registry string, imageName string, digest string) (results []SBOMResult, err error) {
-	span, ctx := datadog.StartSpan(ctx, "sbom.FetchSBOM")
-	defer func() { span.Finish(tracer.WithError(err)) }()
+	span, ctx := telemetry.StartSpan(ctx, "sbom.FetchSBOM")
+	defer func() {
+		if err != nil {
+			span.SetTag("error", err)
+		}
+		span.Finish()
+	}()
 
 	logger.Info("fetching SBOMs for image", zap.String("imageURL", registry+"/"+imageName+"@"+digest))
 

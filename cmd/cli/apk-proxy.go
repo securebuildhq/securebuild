@@ -7,14 +7,13 @@ import (
 	"syscall"
 
 	"github.com/securebuildhq/securebuild/pkg/apkproxy"
-	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
-
 
 func APKProxyCmd() *cobra.Command {
 	return &cobra.Command{
@@ -30,7 +29,7 @@ func APKProxyCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Initialize Datadog tracer if enabled
-			stopTracer := datadog.Start("securebuild-apk-proxy")
+			stopTracer := telemetry.Start("securebuild-apk-proxy")
 			defer stopTracer()
 
 			initSource, err := param.ResolveInitSource()

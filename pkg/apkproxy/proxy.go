@@ -8,10 +8,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/securebuildhq/securebuild/pkg/datadog"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
-	gintrace "gopkg.in/DataDog/dd-trace-go.v1/contrib/gin-gonic/gin"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 )
 
 type APKProxy struct {
@@ -57,10 +56,9 @@ func StartProxy(ctx context.Context, listenAddr string) error {
 	router.RedirectTrailingSlash = false
 	router.RedirectFixedPath = false
 
-	// Add Datadog APM tracing middleware if enabled
-	if datadog.IsEnabled() {
-		router.Use(gintrace.Middleware("securebuild-apk-proxy"))
-	}
+	// Add APM tracing middleware for the active telemetry backend
+	// (no-op passthrough when telemetry is disabled).
+	router.Use(telemetry.GinMiddleware("securebuild-apk-proxy"))
 
 	router.Use(p.enrichRequestContext()) // Enrich request context with param and DBURI
 
