@@ -219,6 +219,15 @@ func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVe
 		if err != nil {
 			return fmt.Errorf("failed to get vm context: %w", err)
 		}
+		// On-demand VMs are provisioned without a work dir (the VM isn't
+		// SSH-reachable at provision time). Resolve it to the remote $HOME now
+		// that the VM is running.
+		if x86WorkDir == "" {
+			x86WorkDir, err = builder.GetRemoteHome(ctx, x86VM)
+			if err != nil {
+				return fmt.Errorf("failed to resolve x86_64 work dir: %w", err)
+			}
+		}
 		arches["x86_64"] = &archEntry{vm: &x86VM, workDir: x86WorkDir}
 	}
 
@@ -226,6 +235,12 @@ func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVe
 		armVM, err := builder.GetBuilderVM(ctx, armVMID)
 		if err != nil {
 			return fmt.Errorf("failed to get vm context: %w", err)
+		}
+		if armWorkDir == "" {
+			armWorkDir, err = builder.GetRemoteHome(ctx, armVM)
+			if err != nil {
+				return fmt.Errorf("failed to resolve aarch64 work dir: %w", err)
+			}
 		}
 		arches["aarch64"] = &archEntry{vm: &armVM, workDir: armWorkDir}
 	}
