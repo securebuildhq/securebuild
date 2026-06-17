@@ -221,11 +221,15 @@ func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVe
 		}
 		// On-demand VMs are provisioned without a work dir (the VM isn't
 		// SSH-reachable at provision time). Resolve it to the remote $HOME now
-		// that the VM is running.
+		// that the VM is running, and persist it to the assignment so the build
+		// status checker and cleanup can find it.
 		if x86WorkDir == "" {
 			x86WorkDir, err = builder.GetRemoteHome(ctx, x86VM)
 			if err != nil {
 				return fmt.Errorf("failed to resolve x86_64 work dir: %w", err)
+			}
+			if err := builder.AssignVMToTask(ctx, x86VMID, "build_package", executionID, x86WorkDir); err != nil {
+				return fmt.Errorf("failed to persist x86_64 work dir: %w", err)
 			}
 		}
 		arches["x86_64"] = &archEntry{vm: &x86VM, workDir: x86WorkDir}
@@ -240,6 +244,9 @@ func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVe
 			armWorkDir, err = builder.GetRemoteHome(ctx, armVM)
 			if err != nil {
 				return fmt.Errorf("failed to resolve aarch64 work dir: %w", err)
+			}
+			if err := builder.AssignVMToTask(ctx, armVMID, "build_package", executionID, armWorkDir); err != nil {
+				return fmt.Errorf("failed to persist aarch64 work dir: %w", err)
 			}
 		}
 		arches["aarch64"] = &archEntry{vm: &armVM, workDir: armWorkDir}
