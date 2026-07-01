@@ -33,3 +33,9 @@ schema:
         type: text
       - name: last_built_at
         type: timestamp with time zone
+      - name: git_remote
+        type: text
+      - name: git_tag
+        type: text
+      - name: apko_file_path
+        type: text

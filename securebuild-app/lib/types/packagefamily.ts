@@ -17,6 +17,11 @@ export interface PackageFamily {
   consecutiveErrors: number;
   createdAt: Date;
   updatedAt: Date;
+  gitRemote?: string;
+  melangeFilePath?: string;
+  initialTag?: string;
+  gitTag?: string;
+  gitCommitSha?: string;
 }
 
 export interface PackageFamilyPackage {
@@ -29,6 +34,8 @@ export interface PackageFamilyPackage {
   lastExecutionId?: string | null;
   lastExecutionStatus?: string | null;
   lastExecutionCreatedAt?: Date | null;
+  gitTag?: string;
+  gitCommitSha?: string;
 }
 
 export interface PackageFamilyWithPackages extends PackageFamily {
@@ -47,6 +54,9 @@ export interface CreatePackageFamilyRequest {
   minVersion?: string;
   notifyOnDetection: boolean;
   notifyOnBuildFailure: boolean;
+  gitRemote?: string;
+  melangeFilePath?: string;
+  initialTag?: string;
 }
 
 export interface UpdatePackageFamilyRequest {
@@ -61,6 +71,9 @@ export interface UpdatePackageFamilyRequest {
   minVersion?: string;
   notifyOnDetection?: boolean;
   notifyOnBuildFailure?: boolean;
+  melangeFilePath?: string;
+  gitRemote?: string;
+  initialTag?: string;
 }
 
 // Helper functions for version parsing

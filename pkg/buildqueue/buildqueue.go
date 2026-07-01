@@ -2,6 +2,7 @@ package buildqueue
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -32,7 +33,7 @@ func ProcessRebuildChains(ctx context.Context) error {
 			FROM execution
 			ORDER BY cause_id, created_at DESC
 		)
-		SELECT p.name, p.id, rcl.link_id, rc.chain_name
+		SELECT p.name, p.id, rcl.link_id, rc.chain_name, rc.package_version_id, rc.package_id
 		FROM rebuild_chain_link rcl
 		JOIN package p ON rcl.package_id = p.id
 		JOIN rebuild_chain rc ON rcl.rebuild_chain_id = rc.id
@@ -55,7 +56,9 @@ func ProcessRebuildChains(ctx context.Context) error {
 
 	for rows.Next() {
 		var packageName, packageID, linkID, chainName string
-		if err := rows.Scan(&packageName, &packageID, &linkID, &chainName); err != nil {
+		var chainPackageVersionID sql.NullString
+		var chainPackageID string
+		if err := rows.Scan(&packageName, &packageID, &linkID, &chainName, &chainPackageVersionID, &chainPackageID); err != nil {
 			return fmt.Errorf("failed to scan package data: %w", err)
 		}
 
@@ -64,31 +67,44 @@ func ProcessRebuildChains(ctx context.Context) error {
 			zap.String("packageName", packageName),
 			zap.String("packageId", packageID))
 
-		newPackageVersion, err := sbpackage.CreateNewReleaseForLatestPackageVersion(ctx, packageID, "", "")
-		if err != nil {
-			// Record a failed execution for this link so the queue won't keep returning it.
-			if recordErr := recordFailedExecutionForLink(ctx, packageID, linkID, chainName); recordErr != nil {
-				logger.Error(fmt.Errorf("failed to record failed execution for link; queue may retry same package: %w", recordErr),
-					zap.String("linkId", linkID),
-					zap.String("packageName", packageName))
-			} else {
-				logger.Warn("increment epoch failed for rebuild chain link; recorded failed execution so queue can progress",
-					zap.String("chainName", chainName),
-					zap.String("packageName", packageName),
-					zap.String("linkId", linkID),
-					zap.Error(err))
-			}
-			continue
+		var pkgVersionID string
+
+		// If the chain has a package_version_id and this link is for the root package,
+		// use that version instead of creating a new release.
+		if chainPackageVersionID.Valid && chainPackageID == packageID {
+			pkgVersionID = chainPackageVersionID.String
+			logger.Info("using existing package version from rebuild chain",
+				zap.String("packageName", packageName),
+				zap.String("packageVersionId", pkgVersionID))
 		}
 
-		logger.Info("incremented epoch for package",
-			zap.String("packageName", packageName),
-			zap.String("packageVersionId", newPackageVersion.ID),
-			zap.Int("newEpoch", newPackageVersion.APKRelease))
+		if pkgVersionID == "" {
+			// No pre-specified version — create a new release
+			newPackageVersion, err := sbpackage.CreateNewReleaseForLatestPackageVersion(ctx, packageID, "", "")
+			if err != nil {
+				if recordErr := recordFailedExecutionForLink(ctx, packageID, linkID, chainName); recordErr != nil {
+					logger.Error(fmt.Errorf("failed to record failed execution for link; queue may retry same package: %w", recordErr),
+						zap.String("linkId", linkID),
+						zap.String("packageName", packageName))
+				} else {
+					logger.Warn("increment epoch failed for rebuild chain link; recorded failed execution so queue can progress",
+						zap.String("chainName", chainName),
+						zap.String("packageName", packageName),
+						zap.String("linkId", linkID),
+						zap.Error(err))
+				}
+				continue
+			}
+			pkgVersionID = newPackageVersion.ID
+			logger.Info("incremented epoch for package",
+				zap.String("packageName", packageName),
+				zap.String("packageVersionId", pkgVersionID),
+				zap.Int("newEpoch", newPackageVersion.APKRelease))
+		}
 
 		payload := listener.BuildPackagePayload{
 			PackageID:        packageID,
-			PackageVersionID: newPackageVersion.ID,
+			PackageVersionID: pkgVersionID,
 			Cause:            fmt.Sprintf("rebuild chain for %s", chainName),
 			CauseID:          linkID,
 		}

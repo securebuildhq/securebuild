@@ -10,6 +10,9 @@ type Image struct {
 	APKOs          []*ImageAPKO
 	AlternateImage string
 	Readme         string
+	GitRemote      string
+	ApkoFilePath   string
+	TagTemplate    string
 }
 
 type ImageAPKO struct {
@@ -20,6 +23,9 @@ type ImageAPKO struct {
 	UpdatedAt     time.Time
 	LatestVersion ImageAPKOVersion
 	Readme        string
+	GitRemote     string
+	GitTag        string
+	ApkoFilePath  string
 }
 
 type ImageAPKOVersion struct {
@@ -28,6 +34,9 @@ type ImageAPKOVersion struct {
 	APKOYAML    string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	GitRemote    string
+	ApkoFilePath string
+	GitCommitSHA string
 }
 
 type ImageCatalogItem struct {

@@ -427,7 +427,7 @@ func lookupPackageFamilyByPackageID(ctx context.Context, packageID string) (*pac
 		       dry_run_mode, min_version, notify_on_detection,
 		       notify_on_build_failure, check_for_updates_at, last_check_at,
 		       last_error, consecutive_errors, created_at, updated_at,
-		       image_tag_template
+		       image_tag_template, git_remote, melange_file_path, initial_tag
 		FROM package_family
 		WHERE $1 LIKE name || '-%'
 	`
@@ -446,7 +446,7 @@ func lookupPackageFamilyByPackageID(ctx context.Context, packageID string) (*pac
 			&pf.DryRunMode, &pf.MinVersion, &pf.NotifyOnDetection,
 			&pf.NotifyOnBuildFailure, &pf.CheckForUpdatesAt, &pf.LastCheckAt,
 			&pf.LastError, &pf.ConsecutiveErrors, &pf.CreatedAt, &pf.UpdatedAt,
-			&pf.ImageTagTemplate,
+			&pf.ImageTagTemplate, &pf.GitRemote, &pf.MelangeFilePath, &pf.InitialTag,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan family row: %w", err)
 		}

@@ -373,14 +373,8 @@ func getAdditionalFilesForPackageVersion(ctx context.Context, pkgVersionID strin
 
 	var additionalFiles []AdditionalFile
 	for _, f := range files {
-		// Extract filename from path
-		filename := filepath.Base(f.Path)
-		if filename == "" || filename == "." {
-			filename = f.Path
-		}
-
 		additionalFiles = append(additionalFiles, AdditionalFile{
-			Filename: filename,
+			Filename: f.Path,
 			Content:  f.Content,
 		})
 	}

@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/go-github/v61/github"
 	image "github.com/securebuildhq/securebuild/pkg/image"
 	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
+	"github.com/securebuildhq/securebuild/pkg/gitspec"
 	"github.com/securebuildhq/securebuild/pkg/logger"
+	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
+	"github.com/tuvistavie/securerandom"
 	"go.uber.org/zap"
+	"golang.org/x/oauth2"
 )
 
 type BuildAPKOPayload struct {
@@ -46,8 +51,18 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 		return fmt.Errorf("APKO with ID %s not found in image %s", buildAPKOPayload.APKOID, buildAPKOPayload.ImageID)
 	}
 
+	// For linked APKOs, check if the git tag has been reassigned to a new commit.
+	// If so, create a new image_apko_version with the updated spec before building.
+	apkoVersionID, err := checkAndRefreshLinkedApko(ctx, targetAPKO)
+	if err != nil {
+		logger.Warn("failed to check/refresh linked APKO, proceeding with existing version",
+			zap.String("apkoId", targetAPKO.ID),
+			zap.Error(err))
+		apkoVersionID = targetAPKO.LatestVersion.ID
+	}
+
 	// Create image build record for the specific APKO version
-	imageBuild, err := image.CreateImageBuild(ctx, targetAPKO.LatestVersion.ID)
+	imageBuild, err := image.CreateImageBuild(ctx, apkoVersionID)
 	if err != nil {
 		return fmt.Errorf("failed to create image build record for APKO %s: %w", targetAPKO.ID, err)
 	}
@@ -111,4 +126,79 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 	}
 
 	return nil
+}
+
+// checkAndRefreshLinkedApko checks if a linked APKO's git tag has been reassigned to a
+// new commit SHA. If so, it pulls the updated APKO spec from git and creates a new
+// image_apko_version row. Returns the image_apko_version ID to use for the build.
+// For non-linked APKOs, returns the existing latest version ID unchanged.
+func checkAndRefreshLinkedApko(ctx context.Context, apko *imagetypes.ImageAPKO) (string, error) {
+	if apko.GitTag == "" || apko.GitRemote == "" {
+		return apko.LatestVersion.ID, nil
+	}
+
+	var githubClient *github.Client
+	if githubToken := param.GetParam(ctx).UpdaterGithubAPIToken; githubToken != "" {
+		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
+		tc := oauth2.NewClient(ctx, ts)
+		githubClient = github.NewClient(tc)
+	} else {
+		githubClient = github.NewClient(nil)
+	}
+
+	// Resolve the current git tag to a commit SHA
+	currentSHA, err := gitspec.ResolveTagToCommit(ctx, githubClient, apko.GitRemote, apko.GitTag)
+	if err != nil {
+		return apko.LatestVersion.ID, fmt.Errorf("resolve tag to commit: %w", err)
+	}
+
+	// Compare to the recorded SHA on the latest version
+	if currentSHA == apko.LatestVersion.GitCommitSHA {
+		logger.Debug("linked APKO git tag unchanged, no refresh needed",
+			zap.String("apkoId", apko.ID),
+			zap.String("git_tag", apko.GitTag),
+			zap.String("commit_sha", currentSHA))
+		return apko.LatestVersion.ID, nil
+	}
+
+	logger.Info("linked APKO git tag reassigned, creating new version",
+		zap.String("apkoId", apko.ID),
+		zap.String("git_tag", apko.GitTag),
+		zap.String("old_sha", apko.LatestVersion.GitCommitSHA),
+		zap.String("new_sha", currentSHA))
+
+	// Pull the updated APKO spec from git
+	apkoFilePath := apko.ApkoFilePath
+	if apkoFilePath == "" {
+		apkoFilePath = apko.LatestVersion.ApkoFilePath
+	}
+
+	specContent, err := gitspec.PullSpecFromGit(ctx, githubClient, apko.GitRemote, apkoFilePath, apko.GitTag)
+	if err != nil {
+		return apko.LatestVersion.ID, fmt.Errorf("pull apko spec from git: %w", err)
+	}
+
+	// Create a new image_apko_version row
+	newVersionID, err := securerandom.Hex(32)
+	if err != nil {
+		return apko.LatestVersion.ID, fmt.Errorf("generate version id: %w", err)
+	}
+
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	_, err = conn.Exec(ctx, `
+		INSERT INTO image_apko_version (id, image_apko_id, apko_yaml, created_at, updated_at, git_remote, apko_file_path, git_commit_sha)
+		VALUES ($1, $2, $3, NOW(), NOW(), $4, $5, $6)
+	`, newVersionID, apko.ID, specContent.Content, apko.GitRemote, apkoFilePath, currentSHA)
+	if err != nil {
+		return apko.LatestVersion.ID, fmt.Errorf("insert new image_apko_version: %w", err)
+	}
+
+	logger.Info("created new image_apko_version for linked APKO",
+		zap.String("apkoId", apko.ID),
+		zap.String("newVersionId", newVersionID),
+		zap.String("commit_sha", currentSHA))
+
+	return newVersionID, nil
 }

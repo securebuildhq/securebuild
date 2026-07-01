@@ -64,3 +64,9 @@ schema:
           notNull: true
       - name: image_tag_template
         type: text
+      - name: git_remote
+        type: text
+      - name: melange_file_path
+        type: text
+      - name: initial_tag
+        type: text

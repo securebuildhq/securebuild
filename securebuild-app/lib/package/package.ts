@@ -525,7 +525,7 @@ export async function getPackageVersionById(id: string): Promise<PackageVersion>
   try {
     const db = getDB(await getParam("DB_URI"));
 
-    const query = `select id, package_id, created_at, updated_at, version, melange_yaml, apk_release, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, custom_disk_size from package_version where id = $1`;
+    const query = `select id, package_id, created_at, updated_at, version, melange_yaml, apk_release, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, custom_disk_size, git_remote, melange_file_path, git_tag, git_commit_sha from package_version where id = $1`;
     const result = await db.query(query, [id]);
 
     return {
@@ -541,6 +541,10 @@ export async function getPackageVersionById(id: string): Promise<PackageVersion>
       bootstrapApkRepository: result.rows[0].bootstrap_apk_repository,
       bootstrapKeyringAppend: result.rows[0].bootstrap_keyring_append,
       customDiskSize: result.rows[0].custom_disk_size,
+      gitRemote: result.rows[0].git_remote || undefined,
+      melangeFilePath: result.rows[0].melange_file_path || undefined,
+      gitTag: result.rows[0].git_tag || undefined,
+      gitCommitSha: result.rows[0].git_commit_sha || undefined,
     }
   } catch (error) {
     console.error(error);
@@ -551,7 +555,7 @@ export async function getPackageVersion(pkgId: string, versionLabel: string, apk
   try {
     const db = getDB(await getParam("DB_URI"));
 
-    const query = `select id, package_id, created_at, updated_at, version, melange_yaml, apk_release, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, custom_disk_size from package_version where package_id = $1 and version = $2 and apk_release = $3`;
+    const query = `select id, package_id, created_at, updated_at, version, melange_yaml, apk_release, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, custom_disk_size, git_remote, melange_file_path, git_tag, git_commit_sha from package_version where package_id = $1 and version = $2 and apk_release = $3`;
     const result = await db.query(query, [pkgId, versionLabel, apkRelease]);
 
     return {
@@ -567,18 +571,21 @@ export async function getPackageVersion(pkgId: string, versionLabel: string, apk
       bootstrapApkRepository: result.rows[0].bootstrap_apk_repository,
       bootstrapKeyringAppend: result.rows[0].bootstrap_keyring_append,
       customDiskSize: result.rows[0].custom_disk_size,
+      gitRemote: result.rows[0].git_remote || undefined,
+      melangeFilePath: result.rows[0].melange_file_path || undefined,
+      gitTag: result.rows[0].git_tag || undefined,
+      gitCommitSha: result.rows[0].git_commit_sha || undefined,
     }
   } catch (error) {
     console.error(error);
     throw error;
   }
 }
-
 export async function getPackageVersionByVersionAndRelease(pkgId: string, versionLabel: string, apkRelease: number): Promise<PackageVersion> {
   try {
     const db = getDB(await getParam("DB_URI"));
 
-    const query = `select id, package_id, created_at, updated_at, version, melange_yaml, apk_release, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, custom_disk_size from package_version where package_id = $1 and version = $2 and apk_release = $3`;
+    const query = `select id, package_id, created_at, updated_at, version, melange_yaml, apk_release, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, custom_disk_size, git_remote, melange_file_path, git_tag, git_commit_sha from package_version where package_id = $1 and version = $2 and apk_release = $3`;
     const result = await db.query(query, [pkgId, versionLabel, apkRelease]);
 
     if (result.rows.length === 0) {
@@ -598,6 +605,10 @@ export async function getPackageVersionByVersionAndRelease(pkgId: string, versio
       bootstrapApkRepository: result.rows[0].bootstrap_apk_repository,
       bootstrapKeyringAppend: result.rows[0].bootstrap_keyring_append,
       customDiskSize: result.rows[0].custom_disk_size,
+      gitRemote: result.rows[0].git_remote || undefined,
+      melangeFilePath: result.rows[0].melange_file_path || undefined,
+      gitTag: result.rows[0].git_tag || undefined,
+      gitCommitSha: result.rows[0].git_commit_sha || undefined,
     }
   } catch (error) {
     console.error(error);

@@ -28,3 +28,9 @@ schema:
         constraints:
           notNull: true
         default: "false"
+      - name: git_remote
+        type: text
+      - name: apko_file_path
+        type: text
+      - name: image_tag_template
+        type: text

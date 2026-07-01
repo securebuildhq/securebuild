@@ -79,7 +79,17 @@ func handleBuildImage(ctx context.Context, payload string) error {
 	// Create image build records for each APKO version
 	var imageBuilds []*imagetypes.ImageBuild
 	for _, apko := range img.APKOs {
-		imageBuild, err := image.CreateImageBuild(ctx, apko.LatestVersion.ID)
+		// For linked APKOs, check if the git tag has been reassigned to a new commit.
+		// If so, create a new image_apko_version with the updated spec before building.
+		apkoVersionID, err := checkAndRefreshLinkedApko(ctx, apko)
+		if err != nil {
+			logger.Warn("failed to check/refresh linked APKO, proceeding with existing version",
+				zap.String("apkoId", apko.ID),
+				zap.Error(err))
+			apkoVersionID = apko.LatestVersion.ID
+		}
+
+		imageBuild, err := image.CreateImageBuild(ctx, apkoVersionID)
 		if err != nil {
 			return fmt.Errorf("failed to create image build record for APKO %s: %w", apko.ID, err)
 		}

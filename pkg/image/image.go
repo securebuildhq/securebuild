@@ -170,7 +170,7 @@ func GetImage(ctx context.Context, id string) (*types.Image, error) {
 	defer conn.Release()
 
 	query := `
-		SELECT id, name, created_at, updated_at, alternate_image, readme
+		SELECT id, name, created_at, updated_at, alternate_image, readme, git_remote, apko_file_path, image_tag_template
 		FROM image
 		WHERE id = $1
 	`
@@ -178,7 +178,8 @@ func GetImage(ctx context.Context, id string) (*types.Image, error) {
 	var image types.Image
 	var alternateImage string
 	var readme sql.NullString
-	if err := conn.QueryRow(ctx, query, id).Scan(&image.ID, &image.Name, &image.CreatedAt, &image.UpdatedAt, &alternateImage, &readme); err != nil {
+	var gitRemote, apkoFilePath, tagTemplate sql.NullString
+	if err := conn.QueryRow(ctx, query, id).Scan(&image.ID, &image.Name, &image.CreatedAt, &image.UpdatedAt, &alternateImage, &readme, &gitRemote, &apkoFilePath, &tagTemplate); err != nil {
 		return nil, err
 	}
 
@@ -190,6 +191,9 @@ func GetImage(ctx context.Context, id string) (*types.Image, error) {
 
 	image.AlternateImage = alternateImage
 	image.Readme = readme.String
+	image.GitRemote = gitRemote.String
+	image.ApkoFilePath = apkoFilePath.String
+	image.TagTemplate = tagTemplate.String
 
 	return &image, nil
 }
@@ -232,7 +236,7 @@ func listImageAPKOs(ctx context.Context, imageID string) ([]*types.ImageAPKO, er
 	defer conn.Release()
 
 	query := `
-		SELECT id, name, tags, created_at, updated_at, readme
+		SELECT id, name, tags, created_at, updated_at, readme, git_remote, git_tag, apko_file_path
 		FROM image_apko
 		WHERE image_id = $1
 	`
@@ -246,10 +250,14 @@ func listImageAPKOs(ctx context.Context, imageID string) ([]*types.ImageAPKO, er
 	for rows.Next() {
 		var apko types.ImageAPKO
 		var readme sql.NullString
-		if err := rows.Scan(&apko.ID, &apko.Name, &apko.Tags, &apko.CreatedAt, &apko.UpdatedAt, &readme); err != nil {
+		var gitRemote, gitTag, apkoFilePath sql.NullString
+		if err := rows.Scan(&apko.ID, &apko.Name, &apko.Tags, &apko.CreatedAt, &apko.UpdatedAt, &readme, &gitRemote, &gitTag, &apkoFilePath); err != nil {
 			return nil, err
 		}
 		apko.Readme = readme.String
+		apko.GitRemote = gitRemote.String
+		apko.GitTag = gitTag.String
+		apko.ApkoFilePath = apkoFilePath.String
 		apkos = append(apkos, &apko)
 	}
 	rows.Close()
@@ -270,7 +278,7 @@ func GetLatestImageAPKOVersion(ctx context.Context, apkoID string) (types.ImageA
 	defer conn.Release()
 
 	query := `
-		SELECT id, apko_yaml, created_at, updated_at
+		SELECT id, apko_yaml, created_at, updated_at, git_remote, apko_file_path, git_commit_sha
 		FROM image_apko_version
 		WHERE image_apko_id = $1
 		ORDER BY created_at DESC
@@ -279,9 +287,13 @@ func GetLatestImageAPKOVersion(ctx context.Context, apkoID string) (types.ImageA
 	row := conn.QueryRow(ctx, query, apkoID)
 
 	var version types.ImageAPKOVersion
-	if err := row.Scan(&version.ID, &version.APKOYAML, &version.CreatedAt, &version.UpdatedAt); err != nil {
+	var gitRemote, apkoFilePath, gitCommitSHA sql.NullString
+	if err := row.Scan(&version.ID, &version.APKOYAML, &version.CreatedAt, &version.UpdatedAt, &gitRemote, &apkoFilePath, &gitCommitSHA); err != nil {
 		return types.ImageAPKOVersion{}, err
 	}
+	version.GitRemote = gitRemote.String
+	version.ApkoFilePath = apkoFilePath.String
+	version.GitCommitSHA = gitCommitSHA.String
 
 	return version, nil
 }
@@ -292,16 +304,20 @@ func GetImageApkoVersion(ctx context.Context, imageApkoVersionID string) (types.
 	defer conn.Release()
 
 	query := `
-		SELECT id, image_apko_id, apko_yaml, created_at, updated_at
+		SELECT id, image_apko_id, apko_yaml, created_at, updated_at, git_remote, apko_file_path, git_commit_sha
 		FROM image_apko_version
 		WHERE id = $1
 	`
 	row := conn.QueryRow(ctx, query, imageApkoVersionID)
 
 	var version types.ImageAPKOVersion
-	if err := row.Scan(&version.ID, &version.ImageApkoID, &version.APKOYAML, &version.CreatedAt, &version.UpdatedAt); err != nil {
+	var gitRemote, apkoFilePath, gitCommitSHA sql.NullString
+	if err := row.Scan(&version.ID, &version.ImageApkoID, &version.APKOYAML, &version.CreatedAt, &version.UpdatedAt, &gitRemote, &apkoFilePath, &gitCommitSHA); err != nil {
 		return types.ImageAPKOVersion{}, err
 	}
+	version.GitRemote = gitRemote.String
+	version.ApkoFilePath = apkoFilePath.String
+	version.GitCommitSHA = gitCommitSHA.String
 
 	return version, nil
 }
@@ -376,7 +392,7 @@ func GetAPKO(ctx context.Context, id string) (*types.ImageAPKO, string, error) {
 	defer conn.Release()
 
 	query := `
-		SELECT ia.id, ia.name, ia.tags, ia.created_at, ia.updated_at, ia.readme, ia.image_id
+		SELECT ia.id, ia.name, ia.tags, ia.created_at, ia.updated_at, ia.readme, ia.image_id, ia.git_remote, ia.git_tag, ia.apko_file_path
 		FROM image_apko ia
 		WHERE ia.id = $1
 	`
@@ -384,10 +400,14 @@ func GetAPKO(ctx context.Context, id string) (*types.ImageAPKO, string, error) {
 	var apko types.ImageAPKO
 	var apkoReadme sql.NullString
 	var imageID string
-	if err := conn.QueryRow(ctx, query, id).Scan(&apko.ID, &apko.Name, &apko.Tags, &apko.CreatedAt, &apko.UpdatedAt, &apkoReadme, &imageID); err != nil {
+	var gitRemote, gitTag, apkoFilePath sql.NullString
+	if err := conn.QueryRow(ctx, query, id).Scan(&apko.ID, &apko.Name, &apko.Tags, &apko.CreatedAt, &apko.UpdatedAt, &apkoReadme, &imageID, &gitRemote, &gitTag, &apkoFilePath); err != nil {
 		return nil, "", err
 	}
 	apko.Readme = apkoReadme.String
+	apko.GitRemote = gitRemote.String
+	apko.GitTag = gitTag.String
+	apko.ApkoFilePath = apkoFilePath.String
 
 	latestVersion, err := GetLatestImageAPKOVersion(ctx, apko.ID)
 	if err != nil {
@@ -414,7 +434,7 @@ func GetImageAPKOVersionsByCustomBuildRequestID(ctx context.Context, customBuild
 	defer conn.Release()
 
 	query := `
-		SELECT id, image_apko_id, apko_yaml, created_at, updated_at
+		SELECT id, image_apko_id, apko_yaml, created_at, updated_at, git_remote, apko_file_path, git_commit_sha
 		FROM image_apko_version
 		WHERE custom_build_request_id = $1
 		ORDER BY created_at ASC
@@ -429,9 +449,13 @@ func GetImageAPKOVersionsByCustomBuildRequestID(ctx context.Context, customBuild
 	var apkoVersions []types.ImageAPKOVersion
 	for rows.Next() {
 		var version types.ImageAPKOVersion
-		if err := rows.Scan(&version.ID, &version.ImageApkoID, &version.APKOYAML, &version.CreatedAt, &version.UpdatedAt); err != nil {
+		var gitRemote, apkoFilePath, gitCommitSHA sql.NullString
+		if err := rows.Scan(&version.ID, &version.ImageApkoID, &version.APKOYAML, &version.CreatedAt, &version.UpdatedAt, &gitRemote, &apkoFilePath, &gitCommitSHA); err != nil {
 			return nil, fmt.Errorf("failed to scan image apko version: %w", err)
 		}
+		version.GitRemote = gitRemote.String
+		version.ApkoFilePath = apkoFilePath.String
+		version.GitCommitSHA = gitCommitSHA.String
 		apkoVersions = append(apkoVersions, version)
 	}
 

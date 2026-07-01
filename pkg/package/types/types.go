@@ -104,6 +104,12 @@ type PackageVersion struct {
 
 	// Custom disk size for build VMs (in GB)
 	CustomDiskSize *int `json:"customDiskSize"`
+
+	// Git link fields (set when the package version is from an external git repo)
+	GitRemote       string `json:"gitRemote"`
+	MelangeFilePath string `json:"melangeFilePath"`
+	GitTag          string `json:"gitTag"`
+	GitCommitSHA    string `json:"gitCommitSha"`
 }
 
 type AdditionalFile struct {

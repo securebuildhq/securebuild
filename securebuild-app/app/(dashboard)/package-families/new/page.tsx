@@ -10,9 +10,11 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { ArrowLeft, Loader2, Search } from "lucide-react"
+import { ArrowLeft, Loader2, Search, GitBranch } from "lucide-react"
 import { useSession } from "@/app/hooks/use-session"
 import { createPackageFamilyAction } from "@/lib/packagefamily/actions/create-package-family"
+import { createLinkedPackageFamilyAction } from "@/lib/packagefamily/actions/create-linked-package-family"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatVersion, parseVersion } from "@/lib/types/packagefamily"
 import { listAvailablePackagesAction, AvailablePackage } from "@/lib/packagefamily/actions/list-available-packages"
 import { getUpstreamConfigFromPackageAction } from "@/lib/packagefamily/actions/get-upstream-config"
@@ -53,6 +55,17 @@ export default function NewPackageFamilyPage() {
 
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState("select-packages")
+
+  // Linked repository form state
+  const [linkedName, setLinkedName] = useState("")
+  const [gitRemote, setGitRemote] = useState("")
+  const [melangeFilePath, setMelangeFilePath] = useState("")
+  const [initialTag, setInitialTag] = useState("")
+  const [isSavingLinked, setIsSavingLinked] = useState(false)
+  const [linkedError, setLinkedError] = useState<string | null>(null)
 
   // Load available packages
   useEffect(() => {
@@ -214,6 +227,45 @@ export default function NewPackageFamilyPage() {
     router.push("/package-families")
   }
 
+  const handleLinkedSave = async () => {
+    if (!session) return
+
+    if (!linkedName.trim()) {
+      setLinkedError("Name is required.")
+      return
+    }
+    if (!gitRemote.trim()) {
+      setLinkedError("Git remote is required.")
+      return
+    }
+    if (!melangeFilePath.trim()) {
+      setLinkedError("Melange file path is required.")
+      return
+    }
+    if (!initialTag.trim()) {
+      setLinkedError("Initial tag is required.")
+      return
+    }
+
+    setLinkedError(null)
+    setIsSavingLinked(true)
+
+    try {
+      const newFamily = await createLinkedPackageFamilyAction(session, {
+        name: linkedName.trim(),
+        gitRemote: gitRemote.trim(),
+        melangeFilePath: melangeFilePath.trim(),
+        initialTag: initialTag.trim(),
+      })
+      router.push(`/package-families/${newFamily.id}`)
+    } catch (err) {
+      console.error("Failed to create linked package family:", err)
+      setLinkedError("Failed to create linked package family. Please try again.")
+    } finally {
+      setIsSavingLinked(false)
+    }
+  }
+
   const testRegex = () => {
     if (!versionPattern || !testString) return null
     
@@ -259,393 +311,487 @@ export default function NewPackageFamilyPage() {
         </p>
       </div>
 
-      {error && (
-        <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
-          <p className="text-red-600 dark:text-red-400">{error}</p>
-        </div>
-      )}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-6">
+          <TabsTrigger value="select-packages">Select Packages</TabsTrigger>
+          <TabsTrigger value="link-repository">
+            <GitBranch className="h-4 w-4 mr-2" />
+            Link a repository
+          </TabsTrigger>
+        </TabsList>
 
-      {upstreamConfig && (
-        <div className="mb-4 flex gap-6 text-sm">
-          <div>
-            <span className="text-slate-600 dark:text-slate-400">
-              {upstreamConfig.upstreamType === 'github' ? 'GitHub: ' : 'Release Monitor: '}
-            </span>
-            {upstreamConfig.upstreamType === 'github' ? (
-              <a
-                href={`https://github.com/${upstreamConfig.upstreamIdentifier}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-blue-600 dark:text-blue-400 hover:underline"
-              >
-                {upstreamConfig.upstreamIdentifier}
-              </a>
-            ) : (
-              <a
-                href={`https://release-monitoring.org/project/${upstreamConfig.upstreamIdentifier}/`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-blue-600 dark:text-blue-400 hover:underline"
-              >
-                {upstreamConfig.upstreamIdentifier}
-              </a>
-            )}
-          </div>
-          {upstreamConfig.upstreamType === 'github' && upstreamConfig.useTags !== undefined && (
-            <div>
-              <span className="text-slate-600 dark:text-slate-400">Version Source: </span>
-              <span>{upstreamConfig.useTags ? "Tags" : "Releases"}</span>
+        <TabsContent value="select-packages" className="space-y-6">
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+              <p className="text-red-600 dark:text-red-400">{error}</p>
             </div>
           )}
-        </div>
-      )}
 
-      <div className="space-y-6">
-        {/* Package Selection - First */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Select Packages ({selectedPackages.length} selected)</CardTitle>
-            <CardDescription>
-              Choose packages to include in this family. At least one is required. The family name will be suggested based on your first selection.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {packagesLoading ? (
-              <div className="text-center py-8">
-                <p className="text-slate-600 dark:text-slate-400">Loading packages...</p>
-              </div>
-            ) : (
-              <>
-                <div className="space-y-4 mb-4">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                    <Input
-                      placeholder="Search packages..."
-                      value={packageSearchTerm}
-                      onChange={(e) => setPackageSearchTerm(e.target.value)}
-                      className="pl-9"
-                    />
-                  </div>
-                </div>
-
-                {selectedPackages.length > 0 && (
-                  <div className="mb-6">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-sm font-medium">Selected Packages:</h4>
-                    </div>
-                    <div className="space-y-2 max-h-48 overflow-y-auto border rounded p-2">
-                      {selectedPackages.map((pkg) => (
-                        <div key={pkg.id} className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-800 rounded">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-sm">{pkg.name}</span>
-                              {pkg.isTemplate && (
-                                <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded">
-                                  Template
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2 mt-1">
-                              <Input
-                                type="number"
-                                min={0}
-                                max={99}
-                                value={pkg.versionMajor}
-                                onChange={(e) => updatePackageVersion(pkg.id, 'versionMajor', parseInt(e.target.value) || 0)}
-                                className="w-16 h-7 text-xs"
-                              />
-                              <span className="text-xs">.</span>
-                              <Input
-                                type="number"
-                                min={0}
-                                max={99}
-                                value={pkg.versionMinor}
-                                onChange={(e) => updatePackageVersion(pkg.id, 'versionMinor', parseInt(e.target.value) || 0)}
-                                className="w-16 h-7 text-xs"
-                              />
-                              {!pkg.isTemplate && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setAsTemplate(pkg.id)}
-                                  className="h-7 text-xs"
-                                >
-                                  Set as Template
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => removePackage(pkg.id)}
-                            className="h-7 w-7 p-0"
-                          >
-                            ×
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="max-h-64 overflow-y-auto border rounded">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Package Name</TableHead>
-                        <TableHead>Version</TableHead>
-                        <TableHead />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredPackages.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={3} className="text-center py-4 text-slate-600 dark:text-slate-400">
-                            {packageSearchTerm ? "No packages found matching search" : "No packages available"}
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        filteredPackages.slice(0, 20).map((pkg) => (
-                          <TableRow key={pkg.id}>
-                            <TableCell className="font-medium">{pkg.name}</TableCell>
-                            <TableCell className="text-sm text-slate-600 dark:text-slate-400">
-                              {pkg.lastVersion}
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => addPackage(pkg)}
-                              >
-                                Add
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Basic Information - Now Second */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Basic Information</CardTitle>
-              <CardDescription>
-                Configure the basic details of your package family
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
-                <Input
-                  id="name"
-                  placeholder="e.g., replicated"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-                <p className="text-sm text-slate-600 dark:text-slate-400">
-                  A unique identifier for this package family (auto-suggested from first package)
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="packageNameTemplate">Package Name Template</Label>
-                <Input
-                  id="packageNameTemplate"
-                  placeholder="{name}-{major}.{minor}"
-                  value={packageNameTemplate}
-                  onChange={(e) => setPackageNameTemplate(e.target.value)}
-                />
-                <p className="text-sm text-slate-600 dark:text-slate-400">
-                  Template for package names using {"{name}"}, {"{major}"}, and {"{minor}"} variables.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="imageTagTemplate">Image Tag Template</Label>
-                <Input
-                  id="imageTagTemplate"
-                  placeholder="{major}.{minor}.{patch}"
-                  value={imageTagTemplate}
-                  onChange={(e) => setImageTagTemplate(e.target.value)}
-                />
-                <p className="text-sm text-slate-600 dark:text-slate-400">
-                  Optional template for image tags using {"{major}"}, {"{minor}"}, and {"{patch}"} variables.
-                  If not set, uses the full version as the tag.
-                </p>
-              </div>
-              
-              <p className="text-sm text-slate-600 dark:text-slate-400">
-                Upstream repository configuration will be read from the template package's melange YAML.
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Version Detection</CardTitle>
-              <CardDescription>
-                Configure how to detect and extract version numbers from upstream
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-slate-600 dark:text-slate-400">
-                Version source (Tags vs Releases) will be read from the template package's melange YAML.
-              </p>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="versionPattern">Version Pattern</Label>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowRegexTest(!showRegexTest)}
+          {upstreamConfig && (
+            <div className="mb-4 flex gap-6 text-sm">
+              <div>
+                <span className="text-slate-600 dark:text-slate-400">
+                  {upstreamConfig.upstreamType === 'github' ? 'GitHub: ' : 'Release Monitor: '}
+                </span>
+                {upstreamConfig.upstreamType === 'github' ? (
+                  <a
+                    href={`https://github.com/${upstreamConfig.upstreamIdentifier}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-blue-600 dark:text-blue-400 hover:underline"
                   >
-                    {showRegexTest ? "Hide Tester" : "Test Pattern"}
-                  </Button>
+                    {upstreamConfig.upstreamIdentifier}
+                  </a>
+                ) : (
+                  <a
+                    href={`https://release-monitoring.org/project/${upstreamConfig.upstreamIdentifier}/`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    {upstreamConfig.upstreamIdentifier}
+                  </a>
+                )}
+              </div>
+              {upstreamConfig.upstreamType === 'github' && upstreamConfig.useTags !== undefined && (
+                <div>
+                  <span className="text-slate-600 dark:text-slate-400">Version Source: </span>
+                  <span>{upstreamConfig.useTags ? "Tags" : "Releases"}</span>
                 </div>
-                <Input
-                  id="versionPattern"
-                  value={versionPattern}
-                  onChange={(e) => setVersionPattern(e.target.value)}
-                  placeholder="^(\d+)\.(\d+)(?:\.(\d+))?$"
-                />
-                <p className="text-sm text-slate-600 dark:text-slate-400">
-                  Regex pattern to extract version numbers. Must have at least 2 capture groups for major and minor versions. Patch version is optional.
-                </p>
+              )}
+            </div>
+          )}
 
-                {showRegexTest && (
-                  <div className="border rounded p-3 bg-slate-50 dark:bg-slate-800">
-                    <Label htmlFor="testString" className="text-sm font-medium">Test your pattern</Label>
-                    <Input
-                      id="testString"
-                      value={testString}
-                      onChange={(e) => setTestString(e.target.value)}
-                      placeholder="Enter a version like 'v1.2.3'"
-                      className="mt-2"
-                    />
-                    {testString && (
-                      <div className="mt-3 text-sm">
-                        {(() => {
-                          const result = testRegex()
-                          if (!result) return null
-                          
-                          if (result.error) {
-                            return (
-                              <div className="text-red-600 dark:text-red-400">
-                                <strong>Error:</strong> {result.error}
-                              </div>
-                            )
-                          }
-                          
-                          if (result.matches) {
-                            return (
-                              <div className="text-green-600 dark:text-green-400">
-                                <div><strong>✓ Match:</strong> "{result.fullMatch}"</div>
-                                <div className="mt-1">
-                                  <strong>Capture groups:</strong> 
-                                  {result.groups.length > 0 ? (
-                                    <span className="ml-2">
-                                      Major: <code>{result.groups[0]}</code>, 
-                                      Minor: <code>{result.groups[1] || 'missing'}</code>, 
-                                      Patch: <code>{result.groups[2] || 'missing'}</code>
+          <div className="space-y-6">
+            {/* Package Selection - First */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Select Packages ({selectedPackages.length} selected)</CardTitle>
+                <CardDescription>
+                  Choose packages to include in this family. At least one is required. The family name will be suggested based on your first selection.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {packagesLoading ? (
+                  <div className="text-center py-8">
+                    <p className="text-slate-600 dark:text-slate-400">Loading packages...</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-4 mb-4">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                        <Input
+                          placeholder="Search packages..."
+                          value={packageSearchTerm}
+                          onChange={(e) => setPackageSearchTerm(e.target.value)}
+                          className="pl-9"
+                        />
+                      </div>
+                    </div>
+
+                    {selectedPackages.length > 0 && (
+                      <div className="mb-6">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-medium">Selected Packages:</h4>
+                        </div>
+                        <div className="space-y-2 max-h-48 overflow-y-auto border rounded p-2">
+                          {selectedPackages.map((pkg) => (
+                            <div key={pkg.id} className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-800 rounded">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium text-sm">{pkg.name}</span>
+                                  {pkg.isTemplate && (
+                                    <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded">
+                                      Template
                                     </span>
-                                  ) : (
-                                    <span className="ml-2 text-orange-600 dark:text-orange-400">No capture groups found!</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    max={99}
+                                    value={pkg.versionMajor}
+                                    onChange={(e) => updatePackageVersion(pkg.id, 'versionMajor', parseInt(e.target.value) || 0)}
+                                    className="w-16 h-7 text-xs"
+                                  />
+                                  <span className="text-xs">.</span>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    max={99}
+                                    value={pkg.versionMinor}
+                                    onChange={(e) => updatePackageVersion(pkg.id, 'versionMinor', parseInt(e.target.value) || 0)}
+                                    className="w-16 h-7 text-xs"
+                                  />
+                                  {!pkg.isTemplate && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setAsTemplate(pkg.id)}
+                                      className="h-7 text-xs"
+                                    >
+                                      Set as Template
+                                    </Button>
                                   )}
                                 </div>
                               </div>
-                            )
-                          } else {
-                            return (
-                              <div className="text-red-600 dark:text-red-400">
-                                <strong>✗ No match</strong> - The pattern doesn't match this version
-                              </div>
-                            )
-                          }
-                        })()}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => removePackage(pkg.id)}
+                                className="h-7 w-7 p-0"
+                              >
+                                ×
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
-                  </div>
+
+                    <div className="max-h-64 overflow-y-auto border rounded">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Package Name</TableHead>
+                            <TableHead>Version</TableHead>
+                            <TableHead />
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {filteredPackages.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={3} className="text-center py-4 text-slate-600 dark:text-slate-400">
+                                {packageSearchTerm ? "No packages found matching search" : "No packages available"}
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            filteredPackages.slice(0, 20).map((pkg) => (
+                              <TableRow key={pkg.id}>
+                                <TableCell className="font-medium">{pkg.name}</TableCell>
+                                <TableCell className="text-sm text-slate-600 dark:text-slate-400">
+                                  {pkg.lastVersion}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => addPackage(pkg)}
+                                  >
+                                    Add
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
                 )}
-                
-                <div className="text-xs text-slate-500 dark:text-slate-500 bg-slate-50 dark:bg-slate-800 p-2 rounded">
-                  <p><strong>Examples:</strong></p>
-                  <p>• <code>^v(\d+)\.(\d+)\.(\d+)$</code> matches v1.2.3</p>
-                  <p>• <code>^(\d+)\.(\d+)\.(\d+)$</code> matches 1.2.3</p>
-                  <p>• <code>^release-(\d+)\.(\d+)\.(\d+)$</code> matches release-1.2.3</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Automation Settings</CardTitle>
-              <CardDescription>
-                Configure how the package family monitors and creates new package versions
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Automation Mode</Label>
-                <Select value={automationMode} onValueChange={(value) => setAutomationMode(value as 'disabled' | 'dry-run' | 'enabled')}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="disabled">Disabled</SelectItem>
-                    <SelectItem value="dry-run">Dry Run</SelectItem>
-                    <SelectItem value="enabled">Enabled</SelectItem>
-                  </SelectContent>
-                </Select>
-                <div className="text-sm text-slate-600 dark:text-slate-400">
-                  {automationMode === 'disabled' && "No monitoring - family is inactive"}
-                  {automationMode === 'dry-run' && "Monitor and log detected versions but don't create packages"}
-                  {automationMode === 'enabled' && "Monitor and automatically create packages for new versions"}
-                </div>
-              </div>
+            {/* Basic Information - Now Second */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Basic Information</CardTitle>
+                  <CardDescription>
+                    Configure the basic details of your package family
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Name</Label>
+                    <Input
+                      id="name"
+                      placeholder="e.g., replicated"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                    />
+                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                      A unique identifier for this package family (auto-suggested from first package)
+                    </p>
+                  </div>
 
-              {automationMode !== 'disabled' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="packageNameTemplate">Package Name Template</Label>
+                    <Input
+                      id="packageNameTemplate"
+                      placeholder="{name}-{major}.{minor}"
+                      value={packageNameTemplate}
+                      onChange={(e) => setPackageNameTemplate(e.target.value)}
+                    />
+                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                      Template for package names using {"{name}"}, {"{major}"}, and {"{minor}"} variables.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="imageTagTemplate">Image Tag Template</Label>
+                    <Input
+                      id="imageTagTemplate"
+                      placeholder="{major}.{minor}.{patch}"
+                      value={imageTagTemplate}
+                      onChange={(e) => setImageTagTemplate(e.target.value)}
+                    />
+                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                      Optional template for image tags using {"{major}"}, {"{minor}"}, and {"{patch}"} variables.
+                      If not set, uses the full version as the tag.
+                    </p>
+                  </div>
+                  
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    Upstream repository configuration will be read from the template package's melange YAML.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Version Detection</CardTitle>
+                  <CardDescription>
+                    Configure how to detect and extract version numbers from upstream
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    Version source (Tags vs Releases) will be read from the template package's melange YAML.
+                  </p>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="versionPattern">Version Pattern</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowRegexTest(!showRegexTest)}
+                      >
+                        {showRegexTest ? "Hide Tester" : "Test Pattern"}
+                      </Button>
+                    </div>
+                    <Input
+                      id="versionPattern"
+                      value={versionPattern}
+                      onChange={(e) => setVersionPattern(e.target.value)}
+                      placeholder="^(\d+)\.(\d+)(?:\.(\d+))?$"
+                    />
+                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                      Regex pattern to extract version numbers. Must have at least 2 capture groups for major and minor versions. Patch version is optional.
+                    </p>
+
+                    {showRegexTest && (
+                      <div className="border rounded p-3 bg-slate-50 dark:bg-slate-800">
+                        <Label htmlFor="testString" className="text-sm font-medium">Test your pattern</Label>
+                        <Input
+                          id="testString"
+                          value={testString}
+                          onChange={(e) => setTestString(e.target.value)}
+                          placeholder="Enter a version like 'v1.2.3'"
+                          className="mt-2"
+                        />
+                        {testString && (
+                          <div className="mt-3 text-sm">
+                            {(() => {
+                              const result = testRegex()
+                              if (!result) return null
+                              
+                              if (result.error) {
+                                return (
+                                  <div className="text-red-600 dark:text-red-400">
+                                    <strong>Error:</strong> {result.error}
+                                  </div>
+                                )
+                              }
+                              
+                              if (result.matches) {
+                                return (
+                                  <div className="text-green-600 dark:text-green-400">
+                                    <div><strong>✓ Match:</strong> "{result.fullMatch}"</div>
+                                    <div className="mt-1">
+                                      <strong>Capture groups:</strong> 
+                                      {result.groups.length > 0 ? (
+                                        <span className="ml-2">
+                                          Major: <code>{result.groups[0]}</code>, 
+                                          Minor: <code>{result.groups[1] || 'missing'}</code>, 
+                                          Patch: <code>{result.groups[2] || 'missing'}</code>
+                                        </span>
+                                      ) : (
+                                        <span className="ml-2 text-orange-600 dark:text-orange-400">No capture groups found!</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                )
+                              } else {
+                                return (
+                                  <div className="text-red-600 dark:text-red-400">
+                                    <strong>✗ No match</strong> - The pattern doesn't match this version
+                                  </div>
+                                )
+                              }
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    <div className="text-xs text-slate-500 dark:text-slate-500 bg-slate-50 dark:bg-slate-800 p-2 rounded">
+                      <p><strong>Examples:</strong></p>
+                      <p>• <code>^v(\d+)\.(\d+)\.(\d+)$</code> matches v1.2.3</p>
+                      <p>• <code>^(\d+)\.(\d+)\.(\d+)$</code> matches 1.2.3</p>
+                      <p>• <code>^release-(\d+)\.(\d+)\.(\d+)$</code> matches release-1.2.3</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Automation Settings</CardTitle>
+                  <CardDescription>
+                    Configure how the package family monitors and creates new package versions
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Automation Mode</Label>
+                    <Select value={automationMode} onValueChange={(value) => setAutomationMode(value as 'disabled' | 'dry-run' | 'enabled')}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="disabled">Disabled</SelectItem>
+                        <SelectItem value="dry-run">Dry Run</SelectItem>
+                        <SelectItem value="enabled">Enabled</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <div className="text-sm text-slate-600 dark:text-slate-400">
+                      {automationMode === 'disabled' && "No monitoring - family is inactive"}
+                      {automationMode === 'dry-run' && "Monitor and log detected versions but don't create packages"}
+                      {automationMode === 'enabled' && "Monitor and automatically create packages for new versions"}
+                    </div>
+                  </div>
+
+                  {automationMode !== 'disabled' && (
+                    <div className="space-y-2">
+                      <Label>Check Frequency</Label>
+                      <Select value={checkFrequencyMinutes.toString()} onValueChange={(value) => setCheckFrequencyMinutes(parseInt(value))}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="60">1 hour</SelectItem>
+                          <SelectItem value="180">3 hours</SelectItem>
+                          <SelectItem value="360">6 hours</SelectItem>
+                          <SelectItem value="720">12 hours</SelectItem>
+                          <SelectItem value="1440">24 hours</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          <div className="flex justify-end space-x-4 pt-6">
+            <Button variant="outline" onClick={handleCancel} disabled={isSaving}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={isSaving || selectedPackages.length === 0}>
+              {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Create Package Family
+            </Button>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="link-repository" className="space-y-6">
+          {linkedError && (
+            <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+              <p className="text-red-600 dark:text-red-400">{linkedError}</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Link a Repository</CardTitle>
+                <CardDescription>
+                  Create a package family linked to an external git repository containing melange YAML files.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label>Check Frequency</Label>
-                  <Select value={checkFrequencyMinutes.toString()} onValueChange={(value) => setCheckFrequencyMinutes(parseInt(value))}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="60">1 hour</SelectItem>
-                      <SelectItem value="180">3 hours</SelectItem>
-                      <SelectItem value="360">6 hours</SelectItem>
-                      <SelectItem value="720">12 hours</SelectItem>
-                      <SelectItem value="1440">24 hours</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="linked-name">Name</Label>
+                  <Input
+                    id="linked-name"
+                    placeholder="e.g., replicated"
+                    value={linkedName}
+                    onChange={(e) => setLinkedName(e.target.value)}
+                  />
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    A unique identifier for this package family.
+                  </p>
                 </div>
-              )}
 
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+                <div className="space-y-2">
+                  <Label htmlFor="git-remote">Git Remote</Label>
+                  <Input
+                    id="git-remote"
+                    placeholder="https://github.com/owner/repo.git"
+                    value={gitRemote}
+                    onChange={(e) => setGitRemote(e.target.value)}
+                  />
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    The git remote URL to clone.
+                  </p>
+                </div>
 
-      <div className="flex justify-end space-x-4 pt-6">
-        <Button variant="outline" onClick={handleCancel} disabled={isSaving}>
-          Cancel
-        </Button>
-        <Button onClick={handleSave} disabled={isSaving || selectedPackages.length === 0}>
-          {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-          Create Package Family
-        </Button>
-      </div>
+                <div className="space-y-2">
+                  <Label htmlFor="melange-file-path">Path to Melange File</Label>
+                  <Input
+                    id="melange-file-path"
+                    placeholder="e.g., melange.yaml"
+                    value={melangeFilePath}
+                    onChange={(e) => setMelangeFilePath(e.target.value)}
+                  />
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    Path to the melange YAML file relative to the repository root, including filename.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="initial-tag">Initial Tag</Label>
+                  <Input
+                    id="initial-tag"
+                    placeholder="e.g., v1.0.0"
+                    value={initialTag}
+                    onChange={(e) => setInitialTag(e.target.value)}
+                  />
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    The git tag to clone initially. Only tags are supported.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="flex justify-end space-x-4 pt-6">
+            <Button variant="outline" onClick={handleCancel} disabled={isSavingLinked}>
+              Cancel
+            </Button>
+            <Button onClick={handleLinkedSave} disabled={isSavingLinked}>
+              {isSavingLinked && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Create Linked Package Family
+            </Button>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
