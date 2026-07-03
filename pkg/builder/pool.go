@@ -73,6 +73,7 @@ const (
 	TerminationReasonTaskCompleted  = "task_completed"
 	TerminationReasonBuildEnvFailed = "build_env_failed"
 	TerminationReasonTaskFailed     = "task_failed"
+	TerminationReasonOrphaned       = "orphaned"
 )
 
 var (
@@ -209,6 +210,120 @@ func deleteInstallingBuilders(ctx context.Context) error {
 	return nil
 }
 
+// listCMXVMIDs returns the set of VM IDs that currently exist in CMX. It calls
+// the GET /v3/vms endpoint and collects the "id" (short ID) of every returned VM.
+func listCMXVMIDs(ctx context.Context) (map[string]bool, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v3/vms", param.GetParam(ctx).ReplicatedAPIOrigin), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create list VMs request: %w", err)
+	}
+
+	req.Header.Set("Authorization", param.GetParam(ctx).ReplicatedAPIToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list VMs from CMX: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read list VMs response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list VMs returned unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	type listVMsResponse struct {
+		VMs []types.CMXVM `json:"vms"`
+	}
+
+	var response listVMsResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal list VMs response: %w", err)
+	}
+
+	ids := make(map[string]bool, len(response.VMs))
+	for _, vm := range response.VMs {
+		ids[vm.ID] = true
+	}
+	return ids, nil
+}
+
+// deleteOrphanedMachines removes machine_pool rows whose VM no longer exists in
+// CMX, regardless of their local status. This reclaims builders left behind by
+// crashed/restarted workers: those rows are owned by a machine_id that no running
+// worker reconciles, so the per-machine_id pool sizing never trims them and
+// expired-machines cleanup can't touch rows with expires_at IS NULL.
+//
+// Safety: if the CMX list call fails for any reason, this function returns the
+// error and deletes nothing. An empty VM list is treated as an error rather than
+// "delete everything", so a transient API outage can never wipe the pool.
+func deleteOrphanedMachines(ctx context.Context) error {
+	if param.GetParam(ctx).BuildBackend != "cmx" {
+		return nil
+	}
+
+	cmxVMIDs, err := listCMXVMIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list CMX VMs, skipping orphan cleanup: %w", err)
+	}
+
+	if len(cmxVMIDs) == 0 {
+		logger.Warn("CMX returned zero VMs, skipping orphan cleanup to avoid deleting live builders")
+		return nil
+	}
+
+	conn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
+	if err != nil {
+		logger.Warn("failed to get database connection for orphaned machine cleanup", zap.Error(err))
+		return err
+	}
+	defer conn.Release()
+
+	query := `select id from machine_pool where type = 'cmx'`
+	rows, err := conn.Query(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to query machine pool for orphan check: %w", err)
+	}
+	defer rows.Close()
+
+	var orphanedIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			logger.Error(fmt.Errorf("failed to scan machine ID for orphan check: %w", err))
+			continue
+		}
+		if !cmxVMIDs[id] {
+			orphanedIDs = append(orphanedIDs, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed iterating machine pool rows for orphan check: %w", err)
+	}
+
+	if len(orphanedIDs) == 0 {
+		return nil
+	}
+
+	logger.Info("found orphaned machines not present in CMX",
+		zap.Int("count", len(orphanedIDs)),
+		zap.Int("cmxVMCount", len(cmxVMIDs)))
+
+	for _, vmID := range orphanedIDs {
+		logger.Info("deleting orphaned machine not present in CMX", zap.String("vmID", vmID))
+		if err := DeleteVMWithReason(ctx, vmID, TerminationReasonOrphaned); err != nil {
+			logger.Error(fmt.Errorf("failed to delete orphaned VM %s: %w", vmID, err))
+			continue
+		}
+	}
+
+	return nil
+}
+
 func deleteMachinesWithoutArchitecture(ctx context.Context) error {
 	conn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
 	if err != nil {
@@ -251,6 +366,10 @@ func deleteMachinesWithoutArchitecture(ctx context.Context) error {
 func CreatePool(ctx context.Context) error {
 	if err := deleteInstallingBuilders(ctx); err != nil {
 		logger.Error(fmt.Errorf("failed to delete installing builders: %w", err))
+	}
+
+	if err := deleteOrphanedMachines(ctx); err != nil {
+		logger.Error(fmt.Errorf("failed to delete orphaned machines: %w", err))
 	}
 
 	if err := deleteMachinesWithoutArchitecture(ctx); err != nil {
@@ -322,11 +441,15 @@ func CreatePool(ctx context.Context) error {
 					logger.Error(err)
 				}
 
+				// Clean up machines whose VM no longer exists in CMX
+				if err := deleteOrphanedMachines(ctx); err != nil {
+					logger.Error(err)
+				}
+
 				// Clean up stale cleanup locks
 				if err := cleanupStaleLocks(ctx); err != nil {
 					logger.Error(err)
 				}
-
 				// Check and update VM statuses
 				machines, err := listMachines(ctx, machineID)
 				if err != nil {
