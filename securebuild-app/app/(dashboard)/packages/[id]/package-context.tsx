@@ -387,6 +387,59 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
+  const handleBuildLinked = async () => {
+    if (!session || !pkg) return
+    setIsSavingAndBuilding(true)
+    try {
+      if (!selectedVersion) {
+        setErrorMessage("Please select a version to build.")
+        setErrorModalOpen(true)
+        return
+      }
+
+      const versionInfo = parseVersionKey(selectedVersion)
+      if (!versionInfo) {
+        setErrorMessage("Invalid version format.")
+        setErrorModalOpen(true)
+        return
+      }
+
+      // Trigger the build without saving (linked versions are read-only)
+      await buildPackageVersionAction(session, pkg.id, versionInfo.version, versionInfo.apkRelease)
+
+      setSuccessMessage("Build triggered successfully!")
+      setSuccessModalOpen(true)
+
+      // Refresh executions to show the new build
+      const refreshExecutions = async (retries = 5, delay = 1000) => {
+        const filters: ExecutionFilters = {
+          packageId: pkg.id,
+          limit: 20
+        }
+
+        try {
+          const { executions: packageExecutions } = await listExecutionsAction(session, filters)
+          const transformedExecutions: Execution[] = transformExecutions(packageExecutions)
+          setExecutions(transformedExecutions)
+        } catch (error) {
+          console.error("Failed to refresh executions after build:", error)
+          if (retries > 0) {
+            setTimeout(() => refreshExecutions(retries - 1, delay), delay)
+          }
+        }
+      }
+
+      setTimeout(() => refreshExecutions(), 1000)
+
+    } catch (error) {
+      console.error("Error building linked package:", error)
+      setErrorMessage(`Error: ${error instanceof Error ? error.message : "An unknown error occurred"}`)
+      setErrorModalOpen(true)
+    } finally {
+      setIsSavingAndBuilding(false)
+    }
+  }
+
   const handleSetDeleteProtection = async (isDeleteProtectionEnabled: boolean) => {
     if (!session || !pkg) return
     try {
@@ -777,7 +830,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
     setTriggerModalOpen, isSavingConfig, isCreatingVersion, isCreatingRelease,
     originalMelangeYaml, useRoot, setUseRoot, bootstrapEnabled, setBootstrapEnabled,
     bootstrapApkRepository, setBootstrapApkRepository, bootstrapKeyringAppend, setBootstrapKeyringAppend,
-    customDiskSize, setCustomDiskSize, handleSaveConfiguration, handleSaveAndBuild, isSavingAndBuilding, handleCreateVersion, handleCreateRelease,
+    customDiskSize, setCustomDiskSize, handleSaveConfiguration, handleSaveAndBuild, handleBuildLinked, isSavingAndBuilding, handleCreateVersion, handleCreateRelease,
     handleExecuteTrigger, renderVersionSelector, createVersionKey,
     parseVersionKey, session, user, isSessionLoading, id, activeTab,
     handleSetDeleteProtection, handleBuildPackageChain, isBuildingPackageChain,

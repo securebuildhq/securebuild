@@ -23,7 +23,7 @@ export default function PackageDetailPage() {
     useRoot, setUseRoot, bootstrapEnabled, setBootstrapEnabled,
     bootstrapApkRepository, setBootstrapApkRepository, bootstrapKeyringAppend, setBootstrapKeyringAppend,
     customDiskSize, setCustomDiskSize, dependencies,
-    dependenciesLoading, handleSaveConfiguration, handleSaveAndBuild, isSavingAndBuilding, renderVersionSelector,
+    dependenciesLoading, handleSaveConfiguration, handleSaveAndBuild, handleBuildLinked, isSavingAndBuilding, renderVersionSelector,
     parseVersionKey, selectedVersion, session, activeTab, handleSetDeleteProtection, getLastSuccessfulBuildDuration,
     isLastBuildTimedOut, getLastSuccessfulBuildSettings, isSelectedRevisionImmutable
   } = usePackageContext()
@@ -512,6 +512,15 @@ export default function PackageDetailPage() {
             </div>
             {/* Save Configuration Buttons */}
             <div className="mt-4 flex justify-end gap-2">
+              {isLinkedRevision ? (
+                <Button
+                  onClick={handleBuildLinked}
+                  disabled={isSavingAndBuilding || isSelectedRevisionImmutable()}
+                >
+                  {isSavingAndBuilding ? "Building..." : "Build"}
+                </Button>
+              ) : (
+                <>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span>
@@ -563,6 +572,8 @@ export default function PackageDetailPage() {
                   </TooltipContent>
                 )}
               </Tooltip>
+                </>
+              )}
             </div>
               </TooltipProvider>
             </div>
