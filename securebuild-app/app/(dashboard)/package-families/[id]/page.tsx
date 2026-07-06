@@ -619,16 +619,8 @@ export default function PackageFamilyDetailsPage() {
                   <p className="text-sm font-mono">{packageFamily.melangeFilePath || "-"}</p>
                 </div>
                 <div>
-                  <Label className="text-sm font-medium">Git Tag (Latest Version)</Label>
-                  <p className="text-sm font-mono">
-                    {packageFamily.packages?.[0]?.gitTag || packageFamily.gitTag || "-"}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Git Commit SHA (Latest Version)</Label>
-                  <p className="text-sm font-mono">
-                    {packageFamily.packages?.[0]?.gitCommitSha || packageFamily.gitCommitSha || "-"}
-                  </p>
+                  <Label className="text-sm font-medium">Initial Tag</Label>
+                  <p className="text-sm font-mono">{packageFamily.initialTag || "-"}</p>
                 </div>
               </CardContent>
             </Card>

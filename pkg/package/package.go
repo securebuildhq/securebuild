@@ -553,7 +553,7 @@ func changeVersionInMelangeYAML(ctx context.Context, melangeYAML string, version
 		zap.String("commit", commit),
 	)
 
-	result, _, err := gitspec.OverrideVersionAndEpochInMelange(melangeYAML, version, 0)
+	result, _, err := gitspec.OverrideVersionAndEpochInMelange(melangeYAML, version, 0, "")
 	if err != nil {
 		return "", fmt.Errorf("override version/epoch: %w", err)
 	}

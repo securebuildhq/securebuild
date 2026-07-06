@@ -7,13 +7,14 @@ import (
 	"github.com/Masterminds/semver"
 )
 
-// OverrideVersionAndEpochInMelange replaces the version and epoch fields in the
+// OverrideVersionAndEpochInMelange replaces the name, version, and epoch fields in the
 // melange YAML using a line-by-line approach that preserves the original formatting.
 // Only the first occurrence of each field is replaced. The git tag is the
-// authoritative source of the version; the melange file's own package.version
-// and package.epoch are overridden.
+// authoritative source of the version; the melange file's own package.name,
+// package.version, and package.epoch are overridden.
+// packageName is generated from the package family's name template.
 // Returns the modified YAML content and the version string derived from the tag.
-func OverrideVersionAndEpochInMelange(melangeYAML string, gitTag string, epoch int) (string, string, error) {
+func OverrideVersionAndEpochInMelange(melangeYAML string, gitTag string, epoch int, packageName string) (string, string, error) {
 	v, err := semver.NewVersion(gitTag)
 	if err != nil {
 		return "", "", fmt.Errorf("parse git tag %q as semver: %w", gitTag, err)
@@ -26,12 +27,18 @@ func OverrideVersionAndEpochInMelange(melangeYAML string, gitTag string, epoch i
 	versionStr := v.String()
 
 	lines := strings.Split(melangeYAML, "\n")
+	nameReplaced := false
 	versionReplaced := false
 	epochReplaced := false
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		leadingWhitespace := line[:len(line)-len(trimmed)]
+
+		if !nameReplaced && packageName != "" && strings.HasPrefix(trimmed, "name:") {
+			lines[i] = fmt.Sprintf("%sname: %q", leadingWhitespace, packageName)
+			nameReplaced = true
+		}
 
 		if !versionReplaced && strings.HasPrefix(trimmed, "version:") {
 			lines[i] = fmt.Sprintf("%sversion: %q", leadingWhitespace, versionStr)
@@ -43,7 +50,7 @@ func OverrideVersionAndEpochInMelange(melangeYAML string, gitTag string, epoch i
 			epochReplaced = true
 		}
 
-		if versionReplaced && epochReplaced {
+		if nameReplaced && versionReplaced && epochReplaced {
 			break
 		}
 	}

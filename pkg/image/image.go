@@ -176,7 +176,7 @@ func GetImage(ctx context.Context, id string) (*types.Image, error) {
 	`
 
 	var image types.Image
-	var alternateImage string
+	var alternateImage sql.NullString
 	var readme sql.NullString
 	var gitRemote, apkoFilePath, tagTemplate sql.NullString
 	if err := conn.QueryRow(ctx, query, id).Scan(&image.ID, &image.Name, &image.CreatedAt, &image.UpdatedAt, &alternateImage, &readme, &gitRemote, &apkoFilePath, &tagTemplate); err != nil {
@@ -189,7 +189,7 @@ func GetImage(ctx context.Context, id string) (*types.Image, error) {
 	}
 	image.APKOs = apkos
 
-	image.AlternateImage = alternateImage
+	image.AlternateImage = alternateImage.String
 	image.Readme = readme.String
 	image.GitRemote = gitRemote.String
 	image.ApkoFilePath = apkoFilePath.String

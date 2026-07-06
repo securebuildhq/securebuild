@@ -983,7 +983,11 @@ export async function getLatestRevisionByVersion(pkgId: string, version: string)
         bootstrap_enabled,
         bootstrap_apk_repository,
         bootstrap_keyring_append,
-        custom_disk_size
+        custom_disk_size,
+        git_remote,
+        melange_file_path,
+        git_tag,
+        git_commit_sha
       FROM package_version
       WHERE package_id = $1 AND version = $2
       ORDER BY apk_release DESC
@@ -1008,7 +1012,11 @@ export async function getLatestRevisionByVersion(pkgId: string, version: string)
       bootstrapEnabled: row.bootstrap_enabled,
       bootstrapApkRepository: row.bootstrap_apk_repository,
       bootstrapKeyringAppend: row.bootstrap_keyring_append,
-      customDiskSize: row.custom_disk_size
+      customDiskSize: row.custom_disk_size,
+      gitRemote: row.git_remote || undefined,
+      melangeFilePath: row.melange_file_path || undefined,
+      gitTag: row.git_tag || undefined,
+      gitCommitSha: row.git_commit_sha || undefined,
     };
   } catch (err) {
     console.error(err);
@@ -1041,9 +1049,9 @@ export async function createPackageRelease(
     await withTransaction(db, async (client) => {
       // Get current subpackages from database
       const currentSubpackages = await listSubpackages(client, pkgId);
-      // Insert new package version
-      const query = `insert into package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, use_root) values ($1, $2, $3, $4, now(), now(), $5, $6)`;
-      await client.query(query, [id, pkgId, version, melangeYaml, newRelease, currentVersion.useRoot]);
+      // Insert new package version, copying git link fields from the previous version
+      const query = `insert into package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, use_root, git_remote, melange_file_path, git_tag, git_commit_sha) values ($1, $2, $3, $4, now(), now(), $5, $6, $7, $8, $9, $10)`;
+      await client.query(query, [id, pkgId, version, melangeYaml, newRelease, currentVersion.useRoot, currentVersion.gitRemote || null, currentVersion.melangeFilePath || null, currentVersion.gitTag || null, currentVersion.gitCommitSha || null]);
 
       // Update provides data
       const { writePackageVersionProvides } = await import('./provides');

@@ -1,5 +1,5 @@
 import { execSync } from "child_process";
-import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, rmSync } from "fs";
+import { existsSync, readFileSync, readdirSync, lstatSync, mkdirSync, rmSync } from "fs";
 import { join, relative, dirname, basename } from "path";
 import { tmpdir } from "os";
 import * as semver from "semver";
@@ -126,7 +126,10 @@ function collectAdditionalFiles(
       if (entry === ".git") continue;
 
       const fullPath = join(dir, entry);
-      const stat = statSync(fullPath);
+      const stat = lstatSync(fullPath);
+
+      // Skip symlinks entirely — do not follow them
+      if (stat.isSymbolicLink()) continue;
 
       if (stat.isDirectory()) {
         walk(fullPath);
