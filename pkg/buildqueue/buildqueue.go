@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -120,6 +121,17 @@ func ProcessRebuildChains(ctx context.Context) error {
 				zap.String("chainName", chainName),
 				zap.String("packageName", packageName),
 				zap.String("linkId", linkID))
+
+			// If the error is not retryable (e.g. the package version was deleted),
+			// record a failed execution so the queue won't keep retrying this link.
+			// For other errors, allow the queue to retry on the next cycle.
+			if errors.Is(err, listener.ErrNotRetryable) {
+				if recordErr := recordFailedExecutionForLink(ctx, packageID, linkID, chainName); recordErr != nil {
+					logger.Error(fmt.Errorf("failed to record failed execution for link; queue may retry same package: %w", recordErr),
+						zap.String("linkId", linkID),
+						zap.String("packageName", packageName))
+				}
+			}
 			continue
 		}
 	}

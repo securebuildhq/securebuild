@@ -19,6 +19,7 @@ import (
 
 var (
 	ErrExecutionPaused = errors.New("execution is paused")
+	ErrNotRetryable    = errors.New("not retryable")
 )
 
 type BuildPackagePayload struct {
@@ -70,7 +71,7 @@ func HandleBuildPackage(ctx context.Context, payload string) error {
 	if buildPackagePayload.PackageVersionID != "" {
 		pkgVersion, err = sbpackage.GetPackageVersion(ctx, buildPackagePayload.PackageVersionID)
 		if err != nil {
-			return fmt.Errorf("failed to get package version: %w", err)
+			return fmt.Errorf("%w: failed to get package version: %w", ErrNotRetryable, err)
 		}
 	} else {
 		// if the most recent package version built, we need a new one
