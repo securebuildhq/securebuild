@@ -78,6 +78,14 @@ export async function updatePackageAction(sess: Session, id: string, version: st
   const hasMelangeYamlChanged = opts.melangeYaml && (opts.melangeYaml !== pkgVersion.melangeYaml);
   const hasCustomDiskSizeChanged = opts.customDiskSize !== undefined && opts.customDiskSize !== pkgVersion.customDiskSize;
 
+  // Linked package versions cannot be edited — specs are pulled from git
+  if (pkgVersion.gitRemote && hasMelangeYamlChanged) {
+    return {
+      isFailed: true,
+      message: "Cannot edit melange yaml for a linked package version. Create a new release instead."
+    }
+  }
+
   // we cannot update the melage yaml or custom disk size if the package version has been built successfully
   const lastExecution = await getLastExecutionForPackageVersion(pkgVersion.id);
   if (lastExecution) {

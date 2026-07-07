@@ -56,3 +56,11 @@ schema:
         type: text
       - name: custom_disk_size
         type: integer
+      - name: git_remote
+        type: text
+      - name: melange_file_path
+        type: text
+      - name: git_tag
+        type: text
+      - name: git_commit_sha
+        type: text

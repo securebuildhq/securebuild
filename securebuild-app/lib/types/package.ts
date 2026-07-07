@@ -33,6 +33,10 @@ export interface PackageVersion {
   bootstrapApkRepository?: string | null;
   bootstrapKeyringAppend?: string | null;
   customDiskSize?: number | null;
+  gitRemote?: string;
+  melangeFilePath?: string;
+  gitTag?: string;
+  gitCommitSha?: string;
 }
 
 export enum PackageBuildStatus {

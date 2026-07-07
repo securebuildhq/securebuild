@@ -27,4 +27,10 @@ schema:
           notNull: true
       - name: custom_build_request_id
         type: text
+      - name: git_remote
+        type: text
+      - name: apko_file_path
+        type: text
+      - name: git_commit_sha
+        type: text
 

@@ -29,6 +29,7 @@ import (
 	"github.com/google/go-github/v61/github"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/securebuildhq/securebuild/pkg/gitspec"
 	"github.com/securebuildhq/securebuild/pkg/image"
 	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
@@ -38,6 +39,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/releasemonitor"
+	"github.com/tuvistavie/securerandom"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"gopkg.in/yaml.v3"
@@ -160,6 +162,21 @@ func performPackageFamilyUpdateCheck(ctx context.Context, p *PackageFamilyUpdate
 	// Log automation mode
 	if packageFamily.DryRunMode {
 		logger.Info("Package family in dry run mode", zap.String("package_family_id", p.PackageFamilyID))
+	}
+
+	// Git-linked package families use a separate flow: detect tags from the git remote,
+	// pull specs from git, and create package versions with git link metadata.
+	if packageFamily.GitRemote.Valid && packageFamily.GitRemote.String != "" {
+		var githubClient *github.Client
+		if githubToken := param.GetParam(ctx).UpdaterGithubAPIToken; githubToken != "" {
+			ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
+			tc := oauth2.NewClient(ctx, ts)
+			githubClient = github.NewClient(tc)
+		} else {
+			githubClient = github.NewClient(nil)
+			logger.Warn("No GitHub API token found, using unauthenticated client")
+		}
+		return performGitLinkedUpdateCheck(ctx, githubClient, packageFamily)
 	}
 
 	// Get the current highest version for this family to extract upstream config
@@ -323,7 +340,795 @@ func performPackageFamilyUpdateCheck(ctx context.Context, p *PackageFamilyUpdate
 	return nil
 }
 
-// processPackageFamilyVersion processes a single detected version for a package family
+// performGitLinkedUpdateCheck handles the update check for git-linked package families.
+// Instead of using the melange YAML's update block, it lists tags from the git remote,
+// filters by semver, and creates package versions by pulling specs from git.
+func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily) error {
+	gitRemote := pf.GitRemote.String
+	melangeFilePath := pf.MelangeFilePath.String
+
+	logger.Info("Performing git-linked update check",
+		zap.String("package_family_id", pf.ID),
+		zap.String("git_remote", gitRemote),
+		zap.String("melange_file_path", melangeFilePath))
+
+	// List all tags from the git repo
+	tags, err := gitspec.ListTags(ctx, githubClient, gitRemote)
+	if err != nil {
+		return fmt.Errorf("failed to list tags from %s: %w", gitRemote, err)
+	}
+
+	// Parse and filter tags: only semver, no pre-release
+	var semverTags []*semver.Version
+	for _, tag := range tags {
+		v, err := semver.NewVersion(tag)
+		if err != nil {
+			continue
+		}
+		if v.Prerelease() != "" {
+			continue
+		}
+		semverTags = append(semverTags, v)
+	}
+
+	// Sort descending (newest first)
+	sort.Sort(sort.Reverse(semver.Collection(semverTags)))
+
+	// Get existing versions and their git tags from the database
+	existingVersions, err := getExistingVersionsForFamily(ctx, pf)
+	if err != nil {
+		return fmt.Errorf("failed to get existing versions: %w", err)
+	}
+
+	// Build a map of existing version strings for quick lookup
+	existingVersionSet := make(map[string]bool)
+	for _, v := range existingVersions {
+		existingVersionSet[v.Version] = true
+	}
+
+	// Determine the floor version: the highest existing version in the DB,
+	// or the initial_tag if no versions exist yet.
+	var floorVersion *semver.Version
+	for _, v := range existingVersions {
+		parsed, err := semver.NewVersion(v.Version)
+		if err != nil {
+			continue
+		}
+		if floorVersion == nil || parsed.GreaterThan(floorVersion) {
+			floorVersion = parsed
+		}
+	}
+
+	// If no existing versions, use the initial_tag from the package family as the floor.
+	// The initial_tag is the starting point — tags at or newer than it should be processed.
+	usingInitialTag := false
+	if floorVersion == nil && pf.InitialTag.Valid && pf.InitialTag.String != "" {
+		if parsed, err := semver.NewVersion(pf.InitialTag.String); err == nil {
+			floorVersion = parsed
+			usingInitialTag = true
+		}
+	}
+
+	if floorVersion != nil {
+		logger.Info("Git-linked update check floor",
+			zap.String("package_family_id", pf.ID),
+			zap.String("floor_version", floorVersion.String()),
+			zap.Bool("from_initial_tag", usingInitialTag))
+	}
+
+	// Filter tags: only keep those newer than the floor.
+	// When using initial_tag, include the initial tag itself (>=).
+	// When using existing versions, only newer tags (>).
+	var filteredTags []*semver.Version
+	for _, v := range semverTags {
+		if floorVersion != nil {
+			if usingInitialTag {
+				if v.LessThan(floorVersion) {
+					continue
+				}
+			} else {
+				if !v.GreaterThan(floorVersion) {
+					continue
+				}
+			}
+		}
+		filteredTags = append(filteredTags, v)
+	}
+
+	// Also get existing git tags and their commit SHAs to detect re-tags
+	existingGitTags, err := getExistingGitTagsForFamily(ctx, pf)
+	if err != nil {
+		return fmt.Errorf("failed to get existing git tags: %w", err)
+	}
+
+	// Determine which tags are new or re-tagged
+	var updateResults []*UpdateResult
+	for _, v := range filteredTags {
+		versionStr := v.Original()
+		tagStr := versionStr
+
+		// Skip if version already exists and tag hasn't been re-assigned
+		if existingVersionSet[versionStr] {
+			// Check if the tag has been re-assigned to a new commit
+			existingSHA, exists := existingGitTags[tagStr]
+			if !exists {
+				// Version exists but we don't have a git_tag recorded (non-linked version)
+				// Skip — this version was created before the git link
+				continue
+			}
+
+			// Resolve the current tag to a commit SHA
+			currentSHA, err := gitspec.ResolveTagToCommit(ctx, githubClient, gitRemote, tagStr)
+			if err != nil {
+				logger.Warn("Failed to resolve tag to commit, skipping",
+					zap.String("tag", tagStr),
+					zap.Error(err))
+				continue
+			}
+
+			if currentSHA == existingSHA {
+				// Tag points to the same commit — no change
+				continue
+			}
+
+			// Tag has been re-assigned to a new commit — create a new revision
+			result, err := processGitLinkedRetag(ctx, githubClient, pf, v, tagStr, currentSHA, melangeFilePath)
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to process re-tag for %s: %w", tagStr, err))
+				continue
+			}
+			if result != nil {
+				updateResults = append(updateResults, result)
+			}
+			continue
+		}
+
+		// New version — pull spec from git and create package version
+		result, err := processGitLinkedNewVersion(ctx, githubClient, pf, v, tagStr, melangeFilePath)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to process new version %s: %w", tagStr, err))
+			continue
+		}
+		if result != nil {
+			updateResults = append(updateResults, result)
+		}
+	}
+
+	if len(updateResults) == 0 {
+		logger.Info("No new versions found for git-linked family", zap.String("package_family_id", pf.ID))
+		return nil
+	}
+
+	// Reassign tags globally before queueing builds
+	if err := reassignTagsGlobally(ctx, pf, updateResults); err != nil {
+		logger.Error(fmt.Errorf("failed to reassign tags globally: %w", err))
+	}
+
+	// Queue builds
+	for _, result := range updateResults {
+		if result.SkipBuild {
+			for _, apkoInfo := range result.ImageAPKOs {
+				if err := queueImageBuildForAPKO(ctx, apkoInfo.ApkoID); err != nil {
+					logger.Error(fmt.Errorf("failed to queue image build for APKO %s: %w", apkoInfo.ApkoID, err))
+				}
+			}
+			continue
+		}
+		if err := queuePackageBuild(ctx, pf, result); err != nil {
+			logger.Error(fmt.Errorf("failed to queue build: %w", err))
+		}
+	}
+
+	return nil
+}
+
+// getExistingGitTagsForFamily returns a map of git_tag -> git_commit_sha for all
+// package versions in a family that have git link metadata.
+func getExistingGitTagsForFamily(ctx context.Context, pf *package_family.PackageFamily) (map[string]string, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	tmpl := "{name}-{major}.{minor}"
+	if pf.PackageNameTemplate != "" {
+		tmpl = pf.PackageNameTemplate
+	}
+	tmpl = strings.ReplaceAll(tmpl, "{name}", regexp.QuoteMeta(pf.Name))
+	tmpl = strings.ReplaceAll(tmpl, "{major}", "[0-9]+")
+	tmpl = strings.ReplaceAll(tmpl, "{minor}", "[0-9]+")
+	familyPattern := "^" + tmpl + "$"
+
+	query := `
+		SELECT pv.git_tag, pv.git_commit_sha
+		FROM package_version pv
+		INNER JOIN package p ON p.id = pv.package_id
+		WHERE p.parent_id IS NULL
+		  AND p.name ~ $1
+		  AND pv.git_tag IS NOT NULL
+		  AND pv.git_commit_sha IS NOT NULL
+	`
+
+	rows, err := conn.Query(ctx, query, familyPattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query existing git tags: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var gitTag, gitCommitSHA string
+		if err := rows.Scan(&gitTag, &gitCommitSHA); err != nil {
+			continue
+		}
+		result[gitTag] = gitCommitSHA
+	}
+
+	return result, nil
+}
+
+// processGitLinkedNewVersion creates a new package version from a git tag.
+// It pulls the melange spec from git, overrides version and epoch from the git tag,
+// and creates the DB records.
+func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, version *semver.Version, gitTag, melangeFilePath string) (*UpdateResult, error) {
+	gitRemote := pf.GitRemote.String
+
+	// Pull the melange spec and additional files from git
+	specContent, err := gitspec.PullSpecFromGit(ctx, githubClient, gitRemote, melangeFilePath, gitTag)
+	if err != nil {
+		return nil, fmt.Errorf("pull spec from git: %w", err)
+	}
+
+	// Determine the package name from the template
+	packageName := package_family.GeneratePackageName(pf.PackageNameTemplate, pf.Name, int(version.Major()), int(version.Minor()))
+
+	// Override name, version, and epoch in the melange YAML from the git tag
+	overriddenYAML, versionStr, err := gitspec.OverrideVersionAndEpochInMelange(specContent.Content, gitTag, 0, packageName)
+	if err != nil {
+		return nil, fmt.Errorf("override name/version/epoch: %w", err)
+	}
+
+	// Check if the package already exists
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	var existingPackageID string
+	err = conn.QueryRow(ctx, `SELECT id FROM package WHERE name = $1 AND parent_id IS NULL`, packageName).Scan(&existingPackageID)
+
+	if err != nil && err != pgx.ErrNoRows {
+		return nil, fmt.Errorf("check existing package: %w", err)
+	}
+
+	now := time.Now()
+
+	if err == pgx.ErrNoRows {
+		// New package — create it
+		newPackageID, err := securerandom.Hex(32)
+		if err != nil {
+			return nil, fmt.Errorf("generate package id: %w", err)
+		}
+
+		tx, err := conn.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("begin transaction: %w", err)
+		}
+		defer tx.Rollback(ctx)
+
+		_, err = tx.Exec(ctx, `
+			INSERT INTO package (id, name, created_at, updated_at)
+			VALUES ($1, $2, $3, $4)
+		`, newPackageID, packageName, now, now)
+		if err != nil {
+			return nil, fmt.Errorf("insert package: %w", err)
+		}
+
+		// Link package to family
+		_, err = tx.Exec(ctx, `
+			INSERT INTO package_family_package (package_family_id, package_id, created_at)
+			VALUES ($1, $2, $3)
+		`, pf.ID, newPackageID, now)
+		if err != nil {
+			return nil, fmt.Errorf("insert package_family_package: %w", err)
+		}
+
+		// Create the package version with git link metadata
+		newVersionID, err := securerandom.Hex(32)
+		if err != nil {
+			return nil, fmt.Errorf("generate version id: %w", err)
+		}
+
+		_, err = tx.Exec(ctx, `
+			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, git_remote, melange_file_path, git_tag, git_commit_sha)
+			VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10)
+		`, newVersionID, newPackageID, versionStr, overriddenYAML, now, now, gitRemote, melangeFilePath, gitTag, specContent.CommitSHA)
+		if err != nil {
+			return nil, fmt.Errorf("insert package version: %w", err)
+		}
+
+		// Insert additional files
+		for _, af := range specContent.AdditionalFiles {
+			afID, err := securerandom.Hex(32)
+			if err != nil {
+				return nil, fmt.Errorf("generate additional file id: %w", err)
+			}
+			_, err = tx.Exec(ctx, `
+				INSERT INTO package_version_additional_file (id, package_version_id, path, content, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6)
+			`, afID, newVersionID, af.Path, af.Content, now, now)
+			if err != nil {
+				return nil, fmt.Errorf("insert additional file %s: %w", af.Path, err)
+			}
+		}
+
+		// Write provides for the new version
+		newPackageVersion := &types.PackageVersion{
+			ID:          newVersionID,
+			PackageID:   newPackageID,
+			Version:     versionStr,
+			MelangeYaml: overriddenYAML,
+			APKRelease:  0,
+		}
+		if err := sbpackage.WritePackageVersionProvides(ctx, tx, newPackageVersion); err != nil {
+			return nil, fmt.Errorf("write package version provides: %w", err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit transaction: %w", err)
+		}
+
+		// Generate image APKOs if the image is linked to git
+		imageAPKOs, err := generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, newPackageID, packageName, versionStr)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
+		}
+
+		return &UpdateResult{
+			PackageID:        newPackageID,
+			PackageVersionID: newVersionID,
+			CreateNewPackage: true,
+			MelangeYAML:      overriddenYAML,
+			ImageAPKOs:       imageAPKOs,
+		}, nil
+	}
+
+	// Package exists — create a new version (apk_release = 0 for a new version)
+	newVersionID, err := securerandom.Hex(32)
+	if err != nil {
+		return nil, fmt.Errorf("generate version id: %w", err)
+	}
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, git_remote, melange_file_path, git_tag, git_commit_sha)
+		VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10)
+	`, newVersionID, existingPackageID, versionStr, overriddenYAML, now, now, gitRemote, melangeFilePath, gitTag, specContent.CommitSHA)
+	if err != nil {
+		return nil, fmt.Errorf("insert package version: %w", err)
+	}
+
+	// Insert additional files
+	for _, af := range specContent.AdditionalFiles {
+		afID, err := securerandom.Hex(32)
+		if err != nil {
+			return nil, fmt.Errorf("generate additional file id: %w", err)
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO package_version_additional_file (id, package_version_id, path, content, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, afID, newVersionID, af.Path, af.Content, now, now)
+		if err != nil {
+			return nil, fmt.Errorf("insert additional file %s: %w", af.Path, err)
+		}
+	}
+
+	// Create subpackage version rows (melange_yaml = nil, same version/release as main package)
+	subpackages, err := sbpackage.ListSubpackages(ctx, existingPackageID)
+	if err != nil {
+		return nil, fmt.Errorf("list subpackages: %w", err)
+	}
+	for _, subpackage := range subpackages {
+		newID, err := securerandom.Hex(32)
+		if err != nil {
+			return nil, fmt.Errorf("generate random id for subpackage version: %w", err)
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release)
+			VALUES ($1, $2, $3, NULL, $4, $5, 0)
+		`, newID, subpackage.ID, versionStr, now, now)
+		if err != nil {
+			return nil, fmt.Errorf("insert subpackage version %s %s-r0: %w", subpackage.Name, versionStr, err)
+		}
+	}
+
+	// Write provides for the new version
+	newPackageVersion := &types.PackageVersion{
+		ID:          newVersionID,
+		PackageID:   existingPackageID,
+		Version:     versionStr,
+		MelangeYaml: overriddenYAML,
+		APKRelease:  0,
+	}
+	if err := sbpackage.WritePackageVersionProvides(ctx, tx, newPackageVersion); err != nil {
+		return nil, fmt.Errorf("write package version provides: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit transaction: %w", err)
+	}
+
+	// Generate image APKOs if the image is linked to git
+	imageAPKOs, err := generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, existingPackageID, packageName, versionStr)
+	if err != nil {
+		logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
+	}
+
+	return &UpdateResult{
+		PackageID:        existingPackageID,
+		PackageVersionID: newVersionID,
+		ImageAPKOs:       imageAPKOs,
+	}, nil
+}
+
+// processGitLinkedRetag creates a new revision (incremented apk_release) when a git tag
+// has been reassigned to a new commit SHA.
+func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, version *semver.Version, gitTag, newCommitSHA, melangeFilePath string) (*UpdateResult, error) {
+	gitRemote := pf.GitRemote.String
+
+	// Pull the melange spec from git at the re-tagged commit
+	specContent, err := gitspec.PullSpecFromGit(ctx, githubClient, gitRemote, melangeFilePath, gitTag)
+	if err != nil {
+		return nil, fmt.Errorf("pull spec from git: %w", err)
+	}
+
+	packageName := package_family.GeneratePackageName(pf.PackageNameTemplate, pf.Name, int(version.Major()), int(version.Minor()))
+
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	// Find the existing package
+	var packageID string
+	err = conn.QueryRow(ctx, `SELECT id FROM package WHERE name = $1 AND parent_id IS NULL`, packageName).Scan(&packageID)
+	if err != nil {
+		return nil, fmt.Errorf("find package %s: %w", packageName, err)
+	}
+
+	// Calculate new apk_release
+	var maxEpoch sql.NullInt32
+	err = conn.QueryRow(ctx,
+		`SELECT MAX(apk_release) FROM package_version WHERE package_id = $1 AND version = $2`,
+		packageID, version.String()).Scan(&maxEpoch)
+	if err != nil {
+		return nil, fmt.Errorf("get max apk_release: %w", err)
+	}
+	newEpoch := 0
+	if maxEpoch.Valid {
+		newEpoch = int(maxEpoch.Int32) + 1
+	}
+
+	// Override name, version, and epoch in the melange YAML from the git tag
+	versionStr := version.String()
+	overriddenYAML, _, err := gitspec.OverrideVersionAndEpochInMelange(specContent.Content, gitTag, newEpoch, packageName)
+	if err != nil {
+		return nil, fmt.Errorf("override name/version/epoch: %w", err)
+	}
+
+	now := time.Now()
+	newVersionID, err := securerandom.Hex(32)
+	if err != nil {
+		return nil, fmt.Errorf("generate version id: %w", err)
+	}
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, git_remote, melange_file_path, git_tag, git_commit_sha)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, newVersionID, packageID, versionStr, overriddenYAML, now, now, newEpoch, gitRemote, melangeFilePath, gitTag, newCommitSHA)
+	if err != nil {
+		return nil, fmt.Errorf("insert package version: %w", err)
+	}
+
+	// Insert additional files
+	for _, af := range specContent.AdditionalFiles {
+		afID, err := securerandom.Hex(32)
+		if err != nil {
+			return nil, fmt.Errorf("generate additional file id: %w", err)
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO package_version_additional_file (id, package_version_id, path, content, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, afID, newVersionID, af.Path, af.Content, now, now)
+		if err != nil {
+			return nil, fmt.Errorf("insert additional file %s: %w", af.Path, err)
+		}
+	}
+
+	// Create subpackage version rows (melange_yaml = nil, same version/release as main package)
+	subpackages, err := sbpackage.ListSubpackages(ctx, packageID)
+	if err != nil {
+		return nil, fmt.Errorf("list subpackages: %w", err)
+	}
+	for _, subpackage := range subpackages {
+		newID, err := securerandom.Hex(32)
+		if err != nil {
+			return nil, fmt.Errorf("generate random id for subpackage version: %w", err)
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release)
+			VALUES ($1, $2, $3, NULL, $4, $5, $6)
+		`, newID, subpackage.ID, versionStr, now, now, newEpoch)
+		if err != nil {
+			return nil, fmt.Errorf("insert subpackage version %s %s-r%d: %w", subpackage.Name, versionStr, newEpoch, err)
+		}
+	}
+
+	// Write provides for the new version
+	newPackageVersion := &types.PackageVersion{
+		ID:          newVersionID,
+		PackageID:   packageID,
+		Version:     versionStr,
+		MelangeYaml: overriddenYAML,
+		APKRelease:  newEpoch,
+	}
+	if err := sbpackage.WritePackageVersionProvides(ctx, tx, newPackageVersion); err != nil {
+		return nil, fmt.Errorf("write package version provides: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit transaction: %w", err)
+	}
+
+	// Generate image APKOs
+	imageAPKOs, err := generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, packageID, packageName, versionStr)
+	if err != nil {
+		logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
+	}
+
+	return &UpdateResult{
+		PackageID:        packageID,
+		PackageVersionID: newVersionID,
+		ImageAPKOs:       imageAPKOs,
+	}, nil
+}
+
+// generateImageAPKOsForGitLinkedVersion generates image APKOs for a git-linked package version.
+// If the image is linked to git, it pulls the APKO spec from the repo. Otherwise, it uses
+// the existing clone logic.
+func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, gitTag, gitRemote, melangeFilePath string, packageID, packageName, versionStr string) ([]*ImageAPKOInfo, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	// Find images linked to git that are associated with this package family
+	// by checking if the image's git_remote matches the package family's git_remote
+	rows, err := conn.Query(ctx, `
+		SELECT i.id, i.git_remote, i.apko_file_path, i.image_tag_template
+		FROM image i
+		WHERE i.git_remote = $1
+	`, gitRemote)
+	if err != nil {
+		return nil, fmt.Errorf("query linked images: %w", err)
+	}
+
+	type linkedImage struct {
+		ImageID       string
+		GitRemote     string
+		ApkoFilePath  sql.NullString
+		TagTemplate   sql.NullString
+	}
+
+	var linkedImages []linkedImage
+	for rows.Next() {
+		var img linkedImage
+		if err := rows.Scan(&img.ImageID, &img.GitRemote, &img.ApkoFilePath, &img.TagTemplate); err != nil {
+			return nil, fmt.Errorf("failed to scan image row: %w", err)
+		}
+		if !img.ApkoFilePath.Valid || img.ApkoFilePath.String == "" {
+			logger.Warn("skipping linked image with missing apko_file_path",
+				zap.String("image_id", img.ImageID),
+				zap.String("git_remote", img.GitRemote))
+			continue
+		}
+		linkedImages = append(linkedImages, img)
+	}
+	rows.Close()
+
+	// Get the package version ID for the version we just created, to look up provides
+	var packageVersionID string
+	err = conn.QueryRow(ctx, `
+		SELECT pv.id FROM package_version pv
+		WHERE pv.package_id = $1 AND pv.version = $2 AND pv.apk_release = 0
+		ORDER BY pv.created_at DESC LIMIT 1
+	`, packageID, versionStr).Scan(&packageVersionID)
+	if err != nil {
+		logger.Warn("failed to get package version ID for provides lookup, skipping pinning",
+			zap.String("package_id", packageID),
+			zap.String("version", versionStr),
+			zap.Error(err))
+	}
+
+	// Collect possible package names for core package detection
+	possibleNames := make(map[string]struct{})
+	possibleNames[pf.Name] = struct{}{}
+	possibleNames[packageName] = struct{}{}
+	if packageVersionID != "" {
+		providesRows, err := conn.Query(ctx, `
+			SELECT package_name, provides_name FROM package_version_provides WHERE package_version_id = $1
+		`, packageVersionID)
+		if err == nil {
+			for providesRows.Next() {
+				var pkgName, providesName string
+				if err := providesRows.Scan(&pkgName, &providesName); err != nil {
+					continue
+				}
+				possibleNames[pkgName] = struct{}{}
+				possibleNames[providesName] = struct{}{}
+			}
+			providesRows.Close()
+		}
+	}
+
+	var result []*ImageAPKOInfo
+	for _, img := range linkedImages {
+		// Check if an APKO with this git_tag already exists for this image.
+		// If it does, skip creating a duplicate.
+		var existingApkoID string
+		err := conn.QueryRow(ctx,
+			`SELECT id FROM image_apko WHERE image_id = $1 AND git_tag = $2`,
+			img.ImageID, gitTag).Scan(&existingApkoID)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				// No existing APKO — proceed with creation
+			} else {
+				logger.Error(fmt.Errorf("failed to check for existing APKO: %w", err),
+					zap.String("image_id", img.ImageID),
+					zap.String("git_tag", gitTag))
+				continue
+			}
+		} else {
+			logger.Info("APKO with git tag already exists for image, skipping",
+				zap.String("image_id", img.ImageID),
+				zap.String("git_tag", gitTag),
+				zap.String("existing_apko_id", existingApkoID))
+			continue
+		}
+
+		// Pull the APKO spec from git at the same tag
+		apkoSpec, err := gitspec.PullSpecFromGit(ctx, githubClient, img.GitRemote, img.ApkoFilePath.String, gitTag)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to pull APKO spec from git for image %s: %w", img.ImageID, err))
+			continue
+		}
+
+		// Pin the core package to the correct version in the APKO YAML
+		pinnedApkoYAML, err := pinCorePackageInApkoYAML(apkoSpec.Content, possibleNames, versionStr)
+		if err != nil {
+			logger.Warn("failed to pin core package in APKO YAML, using as-is",
+				zap.String("image_id", img.ImageID),
+				zap.Error(err))
+			pinnedApkoYAML = apkoSpec.Content
+		}
+
+		// Generate the OCI tag from the git tag using the template
+		template := img.TagTemplate.String
+		if template == "" {
+			template = pf.ImageTagTemplate.String
+		}
+		ociTag := package_family.GenerateImageTag(template, gitTag)
+
+		// Create the image_apko and image_apko_version
+		apkoID, err := createLinkedImageAPKO(ctx, img.ImageID, img.GitRemote, img.ApkoFilePath.String, gitTag, apkoSpec.CommitSHA, ociTag, pinnedApkoYAML, packageID, versionStr)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to create linked image APKO for image %s: %w", img.ImageID, err))
+			continue
+		}
+
+		result = append(result, &ImageAPKOInfo{
+			ImageID: img.ImageID,
+			ApkoID:  apkoID,
+		})
+	}
+
+	return result, nil
+}
+
+// createLinkedImageAPKO creates an image_apko and image_apko_version for a linked image.
+func createLinkedImageAPKO(ctx context.Context, imageID, gitRemote, apkoFilePath, gitTag, commitSHA, ociTag, apkoYAML, packageID, pinnedVersion string) (string, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	apkoID, err := securerandom.Hex(32)
+	if err != nil {
+		return "", fmt.Errorf("generate apko id: %w", err)
+	}
+
+	apkoVersionID, err := securerandom.Hex(32)
+	if err != nil {
+		return "", fmt.Errorf("generate apko version id: %w", err)
+	}
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO image_apko (id, image_id, name, tags, created_at, updated_at, git_remote, git_tag, apko_file_path)
+		VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7)
+	`, apkoID, imageID, ociTag, []string{ociTag}, gitRemote, gitTag, apkoFilePath)
+	if err != nil {
+		return "", fmt.Errorf("insert image_apko: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO image_apko_version (id, image_apko_id, apko_yaml, created_at, updated_at, git_remote, apko_file_path, git_commit_sha)
+		VALUES ($1, $2, $3, NOW(), NOW(), $4, $5, $6)
+	`, apkoVersionID, apkoID, apkoYAML, gitRemote, apkoFilePath, commitSHA)
+	if err != nil {
+		return "", fmt.Errorf("insert image_apko_version: %w", err)
+	}
+
+	// Link the package to the image with the pinned version
+	// This ensures that when the package finishes building, the APKO build is triggered
+	if packageID != "" && pinnedVersion != "" {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO image_package (image_id, apko_id, package_id, pinned_version)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (apko_id, package_id) DO UPDATE
+			SET pinned_version = EXCLUDED.pinned_version
+		`, imageID, apkoID, packageID, pinnedVersion)
+		if err != nil {
+			return "", fmt.Errorf("failed to insert into image_package: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit transaction: %w", err)
+	}
+
+	return apkoID, nil
+}
+// pinCorePackageInApkoYAML finds the core package in the APKO YAML and pins it to the
+// specified version using the ~version syntax. Uses the same package detection logic
+// as IsPackageCoreForAPKO (matching by family name, package name, and provides).
+func pinCorePackageInApkoYAML(apkoYAML string, possibleNames map[string]struct{}, version string) (string, error) {
+	var imageConfig apkotypes.ImageConfiguration
+	if err := yaml.Unmarshal([]byte(apkoYAML), &imageConfig); err != nil {
+		return "", fmt.Errorf("failed to parse APKO YAML: %w", err)
+	}
+
+	// Build a map of replacements
+	replacements := make(map[string]string)
+
+	for _, pkg := range imageConfig.Contents.Packages {
+		parsed := apkopackage.ResolvePackageNameVersionPin(pkg)
+		if parsed.Name == "" {
+			continue
+		}
+
+		if _, exists := possibleNames[parsed.Name]; exists {
+			// Pin this package to the correct version
+			newPkg := fmt.Sprintf("%s~%s", parsed.Name, version)
+			replacements[pkg] = newPkg
+		}
+	}
+
+	// Apply replacements to the YAML string, preserving formatting
+	result := apkoYAML
+	for oldPkg, newPkg := range replacements {
+		result = strings.ReplaceAll(result, oldPkg, newPkg)
+	}
+
+	return result, nil
+}
+
 // Routes to either processMinorVersionUpdate or processPatchVersionUpdate based on version change type
 func processPackageFamilyVersion(ctx context.Context, pf *package_family.PackageFamily, versionUpdate *VersionUpdate) (*UpdateResult, error) {
 	version := versionUpdate.Version

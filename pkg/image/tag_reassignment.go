@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"regexp"
 	"strings"
@@ -14,8 +15,9 @@ import (
 
 // APKOTagInfo represents an APKO with its tags
 type APKOTagInfo struct {
-	ID   string
-	Tags []string
+	ID      string
+	Tags    []string
+	GitTag  string // empty if not a linked image
 }
 
 // countVersionParts counts how many numeric parts a version string has (major, major.minor, or major.minor.patch)
@@ -95,8 +97,9 @@ func reassignLatestTag(tagAssignments map[string][]string, apkoVersions map[stri
 
 // reassignLessSpecificTags moves less specific tags (like "v1", "v1.3") to the APKO with the greatest version that satisfies the tag
 // When a less-specific tag moves to a new APKO, it also generates equivalent tags for all part-counts that exist in the system
+// Tags in the protectedTags set (git-derived OCI tags) are excluded from reassignment.
 // TODO: figure out how to support tags with arbitrary prefixes.
-func reassignLessSpecificTags(tagAssignments map[string][]string, apkoVersions map[string]*semver.Version, apkos []APKOTagInfo) {
+func reassignLessSpecificTags(tagAssignments map[string][]string, apkoVersions map[string]*semver.Version, apkos []APKOTagInfo, protectedTags map[string]bool) {
 	// Collect all unique less-specific tags across all APKOs and track part counts
 	lessSpecificTags := make(map[string]bool)
 	existingPartCounts := make(map[int]bool) // Track which part counts exist (1 or 2)
@@ -105,6 +108,10 @@ func reassignLessSpecificTags(tagAssignments map[string][]string, apkoVersions m
 	for _, apko := range apkos {
 		for _, tag := range apko.Tags {
 			if tag == "latest" {
+				continue
+			}
+			// Skip git-derived tags — they must not be reassigned
+			if protectedTags[tag] {
 				continue
 			}
 			parts := countVersionParts(tag)
@@ -263,7 +270,7 @@ func removeTag(tags []string, tag string) []string {
 func ReassignTagsForImage(ctx context.Context, tx pgx.Tx, imageID string) error {
 	// Fetch all APKOs for this image
 	query := `
-		SELECT ia.id, ia.tags
+		SELECT ia.id, ia.tags, ia.git_tag
 		FROM image_apko ia
 		WHERE ia.image_id = $1
 		ORDER BY ia.created_at ASC
@@ -277,9 +284,11 @@ func ReassignTagsForImage(ctx context.Context, tx pgx.Tx, imageID string) error 
 	var apkos []APKOTagInfo
 	for rows.Next() {
 		var apko APKOTagInfo
-		if err := rows.Scan(&apko.ID, &apko.Tags); err != nil {
+		var gitTag sql.NullString
+		if err := rows.Scan(&apko.ID, &apko.Tags, &gitTag); err != nil {
 			return fmt.Errorf("failed to scan APKO row: %w", err)
 		}
+		apko.GitTag = gitTag.String
 		apkos = append(apkos, apko)
 	}
 
@@ -312,7 +321,16 @@ func ReassignTagsForImage(ctx context.Context, tx pgx.Tx, imageID string) error 
 
 // computeGlobalTagReassignments recalculates optimal tags based on current APKO state
 // This is a pure function (no I/O) that can be unit tested
+// Git-derived OCI tags (those matching a git_tag on an image_apko) are excluded from reassignment.
 func computeGlobalTagReassignments(apkos []APKOTagInfo) (map[string][]string, error) {
+	// Build set of git-derived tags that must not be reassigned
+	protectedTags := make(map[string]bool)
+	for _, apko := range apkos {
+		if apko.GitTag != "" {
+			protectedTags[apko.GitTag] = true
+		}
+	}
+
 	// Build version map
 	apkoVersions := make(map[string]*semver.Version)
 	for _, apko := range apkos {
@@ -345,8 +363,8 @@ func computeGlobalTagReassignments(apkos []APKOTagInfo) (map[string][]string, er
 	// Reassign "latest" to APKO with greatest version
 	reassignLatestTag(newTagAssignments, apkoVersions, apkos)
 
-	// Reassign less specific tags (e.g., "1", "1.2")
-	reassignLessSpecificTags(newTagAssignments, apkoVersions, apkos)
+	// Reassign less specific tags (e.g., "1", "1.2"), excluding git-derived tags
+	reassignLessSpecificTags(newTagAssignments, apkoVersions, apkos, protectedTags)
 
 	return newTagAssignments, nil
 }

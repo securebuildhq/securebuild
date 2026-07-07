@@ -7,6 +7,7 @@ import * as srs from "secure-random-string";
 import { getImageTestForLatestVersion, createOrUpdateImageTest } from "./image-test";
 import { sortTagsForDisplay } from "../utils/tag-sort";
 import * as semver from "semver";
+import { pullSpecFromGit, generateOCITagFromTemplate } from "@/lib/gitspec/pull";
 
 function countVersionParts(version: string): number {
   const clean = version.replace(/^[vV]/, "");
@@ -434,6 +435,25 @@ export async function updateAlternateImage(imageId: string, alternateImage: stri
   }
 }
 
+export async function updateImageGitLink(
+  imageId: string,
+  gitRemote: string | null,
+  apkoFilePath: string | null,
+  imageTagTemplate: string | null,
+): Promise<Image> {
+  try {
+    const db = getDB(await getParam("DB_URI"))
+    await db.query(
+      `update image set git_remote = $1, apko_file_path = $2, image_tag_template = $3, updated_at = now() where id = $4`,
+      [gitRemote, apkoFilePath, imageTagTemplate, imageId],
+    );
+    return getImage(imageId);
+  } catch (err) {
+    console.error(err);
+    throw err;
+  }
+}
+
 export async function createImage(name: string, alternateImage: string, apkos: CreateImageAPKO[]): Promise<Image> {
   try {
     const db = getDB(await getParam("DB_URI"))
@@ -503,7 +523,7 @@ export async function getImageByName(name: string): Promise<Image | null> {
 export async function getImage(id: string): Promise<Image> {
   try {
     const db = getDB(await getParam("DB_URI"));
-    const query = `select id, name, created_at, updated_at, alternate_image, readme, is_public from image where id = $1`;
+    const query = `select id, name, created_at, updated_at, alternate_image, readme, is_public, git_remote, apko_file_path, image_tag_template from image where id = $1`;
     const result = await db.query(query, [id]);
 
     const image: Image = {
@@ -514,6 +534,9 @@ export async function getImage(id: string): Promise<Image> {
       alternateImage: result.rows[0].alternate_image,
       readme: result.rows[0].readme,
       isPublic: result.rows[0].is_public,
+      gitRemote: result.rows[0].git_remote || undefined,
+      apkoFilePath: result.rows[0].apko_file_path || undefined,
+      imageTagTemplate: result.rows[0].image_tag_template || undefined,
       apkos: await listImageAPKOs(id),
       catalogItems: [],
       currentTags: [],
@@ -644,11 +667,18 @@ export async function getImage(id: string): Promise<Image> {
 
 export async function updateImageAPKOYaml(id: string, apkoId: string, yaml: string): Promise<void> {
   try {
+    const db = getDB(await getParam("DB_URI"));
+
+    // Block editing of linked APKOs (pulled from git)
+    const apkoResult = await db.query(`SELECT git_tag FROM image_apko WHERE id = $1`, [apkoId]);
+    if (apkoResult.rows.length > 0 && apkoResult.rows[0].git_tag) {
+      throw new Error("Cannot edit APKO YAML for a linked image. The APKO is pulled from a git repository.");
+    }
+
     // Get existing test from the latest version before creating new version
     const existingTest = await getImageTestForLatestVersion(apkoId);
 
     const versionId = 'av' + srs.default({ length: 32, alphanumeric: true });
-    const db = getDB(await getParam("DB_URI"));
     const query = `insert into image_apko_version (id, image_apko_id, apko_yaml, created_at, updated_at) values ($1, $2, $3, now(), now())`;
     await db.query(query, [versionId, apkoId, yaml]);
 
@@ -749,7 +779,7 @@ export async function getImageAPKO(id: string): Promise<ImageAPKO> {
 export async function listImageAPKOs(id: string): Promise<ImageAPKO[]> {
   try {
     const db = getDB(await getParam("DB_URI"));
-    const query = `select id, name, tags, created_at, updated_at, readme, last_built_at from image_apko where image_id = $1`;
+    const query = `select id, name, tags, created_at, updated_at, readme, last_built_at, git_remote, git_tag, apko_file_path from image_apko where image_id = $1`;
     const result = await db.query(query, [id]);
 
     const apkos: ImageAPKO[] = [];
@@ -775,6 +805,9 @@ export async function listImageAPKOs(id: string): Promise<ImageAPKO[]> {
         readme: row.readme,
         lastBuiltAt: row.last_built_at,
         testYaml: testYaml,
+        gitTag: row.git_tag || undefined,
+        gitCommitSha: latestVersion.gitCommitSha,
+        apkoFilePath: row.apko_file_path || undefined,
       });
     }
 
@@ -788,7 +821,7 @@ export async function listImageAPKOs(id: string): Promise<ImageAPKO[]> {
 export async function getLatestImageAPKOVersion(id: string): Promise<ImageAPKOVersion> {
   try {
     const db = getDB(await getParam("DB_URI"));
-    const query = `select id, apko_yaml, created_at, updated_at from image_apko_version where image_apko_id = $1 order by created_at desc limit 1`;
+    const query = `select id, apko_yaml, created_at, updated_at, git_remote, apko_file_path, git_commit_sha from image_apko_version where image_apko_id = $1 order by created_at desc limit 1`;
     const result = await db.query(query, [id]);
 
     const apkoVersion: ImageAPKOVersion = {
@@ -796,6 +829,9 @@ export async function getLatestImageAPKOVersion(id: string): Promise<ImageAPKOVe
       apkoYaml: result.rows[0].apko_yaml,
       createdAt: result.rows[0].created_at,
       updatedAt: result.rows[0].updated_at,
+      gitRemote: result.rows[0].git_remote || undefined,
+      apkoFilePath: result.rows[0].apko_file_path || undefined,
+      gitCommitSha: result.rows[0].git_commit_sha || undefined,
     }
 
     return apkoVersion;
@@ -1060,4 +1096,107 @@ export async function listAllImageBuilds(): Promise<ImageBuild[]> {
     console.error(err);
     throw err;
   }
+}
+
+export interface CreateLinkedImageRequest {
+  name: string;
+  gitRemote: string;
+  apkoFilePath: string;
+  testFilePath?: string;
+  imageTagTemplate: string;
+  gitTag: string;
+}
+
+export async function createLinkedImage(req: CreateLinkedImageRequest): Promise<Image> {
+  const { name, gitRemote, apkoFilePath, testFilePath, imageTagTemplate, gitTag } = req;
+
+  const specContent = pullSpecFromGit(gitRemote, apkoFilePath, gitTag);
+  const ociTag = generateOCITagFromTemplate(imageTagTemplate, gitTag);
+
+  let testYaml: string | undefined;
+  if (testFilePath) {
+    try {
+      const testSpec = pullSpecFromGit(gitRemote, testFilePath, gitTag);
+      testYaml = testSpec.content;
+    } catch (err) {
+      console.warn(`Failed to pull test file from git: ${err}`);
+    }
+  }
+
+  const db = getDB(await getParam("DB_URI"));
+  const imageId = 'i' + srs.default({ length: 32, alphanumeric: true });
+
+  await withTransaction(db, async (client) => {
+    await client.query(
+      `insert into image (id, name, created_at, updated_at, git_remote, apko_file_path, image_tag_template) values ($1, $2, now(), now(), $3, $4, $5)`,
+      [imageId, name, gitRemote, apkoFilePath, imageTagTemplate]
+    );
+
+    const apkoId = 'a' + srs.default({ length: 32, alphanumeric: true });
+    await client.query(
+      `insert into image_apko (id, image_id, name, tags, created_at, updated_at, git_remote, git_tag, apko_file_path) values ($1, $2, $3, $4, now(), now(), $5, $6, $7)`,
+      [apkoId, imageId, ociTag, [ociTag], gitRemote, gitTag, apkoFilePath]
+    );
+
+    const apkoVersionId = 'av' + srs.default({ length: 32, alphanumeric: true });
+    await client.query(
+      `insert into image_apko_version (id, image_apko_id, apko_yaml, created_at, updated_at, git_remote, apko_file_path, git_commit_sha) values ($1, $2, $3, now(), now(), $4, $5, $6)`,
+      [apkoVersionId, apkoId, specContent.content, gitRemote, apkoFilePath, specContent.commitSha]
+    );
+
+    if (testYaml) {
+      await client.query(
+        `insert into image_test (apko_id, apko_version_id, yaml_content, created_at, updated_at) values ($1, $2, $3, now(), now())`,
+        [apkoId, apkoVersionId, testYaml]
+      );
+    }
+  });
+
+  return getImage(imageId);
+}
+
+export async function addLinkedImageApko(imageId: string, gitTag: string): Promise<Image> {
+  const db = getDB(await getParam("DB_URI"));
+
+  const imageResult = await db.query(
+    `select git_remote, apko_file_path, image_tag_template from image where id = $1`,
+    [imageId]
+  );
+
+  if (imageResult.rows.length === 0) {
+    throw new Error(`Image ${imageId} not found`);
+  }
+
+  const { git_remote, apko_file_path, image_tag_template } = imageResult.rows[0];
+  if (!git_remote || !apko_file_path) {
+    throw new Error(`Image ${imageId} is not linked to a git repository`);
+  }
+
+  const existingResult = await db.query(
+    `select id from image_apko where image_id = $1 and git_tag = $2`,
+    [imageId, gitTag]
+  );
+  if (existingResult.rows.length > 0) {
+    throw new Error(`An APKO with git tag "${gitTag}" already exists for this image`);
+  }
+
+  const specContent = pullSpecFromGit(git_remote, apko_file_path, gitTag);
+  const ociTag = generateOCITagFromTemplate(image_tag_template, gitTag);
+
+  const apkoId = 'a' + srs.default({ length: 32, alphanumeric: true });
+  const apkoVersionId = 'av' + srs.default({ length: 32, alphanumeric: true });
+
+  await withTransaction(db, async (client) => {
+    await client.query(
+      `insert into image_apko (id, image_id, name, tags, created_at, updated_at, git_remote, git_tag, apko_file_path) values ($1, $2, $3, $4, now(), now(), $5, $6, $7)`,
+      [apkoId, imageId, ociTag, [ociTag], git_remote, gitTag, apko_file_path]
+    );
+
+    await client.query(
+      `insert into image_apko_version (id, image_apko_id, apko_yaml, created_at, updated_at, git_remote, apko_file_path, git_commit_sha) values ($1, $2, $3, now(), now(), $4, $5, $6)`,
+      [apkoVersionId, apkoId, specContent.content, git_remote, apko_file_path, specContent.commitSha]
+    );
+  });
+
+  return getImage(imageId);
 }

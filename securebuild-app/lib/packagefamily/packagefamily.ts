@@ -4,6 +4,7 @@ import { PackageFamily, PackageFamilyWithPackages, PackageFamilyPackage, CreateP
 import { randomBytes } from "crypto";
 import semver from "semver";
 import * as yaml from "js-yaml";
+import { enqueueWork } from "@/lib/utils/queue";
 
 export async function listPackageFamilies(): Promise<PackageFamily[]> {
   const pool = getDB(process.env.DB_URI!);
@@ -59,7 +60,7 @@ export async function getPackageFamily(id: string): Promise<PackageFamily | null
              dry_run_mode, min_version, notify_on_detection,
              notify_on_build_failure, check_for_updates_at, last_check_at,
              last_error, consecutive_errors, created_at, updated_at,
-             image_tag_template
+             image_tag_template, git_remote, melange_file_path, initial_tag
       FROM package_family
       WHERE id = $1`;
 
@@ -88,6 +89,9 @@ export async function getPackageFamily(id: string): Promise<PackageFamily | null
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
       imageTagTemplate: row.image_tag_template,
+      gitRemote: row.git_remote || undefined,
+      melangeFilePath: row.melange_file_path || undefined,
+      initialTag: row.initial_tag || undefined,
     };
   } finally {
     client.release();
@@ -257,9 +261,9 @@ export async function createPackageFamily(req: CreatePackageFamilyRequest): Prom
         major_version_filter, package_name_template,
         dry_run_mode, min_version, notify_on_detection,
         notify_on_build_failure, check_for_updates_at, consecutive_errors,
-        created_at, updated_at, image_tag_template
+        created_at, updated_at, image_tag_template, git_remote, melange_file_path, initial_tag
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
       )`;
 
     await client.query(query, [
@@ -269,6 +273,9 @@ export async function createPackageFamily(req: CreatePackageFamilyRequest): Prom
       req.dryRunMode, req.minVersion, req.notifyOnDetection,
       req.notifyOnBuildFailure, checkAt, 0, now, now,
       req.imageTagTemplate || null,
+      req.gitRemote || null,
+      req.melangeFilePath || null,
+      req.initialTag || null,
     ]);
 
     // Note: Packages are now dynamically discovered based on naming pattern
@@ -356,6 +363,21 @@ export async function updatePackageFamily(id: string, req: UpdatePackageFamilyRe
     if (req.imageTagTemplate !== undefined) {
       setParts.push(`image_tag_template = $${paramIndex}`);
       values.push(req.imageTagTemplate || null);
+      paramIndex++;
+    }
+    if (req.melangeFilePath !== undefined) {
+      setParts.push(`melange_file_path = $${paramIndex}`);
+      values.push(req.melangeFilePath || null);
+      paramIndex++;
+    }
+    if (req.gitRemote !== undefined) {
+      setParts.push(`git_remote = $${paramIndex}`);
+      values.push(req.gitRemote || null);
+      paramIndex++;
+    }
+    if (req.initialTag !== undefined) {
+      setParts.push(`initial_tag = $${paramIndex}`);
+      values.push(req.initialTag || null);
       paramIndex++;
     }
     
@@ -525,6 +547,62 @@ export async function getUpstreamConfigFromLatestPackage(packageFamilyId: string
     const latestPackage = familyPackages[0];
 
     return await getUpstreamConfigFromPackage(latestPackage.packageId);
+  } finally {
+    client.release();
+  }
+}
+
+export interface CreateLinkedPackageFamilyRequest {
+  name: string;
+  gitRemote: string;
+  melangeFilePath: string;
+  initialTag: string;
+}
+
+export async function createLinkedPackageFamily(req: CreateLinkedPackageFamilyRequest): Promise<PackageFamily> {
+  const { name, gitRemote, melangeFilePath, initialTag } = req;
+
+  const pool = getDB(process.env.DB_URI!);
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const familyId = randomBytes(16).toString('hex');
+    const now = new Date();
+    const randomHours = Math.random() * 12;
+    const checkAt = new Date(now.getTime() + randomHours * 60 * 60 * 1000);
+
+    await client.query(`
+      INSERT INTO package_family (
+        id, name, monitoring_enabled,
+        check_frequency_minutes, version_pattern,
+        major_version_filter, package_name_template,
+        dry_run_mode, min_version, notify_on_detection,
+        notify_on_build_failure, check_for_updates_at, consecutive_errors,
+        created_at, updated_at, git_remote, melange_file_path, initial_tag
+      ) VALUES (
+        $1, $2, true, 360, null, null, null,
+        false, null, false, true, $3, 0,
+        $4, $5, $6, $7, $8
+      )
+    `, [familyId, name, checkAt, now, now, gitRemote, melangeFilePath, initialTag]);
+
+    await client.query('COMMIT');
+
+    const created = await getPackageFamily(familyId);
+    if (!created) {
+      throw new Error('Failed to create linked package family');
+    }
+
+    await enqueueWork('package_family_update_check', { packageFamilyId: familyId }).catch(err => {
+      console.warn('Failed to enqueue update check:', err);
+    });
+
+    return created;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
   } finally {
     client.release();
   }

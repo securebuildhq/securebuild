@@ -24,4 +24,7 @@ type PackageFamily struct {
 	CreatedAt             time.Time      `json:"created_at" db:"created_at"`
 	UpdatedAt             time.Time      `json:"updated_at" db:"updated_at"`
 	ImageTagTemplate      sql.NullString `json:"image_tag_template" db:"image_tag_template"`
+	GitRemote             sql.NullString `json:"git_remote" db:"git_remote"`
+	MelangeFilePath       sql.NullString `json:"melange_file_path" db:"melange_file_path"`
+	InitialTag            sql.NullString `json:"initial_tag" db:"initial_tag"`
 }

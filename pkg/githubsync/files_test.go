@@ -194,6 +194,24 @@ func TestGeneratePackageAdditionalFile(t *testing.T) {
 			filename:     "nginx.conf",
 			expectedPath: "packages/n/ng/nginx/1.0.0/nginx.conf",
 		},
+		{
+			name:         "file in subdirectory",
+			packageName:  "bzip2",
+			filename:     "subdir/keyring.pub",
+			expectedPath: "packages/b/bz/bzip2/1.0.0/subdir/keyring.pub",
+		},
+		{
+			name:         "file in nested subdirectory",
+			packageName:  "nginx",
+			filename:     "configs/nginx/nginx.conf",
+			expectedPath: "packages/n/ng/nginx/1.0.0/configs/nginx/nginx.conf",
+		},
+		{
+			name:         "path traversal attempt in subdirectory",
+			packageName:  "bzip2",
+			filename:     "../../../etc/passwd",
+			expectedPath: "packages/b/bz/bzip2/1.0.0/etc/passwd",
+		},
 	}
 
 	for _, tt := range tests {

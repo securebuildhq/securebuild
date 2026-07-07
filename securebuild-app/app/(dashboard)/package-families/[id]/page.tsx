@@ -19,7 +19,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Save, Trash2, Loader2, Edit, X, RefreshCw } from "lucide-react"
+import { ArrowLeft, Save, Trash2, Loader2, Edit, X, RefreshCw, GitBranch } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
 import {
   Dialog,
   DialogContent,
@@ -57,7 +58,11 @@ export default function PackageFamilyDetailsPage() {
     dryRunMode: false,
     notifyOnDetection: false,
     notifyOnBuildFailure: true,
+    melangeFilePath: "",
+    gitRemote: "",
+    initialTag: "",
   })
+  const [linkGitRepo, setLinkGitRepo] = useState(false)
 
   // Computed automation mode based on monitoring and dry run fields
   const automationMode: 'disabled' | 'dry-run' | 'enabled' =
@@ -90,7 +95,11 @@ export default function PackageFamilyDetailsPage() {
           dryRunMode: data.dryRunMode,
           notifyOnDetection: data.notifyOnDetection,
           notifyOnBuildFailure: data.notifyOnBuildFailure,
+          melangeFilePath: data.melangeFilePath || "",
+          gitRemote: data.gitRemote || "",
+          initialTag: data.initialTag || "",
         })
+        setLinkGitRepo(!!data.gitRemote)
 
         // Fetch upstream config from latest package version
         try {
@@ -149,6 +158,9 @@ export default function PackageFamilyDetailsPage() {
         dryRunMode: editForm.dryRunMode,
         notifyOnDetection: editForm.notifyOnDetection,
         notifyOnBuildFailure: editForm.notifyOnBuildFailure,
+        gitRemote: linkGitRepo ? editForm.gitRemote.trim() : "",
+        melangeFilePath: linkGitRepo ? editForm.melangeFilePath.trim() : "",
+        initialTag: linkGitRepo ? editForm.initialTag.trim() : "",
       })
 
       if (updated) {
@@ -189,7 +201,11 @@ export default function PackageFamilyDetailsPage() {
         dryRunMode: packageFamily.dryRunMode,
         notifyOnDetection: packageFamily.notifyOnDetection,
         notifyOnBuildFailure: packageFamily.notifyOnBuildFailure,
+        melangeFilePath: packageFamily.melangeFilePath || "",
+        gitRemote: packageFamily.gitRemote || "",
+        initialTag: packageFamily.initialTag || "",
       })
+      setLinkGitRepo(!!packageFamily.gitRemote)
     }
     setIsEditing(false)
     setError(null)
@@ -411,6 +427,55 @@ export default function PackageFamilyDetailsPage() {
                       If not set, uses the full version as the tag.
                     </p>
                   </div>
+                  <div className="space-y-4 border-t pt-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <GitBranch className="h-4 w-4 text-blue-500" />
+                        <Label>Link to Git Repository</Label>
+                      </div>
+                      <Switch
+                        checked={linkGitRepo}
+                        onCheckedChange={setLinkGitRepo}
+                      />
+                    </div>
+                    {linkGitRepo && (
+                      <div className="space-y-4 pl-6 border-l-2 border-blue-100 dark:border-blue-900">
+                        <div className="space-y-2">
+                          <Label>Git Origin URL</Label>
+                          <Input
+                            value={editForm.gitRemote}
+                            onChange={(e) => setEditForm({ ...editForm, gitRemote: e.target.value })}
+                            placeholder="e.g., https://github.com/owner/repo.git"
+                          />
+                          <p className="text-sm text-slate-600 dark:text-slate-400">
+                            Public git repository URL where the melange spec is maintained.
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Path to Spec File</Label>
+                          <Input
+                            value={editForm.melangeFilePath}
+                            onChange={(e) => setEditForm({ ...editForm, melangeFilePath: e.target.value })}
+                            placeholder="e.g., melange.yaml"
+                          />
+                          <p className="text-sm text-slate-600 dark:text-slate-400">
+                            Path to the melange YAML file relative to the repository root.
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Initial Tag</Label>
+                          <Input
+                            value={editForm.initialTag}
+                            onChange={(e) => setEditForm({ ...editForm, initialTag: e.target.value })}
+                            placeholder="e.g., v1.2.3"
+                          />
+                          <p className="text-sm text-slate-600 dark:text-slate-400">
+                            Git tag to use as the starting point. Only tags at or newer than this will be processed. Must be a valid semver tag.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </>
               ) : (
                 <>
@@ -535,6 +600,31 @@ export default function PackageFamilyDetailsPage() {
               )}
             </CardContent>
           </Card>
+
+          {packageFamily?.gitRemote && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <GitBranch className="h-5 w-5 text-blue-500" />
+                  <CardTitle>Git Repository</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <Label className="text-sm font-medium">Git Remote</Label>
+                  <p className="text-sm font-mono">{packageFamily.gitRemote}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium">Melange File Path</Label>
+                  <p className="text-sm font-mono">{packageFamily.melangeFilePath || "-"}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium">Initial Tag</Label>
+                  <p className="text-sm font-mono">{packageFamily.initialTag || "-"}</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         <div>

@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { AlertCircle, AlertTriangle, Triangle } from "lucide-react"
+import { AlertCircle, AlertTriangle, Triangle, GitBranch } from "lucide-react"
 import { PackageStatusIndicator } from "@/components/package-status-indicator"
 import * as yaml from "js-yaml"
 
@@ -23,10 +23,14 @@ export default function PackageDetailPage() {
     useRoot, setUseRoot, bootstrapEnabled, setBootstrapEnabled,
     bootstrapApkRepository, setBootstrapApkRepository, bootstrapKeyringAppend, setBootstrapKeyringAppend,
     customDiskSize, setCustomDiskSize, dependencies,
-    dependenciesLoading, handleSaveConfiguration, handleSaveAndBuild, isSavingAndBuilding, renderVersionSelector,
+    dependenciesLoading, handleSaveConfiguration, handleSaveAndBuild, handleBuildLinked, isSavingAndBuilding, renderVersionSelector,
     parseVersionKey, selectedVersion, session, activeTab, handleSetDeleteProtection, getLastSuccessfulBuildDuration,
     isLastBuildTimedOut, getLastSuccessfulBuildSettings, isSelectedRevisionImmutable
   } = usePackageContext()
+
+  const isLinkedRevision = !!selectedVersionData?.gitRemote
+  const isEditorReadOnly = isLinkedRevision || isSelectedRevisionImmutable()
+  const areSaveButtonsDisabled = isLinkedRevision || isSelectedRevisionImmutable()
 
   // Helper function to check if a setting differed from defaults in last successful build
   const getDeltaIcon = (currentValue: any, defaultValue: any, successfulValue: any) => {
@@ -339,6 +343,32 @@ export default function PackageDetailPage() {
             </CardHeader>
           <CardContent>
             {renderVersionSelector()}
+            {selectedVersionData?.gitRemote && (
+              <div className="mb-4 border rounded-lg p-4 bg-muted/30">
+                <div className="flex items-center gap-2 mb-3">
+                  <GitBranch className="h-4 w-4 text-blue-500" />
+                  <span className="text-sm font-semibold">Git Repository</span>
+                </div>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Remote</span>
+                    <p className="font-mono">{selectedVersionData.gitRemote}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">File</span>
+                    <p className="font-mono">{selectedVersionData.melangeFilePath || "-"}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Tag</span>
+                    <p className="font-mono">{selectedVersionData.gitTag || "-"}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Commit SHA</span>
+                    <p className="font-mono">{selectedVersionData.gitCommitSha || "-"}</p>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="space-y-2 mb-4">
               <div className="font-semibold mb-1">Melange YAML</div>
               {epochMismatch && (
@@ -350,7 +380,20 @@ export default function PackageDetailPage() {
                   </AlertDescription>
                 </Alert>
               )}
-              <CodeEditor value={selectedVersionData ? selectedVersionData.melangeYaml : melangeYaml} onChange={setMelangeYaml} language="yaml" height="420px" />
+              <div>
+                <CodeEditor
+                  value={selectedVersionData ? selectedVersionData.melangeYaml : melangeYaml}
+                  onChange={setMelangeYaml}
+                  language="yaml"
+                  height="420px"
+                  readOnly={isEditorReadOnly}
+                />
+                {isLinkedRevision && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    This melange file is linked to a git repository and cannot be edited.
+                  </p>
+                )}
+              </div>
             </div>
             
             {/* Build Settings Section */}
@@ -469,6 +512,15 @@ export default function PackageDetailPage() {
             </div>
             {/* Save Configuration Buttons */}
             <div className="mt-4 flex justify-end gap-2">
+              {isLinkedRevision ? (
+                <Button
+                  onClick={handleBuildLinked}
+                  disabled={isSavingAndBuilding || isSelectedRevisionImmutable()}
+                >
+                  {isSavingAndBuilding ? "Building..." : "Build"}
+                </Button>
+              ) : (
+                <>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span>
@@ -482,7 +534,7 @@ export default function PackageDetailPage() {
                         !!bootstrapRepoError ||
                         !!bootstrapKeyringError ||
                         !!customDiskSizeError ||
-                        isSelectedRevisionImmutable()
+                        areSaveButtonsDisabled
                       }
                     >
                       {isSavingConfig ? "Saving..." : "Save Configuration"}
@@ -507,7 +559,7 @@ export default function PackageDetailPage() {
                         !!bootstrapRepoError ||
                         !!bootstrapKeyringError ||
                         !!customDiskSizeError ||
-                        isSelectedRevisionImmutable()
+                        areSaveButtonsDisabled
                       }
                     >
                       {isSavingAndBuilding ? "Saving & Building..." : "Save & Build"}
@@ -520,6 +572,8 @@ export default function PackageDetailPage() {
                   </TooltipContent>
                 )}
               </Tooltip>
+                </>
+              )}
             </div>
               </TooltipProvider>
             </div>

@@ -82,8 +82,9 @@ func generatePackageFile(pv PackageVersion) (FileEntry, error) {
 
 // generatePackageAdditionalFile creates a FileEntry for a package additional
 // file (patch, config, etc.)
-// The file is stored at the path: packages/<prefix>/<package-name>/<version>/<filename>
-func generatePackageAdditionalFile(pv PackageVersion, filename, content string) (FileEntry, error) {
+// The file is stored at the path: packages/<prefix>/<package-name>/<version>/<relative-path>
+// The relative path may include subdirectories, which are preserved.
+func generatePackageAdditionalFile(pv PackageVersion, relativePath, content string) (FileEntry, error) {
 	safeFamilyName := sanitizeName(pv.FamilyName)
 	safeVersion := sanitizeName(pv.Version)
 
@@ -94,8 +95,24 @@ func generatePackageAdditionalFile(pv PackageVersion, filename, content string) 
 	twoCharPrefix := getPrefix(safeFamilyName)
 	singlePrefix := twoCharPrefix[:1]
 
+	// Sanitize each path component individually to preserve subdirectory structure
+	// while preventing path traversal
+	pathParts := strings.Split(relativePath, "/")
+	safeParts := make([]string, 0, len(pathParts))
+	for _, part := range pathParts {
+		sanitized := sanitizeName(part)
+		if sanitized != "" {
+			safeParts = append(safeParts, sanitized)
+		}
+	}
+	safeRelativePath := strings.Join(safeParts, "/")
+
+	if safeRelativePath == "" {
+		return FileEntry{}, fmt.Errorf("additional file relative path is empty after sanitization: %s", relativePath)
+	}
+
 	path := fmt.Sprintf("packages/%s/%s/%s/%s/%s",
-		singlePrefix, twoCharPrefix, safeFamilyName, safeVersion, filename)
+		singlePrefix, twoCharPrefix, safeFamilyName, safeVersion, safeRelativePath)
 
 	return FileEntry{
 		Path:    path,

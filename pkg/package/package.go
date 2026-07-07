@@ -17,10 +17,12 @@ import (
 	"github.com/Masterminds/semver"
 	"github.com/jackc/pgx/v5"
 	"github.com/securebuildhq/securebuild/pkg/builder"
+	"github.com/securebuildhq/securebuild/pkg/gitspec"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/package/types"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/pipeline"
+	"github.com/securebuildhq/securebuild/pkg/util"
 	"github.com/tuvistavie/securerandom"
 	"go.uber.org/zap"
 )
@@ -551,21 +553,17 @@ func changeVersionInMelangeYAML(ctx context.Context, melangeYAML string, version
 		zap.String("commit", commit),
 	)
 
-	lines := strings.Split(melangeYAML, "\n")
+	result, _, err := gitspec.OverrideVersionAndEpochInMelange(melangeYAML, version, 0, "")
+	if err != nil {
+		return "", fmt.Errorf("override version/epoch: %w", err)
+	}
 
+	lines := strings.Split(result, "\n")
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		leadingWhitespace := line[:len(line)-len(trimmed)]
-		if strings.HasPrefix(trimmed, "version:") {
-			lines[i] = fmt.Sprintf("%sversion: %q", leadingWhitespace, version)
-		}
-
 		if strings.HasPrefix(trimmed, "expected-commit:") {
 			lines[i] = fmt.Sprintf("%sexpected-commit: %s", leadingWhitespace, commit)
-		}
-
-		if strings.HasPrefix(trimmed, "epoch:") {
-			lines[i] = fmt.Sprintf("%sepoch: %d", leadingWhitespace, 0)
 		}
 	}
 
@@ -664,9 +662,9 @@ func CreateNewReleaseForLatestPackageVersion(ctx context.Context, packageID stri
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, license, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-	`, newVersionID, packageID, newVersion, updatedMelangeYAML, now, now, release, latestVersion.License, latestVersion.UseRoot, latestVersion.BootstrapEnabled, latestVersion.BootstrapApkRepository, latestVersion.BootstrapKeyringAppend)
+		INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, license, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, git_remote, melange_file_path, git_tag, git_commit_sha)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+	`, newVersionID, packageID, newVersion, updatedMelangeYAML, now, now, release, latestVersion.License, latestVersion.UseRoot, latestVersion.BootstrapEnabled, latestVersion.BootstrapApkRepository, latestVersion.BootstrapKeyringAppend, util.NullIfEmpty(latestVersion.GitRemote), util.NullIfEmpty(latestVersion.MelangeFilePath), util.NullIfEmpty(latestVersion.GitTag), util.NullIfEmpty(latestVersion.GitCommitSHA))
 	if err != nil {
 		return nil, fmt.Errorf("insert new package version: %w", err)
 	}
@@ -791,13 +789,14 @@ func getPackageVersion(ctx context.Context, packageVersionID string) (*types.Pac
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `SELECT id, package_id, version, melange_yaml, created_at, apk_release, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, custom_disk_size FROM package_version WHERE id = $1`
+	query := `SELECT id, package_id, version, melange_yaml, created_at, apk_release, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, custom_disk_size, git_remote, melange_file_path, git_tag, git_commit_sha FROM package_version WHERE id = $1`
 	var p types.PackageVersion
 	var melangeYaml sql.NullString
 	var bootstrapApkRepository sql.NullString
 	var bootstrapKeyringAppend sql.NullString
 	var customDiskSize sql.NullInt32
-	err := conn.QueryRow(ctx, query, packageVersionID).Scan(&p.ID, &p.PackageID, &p.Version, &melangeYaml, &p.CreatedAt, &p.APKRelease, &p.UseRoot, &p.BootstrapEnabled, &bootstrapApkRepository, &bootstrapKeyringAppend, &customDiskSize)
+	var gitRemote, melangeFilePath, gitTag, gitCommitSHA sql.NullString
+	err := conn.QueryRow(ctx, query, packageVersionID).Scan(&p.ID, &p.PackageID, &p.Version, &melangeYaml, &p.CreatedAt, &p.APKRelease, &p.UseRoot, &p.BootstrapEnabled, &bootstrapApkRepository, &bootstrapKeyringAppend, &customDiskSize, &gitRemote, &melangeFilePath, &gitTag, &gitCommitSHA)
 	if err != nil {
 		return nil, fmt.Errorf("get package version: %w", err)
 	}
@@ -818,6 +817,11 @@ func getPackageVersion(ctx context.Context, packageVersionID string) (*types.Pac
 		diskSize := int(customDiskSize.Int32)
 		p.CustomDiskSize = &diskSize
 	}
+
+	p.GitRemote = gitRemote.String
+	p.MelangeFilePath = melangeFilePath.String
+	p.GitTag = gitTag.String
+	p.GitCommitSHA = gitCommitSHA.String
 
 	return &p, nil
 }
@@ -846,13 +850,14 @@ func SetCustomDiskSize(ctx context.Context, packageVersionID string, diskSize *i
 }
 
 func getPackageVersionWithTx(ctx context.Context, tx pgx.Tx, packageVersionID string) (*types.PackageVersion, error) {
-	query := `SELECT id, package_id, version, melange_yaml, created_at, apk_release, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, custom_disk_size FROM package_version WHERE id = $1`
+	query := `SELECT id, package_id, version, melange_yaml, created_at, apk_release, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, custom_disk_size, git_remote, melange_file_path, git_tag, git_commit_sha FROM package_version WHERE id = $1`
 	var p types.PackageVersion
 	var melangeYaml sql.NullString
 	var bootstrapApkRepository sql.NullString
 	var bootstrapKeyringAppend sql.NullString
 	var customDiskSize sql.NullInt32
-	err := tx.QueryRow(ctx, query, packageVersionID).Scan(&p.ID, &p.PackageID, &p.Version, &melangeYaml, &p.CreatedAt, &p.APKRelease, &p.UseRoot, &p.BootstrapEnabled, &bootstrapApkRepository, &bootstrapKeyringAppend, &customDiskSize)
+	var gitRemote, melangeFilePath, gitTag, gitCommitSHA sql.NullString
+	err := tx.QueryRow(ctx, query, packageVersionID).Scan(&p.ID, &p.PackageID, &p.Version, &melangeYaml, &p.CreatedAt, &p.APKRelease, &p.UseRoot, &p.BootstrapEnabled, &bootstrapApkRepository, &bootstrapKeyringAppend, &customDiskSize, &gitRemote, &melangeFilePath, &gitTag, &gitCommitSHA)
 	if err != nil {
 		return nil, fmt.Errorf("get package version: %w", err)
 	}
@@ -873,6 +878,11 @@ func getPackageVersionWithTx(ctx context.Context, tx pgx.Tx, packageVersionID st
 		diskSize := int(customDiskSize.Int32)
 		p.CustomDiskSize = &diskSize
 	}
+
+	p.GitRemote = gitRemote.String
+	p.MelangeFilePath = melangeFilePath.String
+	p.GitTag = gitTag.String
+	p.GitCommitSHA = gitCommitSHA.String
 
 	return &p, nil
 }

@@ -119,6 +119,28 @@ func TestComputeGlobalTagReassignments(t *testing.T) {
 				"apko2": {"2.0.0", "2.0", "2", "latest"},
 			},
 		},
+		{
+			name: "excludes git-derived tags from reassignment",
+			apkos: []APKOTagInfo{
+				{ID: "apko1", Tags: []string{"1.5.0", "latest"}, GitTag: "v1.5.0"},
+				{ID: "apko2", Tags: []string{"1.5.1", "1.5", "1"}, GitTag: "v1.5.1"},
+			},
+			expected: map[string][]string{
+				"apko1": {"1.5.0"},
+				"apko2": {"1.5.1", "1.5", "1", "latest"},
+			},
+		},
+		{
+			name: "git-derived tag with v prefix is protected",
+			apkos: []APKOTagInfo{
+				{ID: "apko1", Tags: []string{"v1.5.0", "v1.5", "v1", "latest"}, GitTag: "v1.5.0"},
+				{ID: "apko2", Tags: []string{"v1.5.1"}, GitTag: "v1.5.1"},
+			},
+			expected: map[string][]string{
+				"apko1": {"v1.5.0"},
+				"apko2": {"v1.5.1", "v1.5", "v1", "latest"},
+			},
+		},
 	}
 
 	for _, tt := range tests {

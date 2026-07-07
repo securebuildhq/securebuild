@@ -37,6 +37,10 @@ export interface Image {
   currentTags: ImageTag[];
 
   externalRegistries: ImageExternalRegistry[];
+
+  gitRemote?: string;
+  apkoFilePath?: string;
+  imageTagTemplate?: string;
 }
 
 export interface ImageExternalRegistry {
@@ -71,6 +75,9 @@ export interface ImageAPKO {
   testYaml: string | null;
 
   latestVersion: ImageAPKOVersion;
+  gitTag?: string;
+  gitCommitSha?: string;
+  apkoFilePath?: string;
 }
 
 export interface ImageAPKOVersion {
@@ -78,6 +85,9 @@ export interface ImageAPKOVersion {
   apkoYaml: string;
   createdAt: Date;
   updatedAt: Date;
+  gitRemote?: string;
+  apkoFilePath?: string;
+  gitCommitSha?: string;
 }
 
 export interface ImageBuild {

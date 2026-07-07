@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Calendar, Clock, Package, Tag, Save, Edit3, X, Plus, Trash2, Shield, Download, Play, AlertTriangle, Info, HelpCircle, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, Calendar, Clock, Package, Tag, Save, Edit3, X, Plus, Trash2, Shield, Download, Play, AlertTriangle, Info, HelpCircle, Eye, EyeOff, GitBranch } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import semver from "semver";
@@ -22,6 +22,8 @@ import { getFixableCVEs, FixableCVEsByAPKO } from "@/lib/image/actions/get-fixab
 import { buildImageAction } from "@/lib/image/actions/build-image";
 import { buildImageApkoAction } from "@/lib/image/actions/build-apko";
 import { scanImageApkoAction } from "@/lib/image/actions/scan-apko";
+import { addLinkedImageApkoAction } from "@/lib/image/actions/add-linked-image-apko";
+import { updateImageGitLinkAction } from "@/lib/image/actions/update-image-git-link";
 import { setImagePublic } from "@/lib/image/actions/set-image-public";
 import { getImageAction } from "@/lib/image/actions/get-image";
 import { getImageBuildsAction } from "@/lib/image/actions/get-image-builds";
@@ -169,6 +171,17 @@ export function ImagePageClient({
     setActiveTab(currentTab);
   }, [currentTab]);
 
+  // Sync git link state when image data changes
+  useEffect(() => {
+    setLinkGitRepo(!!image.gitRemote);
+    setGitEditForm({
+      gitRemote: image.gitRemote || "",
+      apkoFilePath: image.apkoFilePath || "",
+      imageTagTemplate: image.imageTagTemplate || "",
+    });
+    setIsEditingGitLink(false);
+  }, [image.gitRemote, image.apkoFilePath, image.imageTagTemplate]);
+
   // Loading states for lazy-loaded tabs
   const [scanResultsLoading, setScanResultsLoading] = useState(false);
   const [buildsLoading, setBuildsLoading] = useState(false);
@@ -237,6 +250,15 @@ export function ImagePageClient({
   // Public/Private state
   const [isPublic, setIsPublic] = useState(image.isPublic || false);
   const [isTogglingPublic, setIsTogglingPublic] = useState(false);
+
+  // Linked repository state
+  const [showAddLinkedApkoForm, setShowAddLinkedApkoForm] = useState(false);
+  const [linkedApkoGitTag, setLinkedApkoGitTag] = useState("");
+  const [isAddingLinkedApko, setIsAddingLinkedApko] = useState(false);
+  const [linkGitRepo, setLinkGitRepo] = useState(false);
+  const [gitEditForm, setGitEditForm] = useState({ gitRemote: "", apkoFilePath: "", imageTagTemplate: "" });
+  const [isSavingGitLink, setIsSavingGitLink] = useState(false);
+  const [isEditingGitLink, setIsEditingGitLink] = useState(false);
 
   // Lazy loading functions for tab data
   const fetchScanResults = async () => {
@@ -440,6 +462,54 @@ const fetchFixableCVEs = async (force = false) => {
       setIsPublic(!checked);
     } finally {
       setIsTogglingPublic(false);
+    }
+  };
+
+  // Linked APKO handler
+  const handleSaveGitLink = async () => {
+    if (!session || !image) return;
+    setIsSavingGitLink(true);
+    try {
+      const updated = await updateImageGitLinkAction(
+        session,
+        image.id,
+        linkGitRepo ? gitEditForm.gitRemote.trim() : "",
+        linkGitRepo ? gitEditForm.apkoFilePath.trim() : "",
+        linkGitRepo ? gitEditForm.imageTagTemplate.trim() : "",
+      );
+      setImage(updated);
+      setIsEditingGitLink(false);
+      toast.success("Repository link updated");
+    } catch (err) {
+      toast.error("Failed to update repository link");
+      console.error(err);
+    } finally {
+      setIsSavingGitLink(false);
+    }
+  };
+
+  const handleAddLinkedApko = async () => {
+    if (!session || !image) return;
+    if (!linkedApkoGitTag.trim()) {
+      toast.error("Git tag is required");
+      return;
+    }
+
+    setIsAddingLinkedApko(true);
+    try {
+      await addLinkedImageApkoAction(session, image.id, linkedApkoGitTag.trim());
+      toast.success("APKO from git tag added successfully");
+      setLinkedApkoGitTag("");
+      setShowAddLinkedApkoForm(false);
+
+      // Refresh the image data
+      const updatedImage = await getImageAction(session, image.id);
+      setImage(updatedImage);
+    } catch (error) {
+      console.error("Failed to add linked APKO:", error);
+      toast.error("Failed to add APKO from git tag");
+    } finally {
+      setIsAddingLinkedApko(false);
     }
   };
 
@@ -1056,6 +1126,158 @@ test:
 
                       </div>
 
+                      {/* Git Repository Link */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="text-sm font-medium">Git Repository</label>
+                            {linkGitRepo && !isEditingGitLink && image.gitRemote && (
+                              <Button size="sm" variant="outline" onClick={() => setIsEditingGitLink(true)}>
+                                <Edit3 className="h-3 w-3 mr-1" />
+                                Edit
+                              </Button>
+                            )}
+                            {isEditingGitLink && (
+                              <div className="flex gap-2">
+                                <Button size="sm" onClick={handleSaveGitLink} disabled={isSavingGitLink}>
+                                  {isSavingGitLink ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary-foreground mr-1" /> : <Save className="h-3 w-3 mr-1" />}
+                                  Save
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => {
+                                  setIsEditingGitLink(false);
+                                  setLinkGitRepo(!!image.gitRemote);
+                                  setGitEditForm({
+                                    gitRemote: image.gitRemote || "",
+                                    apkoFilePath: image.apkoFilePath || "",
+                                    imageTagTemplate: image.imageTagTemplate || "",
+                                  });
+                                }}>
+                                  <X className="h-3 w-3 mr-1" />
+                                  Cancel
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                          <div className={`px-3 py-2 rounded border ${
+                            linkGitRepo
+                              ? "bg-blue-50 border-blue-200"
+                              : "bg-muted/30"
+                          }`}>
+                            <div className="flex items-center space-x-6">
+                              <Switch
+                                checked={linkGitRepo}
+                                onCheckedChange={(checked) => {
+                                  setLinkGitRepo(checked);
+                                  setIsEditingGitLink(true);
+                                }}
+                                disabled={isSavingGitLink}
+                              />
+                              <label className={`text-sm font-medium leading-none ${
+                                linkGitRepo ? "text-blue-700" : ""
+                              }`}>
+                                {linkGitRepo ? "Linked" : "Not linked"}
+                              </label>
+                              <p className={`text-xs ${
+                                linkGitRepo ? "text-blue-600" : "text-muted-foreground"
+                              }`}>
+                                {linkGitRepo
+                                  ? "Specs pulled from git repository"
+                                  : "Specs managed manually"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {linkGitRepo && (
+                            <div className="space-y-4 mt-4">
+                              {isEditingGitLink || !image.gitRemote ? (
+                                <>
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium">Git Origin URL</label>
+                                    <Input
+                                      value={gitEditForm.gitRemote}
+                                      onChange={(e) => setGitEditForm({ ...gitEditForm, gitRemote: e.target.value })}
+                                      placeholder="e.g., https://github.com/owner/repo.git"
+                                      disabled={isSavingGitLink}
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium">Path to APKO Spec File</label>
+                                    <Input
+                                      value={gitEditForm.apkoFilePath}
+                                      onChange={(e) => setGitEditForm({ ...gitEditForm, apkoFilePath: e.target.value })}
+                                      placeholder="e.g., apko.yaml"
+                                      disabled={isSavingGitLink}
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-medium">Image Tag Template</label>
+                                    <Input
+                                      value={gitEditForm.imageTagTemplate}
+                                      onChange={(e) => setGitEditForm({ ...gitEditForm, imageTagTemplate: e.target.value })}
+                                      placeholder="e.g., v{major}.{minor}"
+                                      disabled={isSavingGitLink}
+                                    />
+                                    <p className="text-sm text-muted-foreground">
+                                      Template for OCI tags using {"{major}"}, {"{minor}"}, and {"{patch}"} variables.
+                                    </p>
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="space-y-4">
+                                  <div>
+                                    <label className="text-sm font-medium text-muted-foreground">Git Remote</label>
+                                    <p className="text-sm font-mono bg-muted/30 p-2 rounded border mt-1">{image.gitRemote}</p>
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium text-muted-foreground">APKO File Path</label>
+                                    <p className="text-sm font-mono bg-muted/30 p-2 rounded border mt-1">{image.apkoFilePath || "-"}</p>
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium text-muted-foreground">Image Tag Template</label>
+                                    <p className="text-sm font-mono bg-muted/30 p-2 rounded border mt-1">{image.imageTagTemplate || "-"}</p>
+                                  </div>
+                                </div>
+                              )}
+
+                              {image.gitRemote && (
+                                <div className="border-t pt-4">
+                                  {!showAddLinkedApkoForm ? (
+                                    <Button onClick={() => setShowAddLinkedApkoForm(true)} disabled={isAddingLinkedApko} size="sm">
+                                      <Plus className="mr-2 h-4 w-4" />
+                                      Add APKO from Git Tag
+                                    </Button>
+                                  ) : (
+                                    <div className="space-y-4">
+                                      <h4 className="font-semibold">Add APKO from Git Tag</h4>
+                                      <div className="space-y-2">
+                                        <label className="text-sm font-medium">Git Tag</label>
+                                        <Input
+                                          value={linkedApkoGitTag}
+                                          onChange={(e) => setLinkedApkoGitTag(e.target.value)}
+                                          placeholder="e.g., v1.0.0"
+                                          className="max-w-md"
+                                        />
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button onClick={handleAddLinkedApko} disabled={isAddingLinkedApko || !linkedApkoGitTag.trim()} size="sm">
+                                          {isAddingLinkedApko ? <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary-foreground mr-1" /> : <Plus className="mr-2 h-4 w-4" />}
+                                          {isAddingLinkedApko ? "Adding..." : "Add APKO"}
+                                        </Button>
+                                        <Button variant="outline" onClick={() => { setShowAddLinkedApkoForm(false); setLinkedApkoGitTag(""); }} disabled={isAddingLinkedApko} size="sm">
+                                          <X className="mr-2 h-4 w-4" />
+                                          Cancel
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <div></div>
+                      </div>
+
                       {/* Second Row - Image Visibility (Single Column Width) */}
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div>
@@ -1170,6 +1392,7 @@ test:
                     </div>
                   </div>
                 </div>
+
               </CardContent>
             </Card>
           </TabsContent>
@@ -1279,6 +1502,26 @@ test:
                               <Clock className="h-3 w-3 text-muted-foreground" />
                               <span className="text-xs text-muted-foreground">Last built {formatDate(apko.lastBuiltAt)}</span>
                             </div>
+                            {apko.gitTag && (
+                              <>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <GitBranch className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-xs text-muted-foreground">Remote: {image.gitRemote || "-"}</span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <GitBranch className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-xs text-muted-foreground">File: {apko.apkoFilePath || "-"}</span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <GitBranch className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-xs text-muted-foreground">Tag: {apko.gitTag}</span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <GitBranch className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-xs text-muted-foreground">Commit: {apko.gitCommitSha ? apko.gitCommitSha.substring(0, 7) : "-"}</span>
+                                </div>
+                              </>
+                            )}
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="flex flex-wrap gap-1">
@@ -1363,7 +1606,7 @@ test:
                                     Cancel
                                   </Button>
                                 </div>
-                              ) : (
+                              ) : !apko.gitTag ? (
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -1372,7 +1615,7 @@ test:
                                   <Edit3 className="h-3 w-3 mr-1" />
                                   Edit
                                 </Button>
-                              )}
+                              ) : null}
                             </div>
 
                             {editingApkoId === apko.id ? (
