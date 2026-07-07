@@ -80,6 +80,25 @@ services:
     depends_on:
       - postgres
 
+  api:
+    image: securebuild-api:latest
+    env_file:
+      - ./securebuild-app/.env.local
+    environment:
+      # Override DB_URI to point at the compose postgres (env_file has localhost:15432)
+      DB_URI: postgres://postgres:password@postgres:5432/securebuild?sslmode=disable
+      HOSTNAME: "0.0.0.0"
+      TELEMETRY_BACKEND: ${TELEMETRY_BACKEND:-none}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4318}
+      OTEL_SERVICE_NAME: securebuild-api
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=development}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3002:3002"
+    depends_on:
+      - postgres
+
   apk-proxy:
     image: securebuild-worker:latest
     command: ["apk-proxy"]

@@ -1,5 +1,8 @@
 database: securebuild
 name: user_team
+requires:
+  - securebuild-user
+  - securebuild-team
 schema:
   postgres:
     primaryKey:
@@ -14,3 +17,12 @@ schema:
       type: text
       constraints:
         notNull: true
+seedData:
+  rows:
+    - columns:
+        - column: user_id
+          value:
+            str: "dev-user"
+        - column: team_id
+          value:
+            str: "dev-team"

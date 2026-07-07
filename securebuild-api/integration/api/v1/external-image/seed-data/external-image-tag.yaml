@@ -1,0 +1,165 @@
+database: securebuild
+name: external_image_tag
+requires:
+  - external-image
+seedData:
+  rows:
+    - columns:
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "latest"
+        - column: digest
+          value:
+            str: "sha256:abc123def456789012345678901234567890123456789012345678901234"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: next_check_digest_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+    - columns:
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "unscanned"
+        - column: digest
+          value:
+            str: "sha256:unscanned123456789012345678901234567890123456789012345678901"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: next_check_digest_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+    # Queued scan tag
+    - columns:
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "queued"
+        - column: digest
+          value:
+            str: "sha256:queued123456789012345678901234567890123456789012345678901234"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: next_check_digest_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+    # Running scan tag
+    - columns:
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "running"
+        - column: digest
+          value:
+            str: "sha256:running123456789012345678901234567890123456789012345678901234"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: next_check_digest_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+    # Failed scan tag
+    - columns:
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "failed"
+        - column: digest
+          value:
+            str: "sha256:failed123456789012345678901234567890123456789012345678901234"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: next_check_digest_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+    # Pending SBOM scan tag
+    - columns:
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "pending_sbom"
+        - column: digest
+          value:
+            str: "sha256:pending123456789012345678901234567890123456789012345678901234"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: next_check_digest_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+    # Generating SBOM scan tag
+    - columns:
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "generating_sbom"
+        - column: digest
+          value:
+            str: "sha256:generating123456789012345678901234567890123456789012345678901"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: next_check_digest_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2024-01-02T00:00:00Z"
