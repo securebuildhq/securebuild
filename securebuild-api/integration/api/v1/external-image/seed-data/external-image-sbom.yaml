@@ -1,0 +1,106 @@
+database: securebuild
+name: external_image_sbom
+requires:
+  - external-image-tag
+seedData:
+  rows:
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:abc123def456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","name":"test-image","dataLicense":"CC0-1.0","documentNamespace":"https://securebuild.io/test/image","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: SecureBuild test"]},"packages":[{"SPDXID":"SPDXRef-package-test","name":"test-pkg","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION"}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-package-test"}]}'
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "grype"
+        - column: image_size_bytes
+          value:
+            str: "1024000"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:abc123def456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "aarch64"
+        - column: sbom
+          value:
+            str: '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","name":"test-image","dataLicense":"CC0-1.0","documentNamespace":"https://securebuild.io/test/image","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: SecureBuild test"]},"packages":[{"SPDXID":"SPDXRef-package-test","name":"test-pkg","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION"}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-package-test"}]}'
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "grype"
+        - column: image_size_bytes
+          value:
+            str: "1024000"
+    # Queued scan SBOM
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:queued123456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","name":"test-image","dataLicense":"CC0-1.0","documentNamespace":"https://securebuild.io/test/image","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: SecureBuild test"]},"packages":[{"SPDXID":"SPDXRef-package-test","name":"test-pkg","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION"}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-package-test"}]}'
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "grype"
+        - column: image_size_bytes
+          value:
+            int: 1024000
+    # Running scan SBOM
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:running123456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","name":"test-image","dataLicense":"CC0-1.0","documentNamespace":"https://securebuild.io/test/image","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: SecureBuild test"]},"packages":[{"SPDXID":"SPDXRef-package-test","name":"test-pkg","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION"}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-package-test"}]}'
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "grype"
+        - column: image_size_bytes
+          value:
+            int: 1024000
+    # Failed scan SBOM
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:failed123456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","name":"test-image","dataLicense":"CC0-1.0","documentNamespace":"https://securebuild.io/test/image","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: SecureBuild test"]},"packages":[{"SPDXID":"SPDXRef-package-test","name":"test-pkg","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION"}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-package-test"}]}'
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "grype"
+        - column: image_size_bytes
+          value:
+            int: 1024000
+    # NOTE: No SBOM entries for pending_sbom and generating_sbom test cases
+    # These statuses represent states BEFORE SBOM generation completes

@@ -193,6 +193,7 @@ build-dev-images: pkg/builder/builder-linux-amd64 pkg/builder/builder-linux-arm6
 		--build-arg "NEXT_PUBLIC_CENTRIFUGO_ADDRESS=$${NEXT_PUBLIC_CENTRIFUGO_ADDRESS}" \
 		--build-arg "NEXT_PUBLIC_APK_REPOSITORY=$${NEXT_PUBLIC_APK_REPOSITORY}" \
 		-f securebuild-app/Dockerfile.repldev -t securebuild-app:latest securebuild-app/
+	docker build -f securebuild-api/Dockerfile.repldev -t securebuild-api:latest securebuild-api/
 	docker build -f Dockerfile.repldev-migrations -t securebuild-migrations:latest .
 
 # Dev stack targets (Docker Compose)

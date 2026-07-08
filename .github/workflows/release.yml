@@ -83,8 +83,44 @@ jobs:
           name: securebuild-app
           path: securebuild-app/securebuild-app.tar.gz
 
+  build-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: securebuild-api/package-lock.json
+
+      - name: Install dependencies
+        run: cd securebuild-api && npm ci
+
+      - name: Build
+        run: cd securebuild-api && npm run build
+        env:
+          CI: true
+
+      - name: Package api bundle
+        run: |
+          cd securebuild-api
+          mkdir -p release
+          cp -r .next/standalone release/
+          mkdir -p release/.next
+          cp -r .next/static release/.next/ 2>/dev/null || true
+          tar -czvf securebuild-api.tar.gz -C release .
+
+      - name: Upload api bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: securebuild-api
+          path: securebuild-api/securebuild-api.tar.gz
+
   release:
-    needs: [build-worker, build-app]
+    needs: [build-worker, build-app, build-api]
     runs-on: ubuntu-latest
     steps:
       - name: Download worker artifacts
@@ -102,6 +138,11 @@ jobs:
         with:
           name: securebuild-app
 
+      - name: Download api artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: securebuild-api
+
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
@@ -109,6 +150,8 @@ jobs:
           mv securebuild-worker-linux-amd64 securebuild-worker-linux-arm64 release-assets/
           # App from download-artifact (single file at workspace root)
           mv securebuild-app.tar.gz release-assets/
+          # API from download-artifact (single file at workspace root)
+          mv securebuild-api.tar.gz release-assets/
           ls -la release-assets/
 
       - name: Create Release

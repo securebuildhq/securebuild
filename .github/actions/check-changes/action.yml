@@ -4,6 +4,9 @@ outputs:
   run-app:
     description: 'Whether to run securebuild-app jobs'
     value: ${{ steps.changes.outputs.run-app }}
+  run-api:
+    description: 'Whether to run securebuild-api jobs'
+    value: ${{ steps.changes.outputs.run-api }}
   run-go:
     description: 'Whether to run Go jobs'
     value: ${{ steps.changes.outputs.run-go }}
@@ -28,6 +31,7 @@ runs:
           echo "Workflow, Makefile, or schema changed - running all jobs"
           echo "run-all=true" >> $GITHUB_OUTPUT
           echo "run-app=true" >> $GITHUB_OUTPUT
+          echo "run-api=true" >> $GITHUB_OUTPUT
           echo "run-go=true" >> $GITHUB_OUTPUT
           exit 0
         fi
@@ -37,6 +41,13 @@ runs:
           echo "run-app=true" >> $GITHUB_OUTPUT
         else
           echo "run-app=false" >> $GITHUB_OUTPUT
+        fi
+
+        # Check for securebuild-api changes
+        if echo "$CHANGED_FILES" | grep -q '^securebuild-api/'; then
+          echo "run-api=true" >> $GITHUB_OUTPUT
+        else
+          echo "run-api=false" >> $GITHUB_OUTPUT
         fi
 
         # Check for Go changes

@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run-app: ${{ steps.check.outputs.run-app }}
+      run-api: ${{ steps.check.outputs.run-api }}
       run-go: ${{ steps.check.outputs.run-go }}
       run-all: ${{ steps.check.outputs.run-all }}
     steps:
@@ -58,6 +59,47 @@ jobs:
     - name: Run securebuild-app integration tests
       run: |
         cd securebuild-app
+        npm run test:integration
+      env:
+        CI: true
+        NODE_OPTIONS: --enable-source-maps
+
+  securebuild-api-integration:
+    needs: check-changes
+    if: needs.check-changes.outputs.run-api == 'true' || needs.check-changes.outputs.run-all == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+
+    - name: Cache Node.js modules
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.npm
+          securebuild-api/node_modules
+          securebuild-api/.next/cache
+        key: ${{ runner.os }}-node-api-${{ hashFiles('securebuild-api/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-node-api-
+
+    - name: Install SchemaHero
+      uses: ./.github/actions/install-schemahero
+
+    - name: Install Node.js dependencies
+      uses: ./.github/actions/install-npm-dependencies
+      with:
+        working-directory: securebuild-api
+
+    - name: Run securebuild-api integration tests
+      run: |
+        cd securebuild-api
         npm run test:integration
       env:
         CI: true

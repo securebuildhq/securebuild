@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1.4
+# Dockerfile for repldev - Next.js standalone build for securebuild-api (linux/amd64)
+FROM node:24-slim AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies with npm cache mount for faster rebuilds
+# On ARM64, delete package-lock.json to force fresh install with correct binaries
+RUN --mount=type=cache,target=/root/.npm \
+    npm install
+
+# Copy source
+COPY . .
+
+# Optimization: Disable telemetry, source maps, and increase Node memory
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_DISABLE_SOURCEMAPS=1
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+# Build with Turbopack and cache mounts for incremental builds (5-10x faster)
+RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,target=/app/.next/cache \
+    npm run build
+
+# Production image
+FROM node:24-slim
+
+WORKDIR /app
+
+# Copy standalone output
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+
+# Expose port
+EXPOSE 3002
+
+ENV NODE_ENV=production
+ENV PORT=3002
+
+CMD ["node", "server.js"]

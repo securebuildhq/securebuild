@@ -1,0 +1,24 @@
+database: securebuild
+name: securebuild_team
+requires: []
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-team-alpha"
+        - column: name
+          value:
+            str: "Test Team Alpha"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: registry_username
+          value:
+            str: "test-alpha"
+        - column: full_catalog_access
+          value:
+            str: "true"
+        - column: feature_flags
+          value:
+            str: "{}"

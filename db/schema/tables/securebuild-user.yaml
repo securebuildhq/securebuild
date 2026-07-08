@@ -1,5 +1,6 @@
 database: securebuild
 name: securebuild_user
+requires: []
 schema:
   postgres:
     primaryKey:
@@ -41,3 +42,30 @@ schema:
       constraints:
         notNull: true
       default: false
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "dev-user"
+        - column: email
+          value:
+            str: "dev@securebuild.com"
+        - column: first_name
+          value:
+            str: "Dev"
+        - column: last_name
+          value:
+            str: "User"
+        - column: picture
+          value:
+            str: "https://securebuild.com/img/avatar-dev.png"
+        - column: hosted_domain
+          value:
+            str: "securebuild.com"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: role
+          value:
+            str: "admin"
