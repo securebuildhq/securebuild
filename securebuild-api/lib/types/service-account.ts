@@ -6,6 +6,7 @@ export interface ServiceAccount {
     expiresIn: string | null;
     lastUsedAt: Date | null;
     partialValue: string;
+    isSystem: boolean;
 }
 
 export interface ServiceAccountWithValue extends ServiceAccount {

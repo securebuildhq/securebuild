@@ -10,6 +10,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/listener/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
+	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"go.uber.org/zap"
 )
@@ -36,6 +37,9 @@ func StartListeners(ctx context.Context) error {
 	StartGitHubSyncListener(ctx, l)
 	StartPipelineSyncListener(ctx, l)
 
+	// Start cleanup goroutine for completed work_queue rows
+	go startCompletedWorkCleanup(ctx)
+
 	l.Start(ctx)
 	defer l.Stop(ctx)
 
@@ -43,6 +47,41 @@ func StartListeners(ctx context.Context) error {
 	<-ctx.Done()
 
 	return nil
+}
+
+// startCompletedWorkCleanup periodically deletes work_queue rows that have been
+// completed for more than 24 hours. This keeps the table from growing unbounded
+// while still preserving completed job records long enough for status queries.
+func startCompletedWorkCleanup(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			conn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
+			if err != nil {
+				logger.Warn("failed to get connection for completed work cleanup", zap.Error(err))
+				continue
+			}
+			result, err := conn.Exec(ctx, `
+				DELETE FROM work_queue
+				WHERE completed_at IS NOT NULL
+				AND completed_at < NOW() - INTERVAL '24 hours'
+			`)
+			conn.Release()
+			if err != nil {
+				logger.Warn("failed to clean up completed work queue rows", zap.Error(err))
+				continue
+			}
+			if result.RowsAffected() > 0 {
+				logger.Info("cleaned up completed work queue rows",
+					zap.Int64("rows_deleted", result.RowsAffected()))
+			}
+		}
+	}
 }
 
 func StartCreatePackageListener(ctx context.Context, l *Listener) {

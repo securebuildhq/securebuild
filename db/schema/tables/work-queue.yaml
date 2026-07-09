@@ -42,3 +42,5 @@ schema:
     - name: priority
       type: integer
       default: "0"
+    - name: result
+      type: jsonb

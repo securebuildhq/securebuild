@@ -47,6 +47,8 @@ import (
 
 type PackageFamilyUpdateCheckPayload struct {
 	PackageFamilyID string `json:"packageFamilyId"`
+	Tag             string `json:"tag,omitempty"`
+	Force           bool   `json:"force,omitempty"`
 }
 
 type GitHubVersionResult struct {
@@ -153,14 +155,14 @@ func performPackageFamilyUpdateCheck(ctx context.Context, p *PackageFamilyUpdate
 		return fmt.Errorf("failed to get package family %s: %w", p.PackageFamilyID, err)
 	}
 
-	// Skip if monitoring is disabled
-	if !packageFamily.MonitoringEnabled {
+	// Skip if monitoring is disabled (but not for forced checks triggered via the API)
+	if !packageFamily.MonitoringEnabled && !p.Force {
 		logger.Info("Package family monitoring disabled, skipping check", zap.String("package_family_id", p.PackageFamilyID))
 		return nil
 	}
 
-	// Log automation mode
-	if packageFamily.DryRunMode {
+	// Log automation mode (dry run only applies to scheduled checks, not forced API-triggered)
+	if packageFamily.DryRunMode && !p.Force {
 		logger.Info("Package family in dry run mode", zap.String("package_family_id", p.PackageFamilyID))
 	}
 
@@ -176,7 +178,7 @@ func performPackageFamilyUpdateCheck(ctx context.Context, p *PackageFamilyUpdate
 			githubClient = github.NewClient(nil)
 			logger.Warn("No GitHub API token found, using unauthenticated client")
 		}
-		return performGitLinkedUpdateCheck(ctx, githubClient, packageFamily)
+		return performGitLinkedUpdateCheck(ctx, githubClient, packageFamily, p.Tag)
 	}
 
 	// Get the current highest version for this family to extract upstream config
@@ -343,7 +345,14 @@ func performPackageFamilyUpdateCheck(ctx context.Context, p *PackageFamilyUpdate
 // performGitLinkedUpdateCheck handles the update check for git-linked package families.
 // Instead of using the melange YAML's update block, it lists tags from the git remote,
 // filters by semver, and creates package versions by pulling specs from git.
-func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily) error {
+//
+// When tag is non-empty, the handler processes only that specific tag instead of scanning
+// all tags. This is used by the package-update API endpoint for deterministic triggering.
+func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, tag string) error {
+	if tag != "" {
+		return performGitLinkedUpdateCheckForTag(ctx, githubClient, pf, tag)
+	}
+
 	gitRemote := pf.GitRemote.String
 	melangeFilePath := pf.MelangeFilePath.String
 
@@ -520,6 +529,151 @@ func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Clien
 	}
 
 	return nil
+}
+
+// performGitLinkedUpdateCheckForTag processes a single specific git tag (triggered by the
+// package-update API). It resolves the tag to a commit SHA, checks for an existing
+// package_version, and creates/re-tags as needed. The package_version_id is stored in the
+// handler context via WithResult so the listener can write it to the work_queue result column.
+func performGitLinkedUpdateCheckForTag(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, tag string) error {
+	gitRemote := pf.GitRemote.String
+	melangeFilePath := pf.MelangeFilePath.String
+
+	logger.Info("Performing git-linked update check for specific tag",
+		zap.String("package_family_id", pf.ID),
+		zap.String("git_remote", gitRemote),
+		zap.String("tag", tag))
+
+	// Parse the tag as semver
+	v, err := semver.NewVersion(tag)
+	if err != nil {
+		return NewNonRetryableError(fmt.Errorf("tag '%s' is not a valid semantic version: %w", tag, err))
+	}
+	if v.Prerelease() != "" {
+		return NewNonRetryableError(fmt.Errorf("tag '%s' has pre-release components, which are not supported", tag))
+	}
+
+	versionStr := v.Original()
+	tagStr := versionStr
+
+	// Resolve the tag to a commit SHA
+	currentSHA, err := gitspec.ResolveTagToCommit(ctx, githubClient, gitRemote, tagStr)
+	if err != nil {
+		return fmt.Errorf("failed to resolve tag '%s' to commit: %w", tagStr, err)
+	}
+
+	// Check if a package_version with this git_tag + git_commit_sha already exists
+	existingVersionID, err := findPackageVersionByGitTagAndSHA(ctx, pf, tagStr, currentSHA)
+	if err != nil {
+		return fmt.Errorf("failed to check existing version for tag %s: %w", tagStr, err)
+	}
+
+	if existingVersionID != "" {
+		// Version already exists with the same SHA — no-op, just return the existing ID
+		logger.Info("Package version already exists for tag, no-op",
+			zap.String("tag", tagStr),
+			zap.String("commit_sha", currentSHA),
+			zap.String("package_version_id", existingVersionID))
+
+		resultJSON, _ := json.Marshal(map[string]string{
+			"package_version_id": existingVersionID,
+		})
+		SetResult(ctx, resultJSON)
+		return nil
+	}
+
+	// Check if the version exists with a different SHA (re-tag)
+	existingGitTags, err := getExistingGitTagsForFamily(ctx, pf)
+	if err != nil {
+		return fmt.Errorf("failed to get existing git tags: %w", err)
+	}
+
+	existingSHA, tagExists := existingGitTags[tagStr]
+
+	var result *UpdateResult
+	if tagExists && existingSHA != currentSHA {
+		// Re-tag: create a new revision with the new SHA
+		result, err = processGitLinkedRetag(ctx, githubClient, pf, v, tagStr, currentSHA, melangeFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to process re-tag for %s: %w", tagStr, err)
+		}
+	} else {
+		// New version — pull spec from git and create package version
+		result, err = processGitLinkedNewVersion(ctx, githubClient, pf, v, tagStr, melangeFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to process new version %s: %w", tagStr, err)
+		}
+	}
+
+	if result == nil {
+		return nil
+	}
+
+	// Reassign tags globally before queueing builds
+	if err := reassignTagsGlobally(ctx, pf, []*UpdateResult{result}); err != nil {
+		logger.Error(fmt.Errorf("failed to reassign tags globally: %w", err))
+	}
+
+	// Queue builds
+	if result.SkipBuild {
+		for _, apkoInfo := range result.ImageAPKOs {
+			if err := queueImageBuildForAPKO(ctx, apkoInfo.ApkoID); err != nil {
+				logger.Error(fmt.Errorf("failed to queue image build for APKO %s: %w", apkoInfo.ApkoID, err))
+			}
+		}
+	} else {
+		if err := queuePackageBuild(ctx, pf, result); err != nil {
+			return fmt.Errorf("failed to queue build: %w", err)
+		}
+	}
+
+	// Store the package_version_id in the context result
+	if result.PackageVersionID != "" {
+		resultJSON, _ := json.Marshal(map[string]string{
+			"package_version_id": result.PackageVersionID,
+		})
+		SetResult(ctx, resultJSON)
+	}
+
+	return nil
+}
+
+// findPackageVersionByGitTagAndSHA checks if a package_version with the given git_tag and
+// git_commit_sha already exists for this family. Returns the version ID if found, or empty string.
+func findPackageVersionByGitTagAndSHA(ctx context.Context, pf *package_family.PackageFamily, gitTag, gitCommitSHA string) (string, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	tmpl := "{name}-{major}.{minor}"
+	if pf.PackageNameTemplate != "" {
+		tmpl = pf.PackageNameTemplate
+	}
+	tmpl = strings.ReplaceAll(tmpl, "{name}", regexp.QuoteMeta(pf.Name))
+	tmpl = strings.ReplaceAll(tmpl, "{major}", "[0-9]+")
+	tmpl = strings.ReplaceAll(tmpl, "{minor}", "[0-9]+")
+	familyPattern := "^" + tmpl + "$"
+
+	query := `
+		SELECT pv.id
+		FROM package_version pv
+		INNER JOIN package p ON p.id = pv.package_id
+		WHERE p.parent_id IS NULL
+		  AND p.name ~ $1
+		  AND pv.git_tag = $2
+		  AND pv.git_commit_sha = $3
+		LIMIT 1
+	`
+
+	var versionID string
+	err := conn.QueryRow(ctx, query, familyPattern, gitTag, gitCommitSHA).Scan(&versionID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+
+	return versionID, nil
 }
 
 // getExistingGitTagsForFamily returns a map of git_tag -> git_commit_sha for all
