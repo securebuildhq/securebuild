@@ -33,7 +33,7 @@ Customers use their team's read-only service account to pull images through the 
 ```mermaid
 sequenceDiagram
     participant Customer as Customer Client<br/>(go-containerregistry)
-    participant Proxy as OCI Proxy<br/>:8888
+    participant Proxy as OCI Proxy<br/>:8081
     participant DB as PostgreSQL
     participant Registry as Docker Registry<br/>:5000 (TLS)
     participant TokenSvc as Mock Token Service<br/>(localhost)

@@ -67,7 +67,7 @@ func CosignSignWithKey(ctx context.Context, imageRef, base64PrivateKey, cosignPa
 	// Derive "<slug>/<image>" from the image reference so that the signature
 	// is pushed to the exact same repository as the image (just under the
 	// upstream registry host).  Example:
-	//   imageRef = "localhost:8888/securebuild-dev/zlib@sha256:…"
+	//   imageRef = "localhost:8081/securebuild-dev/zlib@sha256:…"
 	//   imageRepo = "securebuild-dev/zlib"
 	//   COSIGN_REPOSITORY = "registry.replicated.com/securebuild-dev/zlib"
 

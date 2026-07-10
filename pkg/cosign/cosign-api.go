@@ -204,7 +204,7 @@ func CosignAttestWithCustomSubject(ctx context.Context, predicatePath, sbomLabel
 // CosignSignWithKeyCustomSubject produces a *key-based* cosign simple-signing
 // signature for the given image digest reference (e.g.
 //
-//	localhost:8888/zlib@sha256:<digest>)
+//	localhost:8081/zlib@sha256:<digest>)
 //
 // and stores both the payload blob (mediaType
 // application/vnd.dev.cosign.simplesigning.v1+json) and an OCI artifact

@@ -114,7 +114,7 @@ services:
     volumes:
       - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
     ports:
-      - "8880:8880"
+      - "8080:8080"
     depends_on:
       - postgres
 
@@ -133,7 +133,7 @@ services:
     volumes:
       - ${REPO_ROOT}/securebuild-config.yaml:/securebuild-config.yaml:ro
     ports:
-      - "8888:8888"
+      - "8081:8081"
     depends_on:
       - postgres
 
