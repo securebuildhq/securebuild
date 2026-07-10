@@ -1,6 +1,6 @@
 import * as path from 'path';
 import { setupImageUpdateTestEnvironment, ImageUpdateTestEnvironment } from './environment';
-import { HttpClient } from '../../fixtures/http-client';
+import { HttpClient } from '../../../fixtures/http-client';
 
 /**
  * Integration tests for POST /api/v1/image-update and GET /api/v1/image-build/<id>.

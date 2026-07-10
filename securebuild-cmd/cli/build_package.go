@@ -86,7 +86,7 @@ func runBuildPackage(ctx context.Context, packageFamilyName, tag, apiEndpoint, a
 
 	fmt.Fprintf(os.Stderr, "Job queued: job_id=%s\n", triggerResp.JobID)
 
-	packageVersionID, err := pollJobStatus(ctx, client, triggerResp.JobID)
+	packageVersionID, err := pollJobStatus(ctx, client, triggerResp.JobID, "package_version_id")
 	if err != nil {
 		return err
 	}
@@ -111,7 +111,7 @@ func runBuildPackage(ctx context.Context, packageFamilyName, tag, apiEndpoint, a
 	return nil
 }
 
-func pollJobStatus(ctx context.Context, client *Client, jobID string) (string, error) {
+func pollJobStatus(ctx context.Context, client *Client, jobID, resultField string) (string, error) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -126,11 +126,18 @@ func pollJobStatus(ctx context.Context, client *Client, jobID string) (string, e
 
 		switch status.Status {
 		case "completed":
-			fmt.Fprintf(os.Stderr, "Job status: completed (package_version_id=%s)\n", status.PackageVersionID)
-			if status.PackageVersionID == "" {
-				return "", fmt.Errorf("job completed but no package_version_id was returned")
+			var resultID string
+			switch resultField {
+			case "package_version_id":
+				resultID = status.PackageVersionID
+			case "image_build_id":
+				resultID = status.ImageBuildID
 			}
-			return status.PackageVersionID, nil
+			fmt.Fprintf(os.Stderr, "Job status: completed (%s=%s)\n", resultField, resultID)
+			if resultID == "" {
+				return "", fmt.Errorf("job completed but no %s was returned", resultField)
+			}
+			return resultID, nil
 		case "failed":
 			fmt.Fprintf(os.Stderr, "Job status: failed\n")
 			return "", fmt.Errorf("job failed: %s", status.Error)

@@ -12,6 +12,7 @@ func BuildCmd() *cobra.Command {
 	buildCmd.PersistentFlags().String("api-token", "", "System service account token (required)")
 
 	buildCmd.AddCommand(BuildPackageCmd())
+	buildCmd.AddCommand(BuildImageCmd())
 
 	return buildCmd
 }

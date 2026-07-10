@@ -44,6 +44,20 @@ type JobStatusResponse struct {
 	Status           string `json:"status"`
 	Error            string `json:"error,omitempty"`
 	PackageVersionID string `json:"package_version_id,omitempty"`
+	ImageBuildID     string `json:"image_build_id,omitempty"`
+}
+
+type ImageTriggerRequest struct {
+	ImageName string `json:"image_name"`
+	Tag       string `json:"tag"`
+}
+
+type ImageBuildResponse struct {
+	Status    string   `json:"status"`
+	ImageName string   `json:"image_name"`
+	APKOName  string   `json:"apko_name"`
+	Tags      []string `json:"tags"`
+	Error     string   `json:"error,omitempty"`
 }
 
 type PackageVersionResponse struct {
@@ -305,4 +319,57 @@ func (c *Client) CheckAPKInIndex(ctx context.Context, apkRepository, arch, packa
 	}
 
 	return false, nil
+}
+
+func (c *Client) TriggerImage(ctx context.Context, req ImageTriggerRequest) (*TriggerResponse, error) {
+	body, _ := json.Marshal(req)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/api/v1/image-update", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	c.setHeaders(httpReq)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result TriggerResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) GetImageBuild(ctx context.Context, id string) (*ImageBuildResponse, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.endpoint+"/api/v1/image-build/"+id, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setHeaders(httpReq)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return &ImageBuildResponse{Status: "not_found"}, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	var result ImageBuildResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

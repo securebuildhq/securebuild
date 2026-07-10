@@ -5,10 +5,10 @@
  * No worker runs; work_queue rows are created by the API but not processed.
  */
 
-import { setupTestDatabase, teardownTestDatabase, applySchemaHero, TestDatabase } from '../../fixtures/database';
-import { createTestServiceAccount, createTestSystemServiceAccount } from '../../fixtures/auth';
-import { startTestServer, TestServer } from '../../fixtures/server';
-import { HttpClient } from '../../fixtures/http-client';
+import { setupTestDatabase, teardownTestDatabase, applySchemaHero, TestDatabase } from '../../../fixtures/database';
+import { createTestServiceAccount, createTestSystemServiceAccount } from '../../../fixtures/auth';
+import { startTestServer, TestServer } from '../../../fixtures/server';
+import { HttpClient } from '../../../fixtures/http-client';
 
 export const SEED_TEAM_ID = 'test-team-alpha';
 
