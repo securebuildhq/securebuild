@@ -102,16 +102,35 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 		}
 
 		if latestVersion.GitCommitSHA == currentSHA {
-			// Same SHA — no-op, return existing image_build_id if any
-			logger.Info("APKO already exists with same SHA, no-op",
+			// Same SHA — check if a build already exists
+			logger.Info("APKO already exists with same SHA",
 				zap.String("image_id", img.ID),
 				zap.String("tag", tag),
 				zap.String("apko_id", existingApkoID))
 
-			imageBuildID := ""
 			existingBuild, err := image.GetLatestImageBuildByImageApkoVersionID(ctx, latestVersion.ID)
 			if err == nil && existingBuild != nil {
-				imageBuildID = existingBuild.ID
+				resultJSON, _ := json.Marshal(map[string]string{
+					"image_build_id": existingBuild.ID,
+				})
+				SetResult(ctx, resultJSON)
+				return nil
+			}
+
+			// No existing build — queue one
+			logger.Info("No existing build for APKO, queuing new build",
+				zap.String("apko_id", existingApkoID),
+				zap.String("tag", tag))
+
+			if err := queueImageBuildForAPKO(ctx, existingApkoID); err != nil {
+				return fmt.Errorf("failed to queue image build: %w", err)
+			}
+
+			// Get the image_build_id we just created
+			imageBuildID := ""
+			newBuild, err := image.GetLatestImageBuildByImageApkoVersionID(ctx, latestVersion.ID)
+			if err == nil && newBuild != nil {
+				imageBuildID = newBuild.ID
 			}
 
 			resultJSON, _ := json.Marshal(map[string]string{

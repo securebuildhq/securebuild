@@ -495,7 +495,8 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 			_, err = updateConn.Exec(ctx, fmt.Sprintf(`
 				UPDATE %s
 				SET completed_at = NOW(),
-				    result = $2
+				    result = $2,
+				    last_error = NULL
 				WHERE id = $1`, WorkQueueTable), messageID, result)
 			if err != nil {
 				logger.Error(fmt.Errorf("failed to mark message %s as completed: %w", messageID, err))
