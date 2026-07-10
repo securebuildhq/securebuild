@@ -173,6 +173,14 @@ build-autoimg:
 run-autoimg: build-autoimg
 	./bin/autoimg
 
+.PHONY: build-securebuild-cli
+build-securebuild-cli:
+	go build -ldflags "$(BUILD_LDFLAGS)" -o bin/securebuild securebuild-cmd/main.go
+
+.PHONY: run-securebuild-cli
+run-securebuild-cli: build-securebuild-cli
+	./bin/securebuild build package --package-family-name go --tag 1.24.13
+
 .PHONY: clean-worker
 clean-worker:
 	rm -f ./bin/worker
