@@ -3,6 +3,7 @@ import { findServiceAccountWithValue } from '@/lib/team/service-account';
 import { getDB } from '@/lib/data/db';
 import { getParam } from '@/lib/data/param';
 import { enqueueWork } from '@/lib/utils/queue';
+import semver from 'semver';
 
 export async function POST(request: NextRequest) {
   try {
@@ -61,6 +62,13 @@ export async function POST(request: NextRequest) {
     if (!tag || typeof tag !== 'string') {
       return NextResponse.json(
         { error: 'tag is required' },
+        { status: 400 }
+      );
+    }
+
+    if (!semver.valid(tag) || semver.prerelease(tag) !== null) {
+      return NextResponse.json(
+        { error: `Tag '${tag}' is not a valid semantic version.` },
         { status: 400 }
       );
     }

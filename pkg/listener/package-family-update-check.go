@@ -482,7 +482,7 @@ func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Clien
 			}
 
 			// Tag has been re-assigned to a new commit — create a new revision
-			result, err := processGitLinkedRetag(ctx, githubClient, pf, v, tagStr, currentSHA, melangeFilePath)
+			result, err := processGitLinkedRetag(ctx, githubClient, pf, v, tagStr, currentSHA, melangeFilePath, skipImageCreation)
 			if err != nil {
 				logger.Error(fmt.Errorf("failed to process re-tag for %s: %w", tagStr, err))
 				continue
@@ -494,7 +494,7 @@ func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Clien
 		}
 
 		// New version — pull spec from git and create package version
-		result, err := processGitLinkedNewVersion(ctx, githubClient, pf, v, tagStr, melangeFilePath)
+		result, err := processGitLinkedNewVersion(ctx, githubClient, pf, v, tagStr, melangeFilePath, skipImageCreation)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to process new version %s: %w", tagStr, err))
 			continue
@@ -597,13 +597,13 @@ func performGitLinkedUpdateCheckForTag(ctx context.Context, githubClient *github
 	var result *UpdateResult
 	if tagExists && existingSHA != currentSHA {
 		// Re-tag: create a new revision with the new SHA
-		result, err = processGitLinkedRetag(ctx, githubClient, pf, v, tagStr, currentSHA, melangeFilePath)
+		result, err = processGitLinkedRetag(ctx, githubClient, pf, v, tagStr, currentSHA, melangeFilePath, skipImageCreation)
 		if err != nil {
 			return fmt.Errorf("failed to process re-tag for %s: %w", tagStr, err)
 		}
 	} else {
 		// New version — pull spec from git and create package version
-		result, err = processGitLinkedNewVersion(ctx, githubClient, pf, v, tagStr, melangeFilePath)
+		result, err = processGitLinkedNewVersion(ctx, githubClient, pf, v, tagStr, melangeFilePath, skipImageCreation)
 		if err != nil {
 			return fmt.Errorf("failed to process new version %s: %w", tagStr, err)
 		}
@@ -727,7 +727,7 @@ func getExistingGitTagsForFamily(ctx context.Context, pf *package_family.Package
 // processGitLinkedNewVersion creates a new package version from a git tag.
 // It pulls the melange spec from git, overrides version and epoch from the git tag,
 // and creates the DB records.
-func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, version *semver.Version, gitTag, melangeFilePath string) (*UpdateResult, error) {
+func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, version *semver.Version, gitTag, melangeFilePath string, skipImageCreation bool) (*UpdateResult, error) {
 	gitRemote := pf.GitRemote.String
 
 	// Pull the melange spec and additional files from git
@@ -834,9 +834,12 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 		}
 
 		// Generate image APKOs if the image is linked to git
-		imageAPKOs, err := generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, newPackageID, packageName, versionStr)
-		if err != nil {
-			logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
+		var imageAPKOs []*ImageAPKOInfo
+		if !skipImageCreation {
+			imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, newPackageID, packageName, versionStr)
+			if err != nil {
+				logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
+			}
 		}
 
 		return &UpdateResult{
@@ -919,9 +922,12 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 	}
 
 	// Generate image APKOs if the image is linked to git
-	imageAPKOs, err := generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, existingPackageID, packageName, versionStr)
-	if err != nil {
-		logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
+	var imageAPKOs []*ImageAPKOInfo
+	if !skipImageCreation {
+		imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, existingPackageID, packageName, versionStr)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
+		}
 	}
 
 	return &UpdateResult{
@@ -933,7 +939,7 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 
 // processGitLinkedRetag creates a new revision (incremented apk_release) when a git tag
 // has been reassigned to a new commit SHA.
-func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, version *semver.Version, gitTag, newCommitSHA, melangeFilePath string) (*UpdateResult, error) {
+func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, version *semver.Version, gitTag, newCommitSHA, melangeFilePath string, skipImageCreation bool) (*UpdateResult, error) {
 	gitRemote := pf.GitRemote.String
 
 	// Pull the melange spec from git at the re-tagged commit
@@ -1045,9 +1051,12 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 	}
 
 	// Generate image APKOs
-	imageAPKOs, err := generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, packageID, packageName, versionStr)
-	if err != nil {
-		logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
+	var imageAPKOs []*ImageAPKOInfo
+	if !skipImageCreation {
+		imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, packageID, packageName, versionStr)
+		if err != nil {
+			logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
+		}
 	}
 
 	return &UpdateResult{
