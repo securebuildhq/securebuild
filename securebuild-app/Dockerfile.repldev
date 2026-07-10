@@ -55,7 +55,7 @@ RUN ARCH=$(uname -m) && \
       MELANGE_DIR="melange_0.43.3_linux_amd64"; \
     fi && \
     apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl && \
+    apt-get install -y --no-install-recommends ca-certificates curl git && \
     curl -sSL "$MELANGE_URL" -o /tmp/melange.tar.gz && \
     tar -xzf /tmp/melange.tar.gz -C /tmp && \
     mv "/tmp/$MELANGE_DIR/melange" /usr/bin/melange && \
