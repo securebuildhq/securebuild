@@ -32,18 +32,23 @@ export async function enqueueWorkWithPriority(channel: string, payload: QueuePay
   return id;
 }
 
-export async function getWorkStatus(workId: string): Promise<{
+export interface WorkStatus {
   id: string;
   status: string;
+  channel: string;
   created_at: Date;
-  updated_at?: Date;
-  error?: string;
-  metadata?: any;
-} | null> {
+  processing_started_at: Date | null;
+  completed_at: Date | null;
+  last_error: string | null;
+  attempt_count: number;
+  result: any;
+}
+
+export async function getWorkStatus(workId: string): Promise<WorkStatus | null> {
   const client = getDB(await getParam("DB_URI"));
 
   const result = await client.query(
-    `SELECT id, channel as status, payload as metadata, created_at FROM work_queue WHERE id = $1`,
+    `SELECT id, channel, payload, created_at, processing_started_at, completed_at, last_error, COALESCE(attempt_count, 0)::int as attempt_count, result FROM work_queue WHERE id = $1`,
     [workId]
   );
 
@@ -52,11 +57,28 @@ export async function getWorkStatus(workId: string): Promise<{
   }
 
   const row = result.rows[0];
+
+  let status: string;
+  if (row.completed_at !== null && row.last_error !== null) {
+    status = 'failed';
+  } else if (row.completed_at !== null) {
+    status = 'completed';
+  } else if (row.processing_started_at !== null) {
+    status = 'processing';
+  } else {
+    status = 'queued';
+  }
+
   return {
     id: row.id,
-    status: 'queued', // For now, all work queue items are considered queued
+    status,
+    channel: row.channel,
     created_at: row.created_at,
-    metadata: row.metadata
+    processing_started_at: row.processing_started_at,
+    completed_at: row.completed_at,
+    last_error: row.last_error,
+    attempt_count: row.attempt_count,
+    result: row.result,
   };
 }
 

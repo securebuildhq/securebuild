@@ -4,7 +4,7 @@
 // this proxy.  The key-based signing refactor introduced a new requirement:
 //
 //   1.  We *sign* the digest using the public host that end-users will consume
-//       (OCI_IMAGE_PREFIX e.g. localhost:8888) so the simple-signing payload’s
+//       (OCI_IMAGE_PREFIX e.g. localhost:8081) so the simple-signing payload’s
 //       `docker-reference` matches what `cosign verify` sees in production.
 //   2.  We must still *push* the signature layer (the .sig OCI artifact) to the
 //       upstream registry, **never** to the proxy.

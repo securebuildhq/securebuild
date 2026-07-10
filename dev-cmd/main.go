@@ -260,8 +260,8 @@ func runServiceShell(subcommand string) {
 			"PIPELINE_DIR="+filepath.Join(cwd, "dev-pipelines"),
 		)
 		if subcommand == "worker" {
-			// Config often uses http://apk-proxy:8880 for in-compose workers; host melange/builder needs loopback.
-			extraEnv = append(extraEnv, "APK_REPOSITORY=http://localhost:8880")
+			// Config often uses http://apk-proxy:8080 for in-compose workers; host melange/builder needs loopback.
+			extraEnv = append(extraEnv, "APK_REPOSITORY=http://localhost:8080")
 		}
 	}
 

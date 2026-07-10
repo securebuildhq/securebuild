@@ -1,0 +1,40 @@
+database: securebuild
+name: image
+requires: []
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-go-image"
+        - column: name
+          value:
+            str: "go"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: is_public
+          value:
+            str: "false"
+        - column: git_remote
+          value:
+            str: "https://github.com/golang/go.git"
+        - column: apko_file_path
+          value:
+            str: "apko.yaml"
+        - column: image_tag_template
+          value:
+            str: "{major}.{minor}.{patch}"
+    - columns:
+        - column: id
+          value:
+            str: "test-non-git-image"
+        - column: name
+          value:
+            str: "non-git-image"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: is_public
+          value:
+            str: "false"

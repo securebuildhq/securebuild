@@ -3,8 +3,10 @@ package listener
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -44,6 +46,48 @@ func GetAttemptInfo(ctx context.Context) (attempt, maxAttempts int) {
 		}
 	}
 	return 1, MaxRetryAttempts
+}
+
+// resultKey is the context key for handler results.
+type resultKey struct{}
+
+// resultHolder is a mutable container so handlers can set a result that the
+// listener reads after the handler returns. Using a pointer allows the handler
+// to modify the value without needing to return a new context.
+type resultHolder struct {
+	mu     sync.Mutex
+	result json.RawMessage
+}
+
+// WithResult returns a context that contains a mutable result holder.
+// The handler calls SetResult on the value retrieved via GetResultSetter.
+func WithResult(ctx context.Context) context.Context {
+	return context.WithValue(ctx, resultKey{}, &resultHolder{})
+}
+
+// SetResult stores a handler result (JSON-serializable) in the context.
+// The handler calls this to communicate its result to the listener.
+func SetResult(ctx context.Context, result json.RawMessage) {
+	if v := ctx.Value(resultKey{}); v != nil {
+		if h, ok := v.(*resultHolder); ok {
+			h.mu.Lock()
+			h.result = result
+			h.mu.Unlock()
+		}
+	}
+}
+
+// GetResult retrieves the handler result from the context, or nil if not set.
+func GetResult(ctx context.Context) json.RawMessage {
+	if v := ctx.Value(resultKey{}); v != nil {
+		if h, ok := v.(*resultHolder); ok {
+			h.mu.Lock()
+			r := h.result
+			h.mu.Unlock()
+			return r
+		}
+	}
+	return nil
 }
 
 // NonRetryableError wraps errors that should not be retried
@@ -344,7 +388,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 	// Process the messages
 	for _, msg := range messages {
 		if msg.attemptCount >= MaxRetryAttempts {
-			logger.Warn("message exceeded retry limit, deleting from queue",
+			logger.Warn("message exceeded retry limit, marking as completed with error",
 				zap.String("id", msg.id),
 				zap.String("channel", processor.channel),
 				zap.String("payload", string(msg.payload)),
@@ -354,8 +398,10 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 			updateConn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
 			if err == nil {
 				updateConn.Exec(ctx, fmt.Sprintf(`
-				DELETE FROM %s
-				WHERE id = $1`, WorkQueueTable), msg.id)
+				UPDATE %s
+				SET completed_at = NOW(),
+				    last_error = $2
+				WHERE id = $1`, WorkQueueTable), msg.id, "max retry attempts exceeded")
 				updateConn.Release()
 			}
 			continue
@@ -378,6 +424,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 			// attempt_count from DB is 0-based; use 1-based for context so GetAttemptInfo matches tests and logs
 			attemptOneBased := attemptCount + 1
 			handlerCtx := WithAttemptInfo(ctx, attemptOneBased, MaxRetryAttempts)
+			handlerCtx = WithResult(handlerCtx)
 
 			logger.Debug("Starting handler execution",
 				zap.String("id", messageID),
@@ -410,19 +457,21 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 			if handlerErr != nil {
 				// Check if this is a non-retryable error
 				if IsNonRetryableError(handlerErr) {
-					logger.Warn("handler returned non-retryable error, deleting from queue",
+					logger.Warn("handler returned non-retryable error, marking as completed with error",
 						zap.String("id", messageID),
 						zap.String("channel", processor.channel),
 						zap.String("payload", string(messagePayload)),
 						zap.Error(handlerErr))
 
-					// Delete message (don't retry)
+					// Mark as completed with error (don't retry)
 					_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
-						DELETE FROM %s
+						UPDATE %s
+						SET completed_at = NOW(),
+						    last_error = $2
 						WHERE id = $1`, WorkQueueTable),
-						messageID)
+						messageID, handlerErr.Error())
 					if updateErr != nil {
-						logger.Error(fmt.Errorf("failed to delete non-retryable message %s: %w", messageID, updateErr))
+						logger.Error(fmt.Errorf("failed to mark non-retryable message %s as completed: %w", messageID, updateErr))
 					}
 					return
 				}
@@ -441,12 +490,16 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 				return
 			}
 
-			// Delete completed message from queue
+			// Mark completed message in queue (preserve row for status queries)
+			result := GetResult(handlerCtx)
 			_, err = updateConn.Exec(ctx, fmt.Sprintf(`
-				DELETE FROM %s
-				WHERE id = $1`, WorkQueueTable), messageID)
+				UPDATE %s
+				SET completed_at = NOW(),
+				    result = $2,
+				    last_error = NULL
+				WHERE id = $1`, WorkQueueTable), messageID, result)
 			if err != nil {
-				logger.Error(fmt.Errorf("failed to delete message %s from queue: %w", messageID, err))
+				logger.Error(fmt.Errorf("failed to mark message %s as completed: %w", messageID, err))
 				return
 			}
 

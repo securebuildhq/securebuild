@@ -20,7 +20,7 @@ sequenceDiagram
     participant MinIO as MinIO<br/>(Testcontainer)
     participant HandleAddApk as listener.HandleAddApk
     participant DB as PostgreSQL<br/>(Testcontainer)
-    participant Proxy as APK Proxy<br/>(localhost:8880)
+    participant Proxy as APK Proxy<br/>(localhost:8080)
     participant Client as HTTP Client
 
     Note over Test,Client: Subtest 1: Publish Package
@@ -63,7 +63,7 @@ sequenceDiagram
     participant DB as PostgreSQL<br/>(Testcontainer)
     participant WithdrawAPK as apk.WithdrawAPK
     participant MinIO as MinIO<br/>(Testcontainer)
-    participant Proxy as APK Proxy<br/>(localhost:8880)
+    participant Proxy as APK Proxy<br/>(localhost:8080)
     participant Client as HTTP Client
 
     Note over Test,Client: Subtest 2: Withdraw Package

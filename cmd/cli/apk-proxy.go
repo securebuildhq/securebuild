@@ -60,7 +60,7 @@ func runAPKProxy(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize postgres connection: %w", err)
 	}
 
-	if err := apkproxy.StartProxy(ctx, ":8880"); err != nil {
+	if err := apkproxy.StartProxy(ctx, ":8080"); err != nil {
 		return fmt.Errorf("failed to start APK proxy: %w", err)
 	}
 

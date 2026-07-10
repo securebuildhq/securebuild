@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Rocket, Package, Image, Users, Users2, CreditCard, FolderTree, FileCode, Shield, FileSearch } from "lucide-react"
+import { LayoutDashboard, Rocket, Package, Image, Users, Users2, CreditCard, FolderTree, FileCode, Shield, FileSearch, Key } from "lucide-react"
 import { VERSION } from "@/lib/build-info";
 
 export default function DashboardSidebar() {
@@ -182,6 +182,17 @@ export default function DashboardSidebar() {
         >
           <CreditCard className="h-5 w-5" />
           Subscriptions
+        </Link>
+        <Link
+          href="/settings/system-tokens"
+          className={`flex items-center gap-2 rounded-lg px-3 py-2 transition-all hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
+            isActive('/settings/system-tokens')
+              ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-50'
+              : 'text-zinc-900 dark:text-zinc-50'
+          }`}
+        >
+          <Key className="h-5 w-5" />
+          System Tokens
         </Link>
       </div>
       <div className="p-4 mt-auto border-t border-zinc-200 dark:border-zinc-700">

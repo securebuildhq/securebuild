@@ -173,6 +173,24 @@ build-autoimg:
 run-autoimg: build-autoimg
 	./bin/autoimg
 
+.PHONY: build-securebuild-cli
+build-securebuild-cli:
+	go build -ldflags "$(BUILD_LDFLAGS)" -o bin/securebuild securebuild-cmd/main.go
+
+# Cross-compiled securebuild-cli binaries for release (linux/amd64 and linux/arm64).
+# Set VERSION and GIT_SHA in CI (e.g. VERSION=1.2.3 GIT_SHA=abc1234 make build-securebuild-cli-release-amd64).
+.PHONY: build-securebuild-cli-release
+build-securebuild-cli-release: build-securebuild-cli-release-amd64 build-securebuild-cli-release-arm64
+
+.PHONY: build-securebuild-cli-release-amd64 build-securebuild-cli-release-arm64
+build-securebuild-cli-release-amd64:
+	@echo "Building securebuild-cli for linux/amd64..."
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(BUILD_LDFLAGS)" -o bin/securebuild-cli-linux-amd64 securebuild-cmd/main.go
+
+build-securebuild-cli-release-arm64:
+	@echo "Building securebuild-cli for linux/arm64..."
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(BUILD_LDFLAGS)" -o bin/securebuild-cli-linux-arm64 securebuild-cmd/main.go
+
 .PHONY: clean-worker
 clean-worker:
 	rm -f ./bin/worker

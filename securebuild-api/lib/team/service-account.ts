@@ -48,6 +48,7 @@ export async function createServiceAccount(teamId: string, name: string, expires
       expiresIn: result.rows[0].expires_in,
       lastUsedAt: result.rows[0].last_used_at,
       createdAt: result.rows[0].created_at,
+      isSystem: false,
       value: token,
     };
   } catch (err) {
@@ -79,6 +80,7 @@ export async function rotateServiceAccount(serviceAccount: ServiceAccount): Prom
       expiresIn: expiresIn,
       lastUsedAt: serviceAccount.lastUsedAt,
       createdAt: serviceAccount.createdAt,
+      isSystem: serviceAccount.isSystem,
       value: token,
     };
   } catch (err) {
@@ -101,7 +103,7 @@ export async function listServiceAccounts(teamId: string): Promise<ServiceAccoun
   try {
     const db = getDB(await getParam("DB_URI"));
 
-    const query = `select id, name, partial_value, expires_at, expires_in, last_used_at, created_at from service_account where team_id = $1`
+    const query = `select id, name, partial_value, expires_at, expires_in, last_used_at, created_at, is_system from service_account where team_id = $1`
     const result = await db.query(query, [teamId]);
 
     const serviceAccounts = result.rows.map((row) => ({
@@ -112,6 +114,7 @@ export async function listServiceAccounts(teamId: string): Promise<ServiceAccoun
       expiresIn: row.expires_in,
       lastUsedAt: row.last_used_at,
       createdAt: row.created_at,
+      isSystem: row.is_system,
     }));
 
     return serviceAccounts;
@@ -161,7 +164,7 @@ async function findServiceAccountWithValueSHA256(
 
   if (teamId) {
     sha256Query = `
-      SELECT id, name, expires_at, hash_algorithm, expires_in, last_used_at, created_at, team_id, partial_value
+      SELECT id, name, expires_at, hash_algorithm, expires_in, last_used_at, created_at, team_id, partial_value, is_system
       FROM service_account
       WHERE team_id = $1
         AND bcrypt_hash = $2
@@ -171,7 +174,7 @@ async function findServiceAccountWithValueSHA256(
     queryParams = [teamId, sha256Hash, ALGORITHM_SHA256];
   } else {
     sha256Query = `
-      SELECT id, name, expires_at, hash_algorithm, expires_in, last_used_at, created_at, team_id, partial_value
+      SELECT id, name, expires_at, hash_algorithm, expires_in, last_used_at, created_at, team_id, partial_value, is_system
       FROM service_account
       WHERE bcrypt_hash = $1
         AND hash_algorithm = $2
@@ -197,6 +200,7 @@ async function findServiceAccountWithValueSHA256(
       expiresIn: row.expires_in,
       lastUsedAt: row.last_used_at,
       createdAt: row.created_at,
+      isSystem: row.is_system,
     },
     teamId: row.team_id,
   };
@@ -223,7 +227,7 @@ async function findServiceAccountWithValueBcrypt(
 
   if (teamId) {
     query = `
-      SELECT id, name, expires_at, bcrypt_hash, expires_in, last_used_at, created_at, team_id, partial_value
+      SELECT id, name, expires_at, bcrypt_hash, expires_in, last_used_at, created_at, team_id, partial_value, is_system
       FROM service_account
       WHERE team_id = $1
         AND hash_algorithm = $2
@@ -233,7 +237,7 @@ async function findServiceAccountWithValueBcrypt(
     queryParams = [teamId, ALGORITHM_BCRYPT, partialValue];
   } else {
     query = `
-      SELECT id, name, expires_at, bcrypt_hash, expires_in, last_used_at, created_at, team_id, partial_value
+      SELECT id, name, expires_at, bcrypt_hash, expires_in, last_used_at, created_at, team_id, partial_value, is_system
       FROM service_account
       WHERE hash_algorithm = $1
         AND partial_value = $2
@@ -286,6 +290,7 @@ async function findServiceAccountWithValueBcrypt(
           expiresIn: row.expires_in,
           lastUsedAt: row.last_used_at,
           createdAt: row.created_at,
+          isSystem: row.is_system,
         },
         teamId: row.team_id,
       };

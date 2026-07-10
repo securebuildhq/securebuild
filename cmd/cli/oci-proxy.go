@@ -60,7 +60,7 @@ func runOCIProxy(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize postgres connection: %w", err)
 	}
 
-	if err := ociproxy.StartProxy(ctx, ":8888"); err != nil {
+	if err := ociproxy.StartProxy(ctx, ":8081"); err != nil {
 		return fmt.Errorf("failed to start OCI proxy: %w", err)
 	}
 

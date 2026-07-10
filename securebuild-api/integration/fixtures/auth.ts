@@ -43,9 +43,9 @@ export async function createTestServiceAccount(
     `
       INSERT INTO service_account (
         id, name, partial_value, expires_at, expires_in,
-        created_at, last_used_at, bcrypt_hash, team_id, hash_algorithm
+        created_at, last_used_at, bcrypt_hash, team_id, hash_algorithm, is_system
       )
-      VALUES ($1, $2, $3, $4, $5, NOW(), NULL, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, NOW(), NULL, $6, $7, $8, false)
     `,
     [id, name, partialValue, expiresAt, expiresIn, hash, teamId, 'sha256']
   );
@@ -59,5 +59,42 @@ export async function createTestServiceAccount(
     token: rawToken,
     partialValue,
     teamId,
+  };
+}
+
+/**
+ * Creates a test system service account (is_system = true, team_id = NULL)
+ * for API authentication with system-level access.
+ */
+export async function createTestSystemServiceAccount(
+  pool: Pool,
+  name: string = 'Test System Service Account'
+): Promise<TestServiceAccount> {
+  const { token: rawToken, hash, partialValue } = generateServiceAccountToken();
+
+  const id = `sa-system-${srs({ length: 12, alphanumeric: true })}`;
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const expiresIn = '30';
+
+  await pool.query(
+    `
+      INSERT INTO service_account (
+        id, name, partial_value, expires_at, expires_in,
+        created_at, last_used_at, bcrypt_hash, team_id, hash_algorithm, is_system
+      )
+      VALUES ($1, $2, $3, $4, $5, NOW(), NULL, $6, NULL, $7, true)
+    `,
+    [id, name, partialValue, expiresAt, expiresIn, hash, 'sha256']
+  );
+
+  console.log(`Created test system service account: ${id}`);
+  console.log(`Token: ${rawToken.substring(0, 20)}...`);
+
+  return {
+    id,
+    name,
+    token: rawToken,
+    partialValue,
+    teamId: '',
   };
 }
