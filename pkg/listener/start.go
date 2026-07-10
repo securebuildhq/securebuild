@@ -34,6 +34,7 @@ func StartListeners(ctx context.Context) error {
 	StartExternalImageSbomListener(ctx, l)
 	StartExternalImageScanListener(ctx, l)
 	StartPackageFamilyUpdateCheckListener(ctx, l)
+	StartImageUpdateCheckListener(ctx, l)
 	StartGitHubSyncListener(ctx, l)
 	StartPipelineSyncListener(ctx, l)
 
@@ -285,6 +286,18 @@ func StartPackageFamilyUpdateCheckListener(ctx context.Context, l *Listener) {
 			if err := handlePackageFamilyUpdateCheck(ctx, notification.Payload); err != nil {
 				logger.Error(fmt.Errorf("failed to handle package family update check notification: %w", err))
 				return fmt.Errorf("failed to handle package family update check notification: %w", err)
+			}
+			return nil
+		})
+	})
+}
+
+func StartImageUpdateCheckListener(ctx context.Context, l *Listener) {
+	l.AddHandler(ctx, "image_update_check", 1, time.Minute*5, func(ctx context.Context, notification *pgconn.Notification) error {
+		return telemetry.WithSpan(ctx, "listener.image_update_check", func(ctx context.Context) error {
+			if err := handleImageUpdateCheck(ctx, notification.Payload); err != nil {
+				logger.Error(fmt.Errorf("failed to handle image update check notification: %w", err))
+				return fmt.Errorf("failed to handle image update check notification: %w", err)
 			}
 			return nil
 		})

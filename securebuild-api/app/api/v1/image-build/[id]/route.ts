@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { findServiceAccountWithValue } from '@/lib/team/service-account';
-import { getWorkStatus } from '@/lib/utils/queue';
+import { getDB } from '@/lib/data/db';
+import { getParam } from '@/lib/data/param';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ 'job-id': string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const authHeader = request.headers.get('Authorization');
@@ -40,43 +41,46 @@ export async function GET(
       );
     }
 
-    const { 'job-id': jobId } = await params;
+    const { id } = await params;
 
-    const workStatus = await getWorkStatus(jobId);
-    if (!workStatus) {
+    const db = getDB(await getParam("DB_URI"));
+
+    const result = await db.query(
+      `SELECT ib.id, ib.status, ib.worker_error,
+              ia.name as apko_name, ia.tags as apko_tags, i.name as image_name
+       FROM image_build ib
+       INNER JOIN image_apko_version iav ON iav.id = ib.image_apko_version_id
+       INNER JOIN image_apko ia ON ia.id = iav.image_apko_id
+       INNER JOIN image i ON i.id = ia.image_id
+       WHERE ib.id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
       return NextResponse.json(
-        { status: 'expired', error: 'Job record does not exist (invalid job ID or older than 24 hours)' },
+        { status: 'not_found', error: 'No image build with this ID' },
         { status: 404 }
       );
     }
 
-    if (workStatus.status === 'failed') {
-      return NextResponse.json({
-        status: 'failed',
-        error: workStatus.last_error,
-      });
+    const row = result.rows[0];
+
+    const response: any = {
+      status: row.status,
+      image_name: row.image_name,
+      apko_name: row.apko_name,
+      tags: row.apko_tags || [],
+    };
+
+    if (row.worker_error) {
+      response.error = row.worker_error;
     }
 
-    if (workStatus.status === 'completed') {
-      const response: any = { status: 'completed' };
-      if (workStatus.result) {
-        if (workStatus.result.package_version_id) {
-          response.package_version_id = workStatus.result.package_version_id;
-        }
-        if (workStatus.result.image_build_id) {
-          response.image_build_id = workStatus.result.image_build_id;
-        }
-      }
-      return NextResponse.json(response);
-    }
-
-    return NextResponse.json({
-      status: workStatus.status,
-    });
+    return NextResponse.json(response);
   } catch (error) {
-    console.error('Error retrieving job status:', error);
+    console.error('Error retrieving image build:', error);
     return NextResponse.json(
-      { error: 'Failed to retrieve job status' },
+      { error: 'Failed to retrieve image build' },
       { status: 500 }
     );
   }

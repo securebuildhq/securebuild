@@ -4,8 +4,6 @@ import { getDB } from '@/lib/data/db';
 import { getParam } from '@/lib/data/param';
 import { enqueueWork } from '@/lib/utils/queue';
 
-const SEMVER_REGEX = /^v?(\d+)\.(\d+)\.(\d+)$/;
-
 export async function POST(request: NextRequest) {
   try {
     const authHeader = request.headers.get('Authorization');
@@ -51,11 +49,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { package_family_name, tag } = body;
+    const { image_name, tag } = body;
 
-    if (!package_family_name || typeof package_family_name !== 'string') {
+    if (!image_name || typeof image_name !== 'string') {
       return NextResponse.json(
-        { error: 'package_family_name is required' },
+        { error: 'image_name is required' },
         { status: 400 }
       );
     }
@@ -67,41 +65,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!SEMVER_REGEX.test(tag)) {
-      return NextResponse.json(
-        { error: `Tag '${tag}' is not a valid semantic version.` },
-        { status: 400 }
-      );
-    }
-
     const db = getDB(await getParam("DB_URI"));
 
-    const familyResult = await db.query(
-      `SELECT id, name, git_remote, melange_file_path, initial_tag FROM package_family WHERE name = $1`,
-      [package_family_name]
+    const imageResult = await db.query(
+      `SELECT id, name, git_remote, apko_file_path, image_tag_template FROM image WHERE name = $1`,
+      [image_name]
     );
 
-    if (familyResult.rows.length === 0) {
+    if (imageResult.rows.length === 0) {
       return NextResponse.json(
-        { error: `Package family '${package_family_name}' not found` },
+        { error: `Image '${image_name}' not found` },
         { status: 404 }
       );
     }
 
-    const family = familyResult.rows[0];
+    const image = imageResult.rows[0];
 
-    if (!family.git_remote) {
+    if (!image.git_remote) {
       return NextResponse.json(
-        { error: `Package family '${package_family_name}' is not linked to a git repository. This endpoint only supports git-linked package families.` },
+        { error: `Image '${image_name}' is not linked to a git repository. This endpoint only supports git-linked images.` },
         { status: 400 }
       );
     }
 
-    const jobId = await enqueueWork("package_family_update_check", {
-      packageFamilyId: family.id,
+    const jobId = await enqueueWork("image_update_check", {
+      imageId: image.id,
       tag: tag,
-      force: true, // scheduled checks will be disabled if this package will be built on demand. "force" bypassed the disabled flag.
-      skip_image_creation: true, // image builds are triggered separately via the image-update API
     });
 
     return NextResponse.json(
@@ -109,9 +98,9 @@ export async function POST(request: NextRequest) {
       { status: 202 }
     );
   } catch (error) {
-    console.error('Error triggering package update:', error);
+    console.error('Error triggering image update:', error);
     return NextResponse.json(
-      { error: 'Failed to trigger package update' },
+      { error: 'Failed to trigger image update' },
       { status: 500 }
     );
   }

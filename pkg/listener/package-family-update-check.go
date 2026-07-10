@@ -46,9 +46,10 @@ import (
 )
 
 type PackageFamilyUpdateCheckPayload struct {
-	PackageFamilyID string `json:"packageFamilyId"`
-	Tag             string `json:"tag,omitempty"`
-	Force           bool   `json:"force,omitempty"`
+	PackageFamilyID    string `json:"packageFamilyId"`
+	Tag                string `json:"tag,omitempty"`
+	Force              bool   `json:"force,omitempty"`
+	SkipImageCreation  bool   `json:"skip_image_creation,omitempty"`
 }
 
 type GitHubVersionResult struct {
@@ -178,7 +179,7 @@ func performPackageFamilyUpdateCheck(ctx context.Context, p *PackageFamilyUpdate
 			githubClient = github.NewClient(nil)
 			logger.Warn("No GitHub API token found, using unauthenticated client")
 		}
-		return performGitLinkedUpdateCheck(ctx, githubClient, packageFamily, p.Tag)
+		return performGitLinkedUpdateCheck(ctx, githubClient, packageFamily, p.Tag, p.SkipImageCreation)
 	}
 
 	// Get the current highest version for this family to extract upstream config
@@ -348,9 +349,9 @@ func performPackageFamilyUpdateCheck(ctx context.Context, p *PackageFamilyUpdate
 //
 // When tag is non-empty, the handler processes only that specific tag instead of scanning
 // all tags. This is used by the package-update API endpoint for deterministic triggering.
-func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, tag string) error {
+func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, tag string, skipImageCreation bool) error {
 	if tag != "" {
-		return performGitLinkedUpdateCheckForTag(ctx, githubClient, pf, tag)
+		return performGitLinkedUpdateCheckForTag(ctx, githubClient, pf, tag, skipImageCreation)
 	}
 
 	gitRemote := pf.GitRemote.String
@@ -516,6 +517,9 @@ func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Clien
 	// Queue builds
 	for _, result := range updateResults {
 		if result.SkipBuild {
+			if skipImageCreation {
+				continue
+			}
 			for _, apkoInfo := range result.ImageAPKOs {
 				if err := queueImageBuildForAPKO(ctx, apkoInfo.ApkoID); err != nil {
 					logger.Error(fmt.Errorf("failed to queue image build for APKO %s: %w", apkoInfo.ApkoID, err))
@@ -535,7 +539,7 @@ func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Clien
 // package-update API). It resolves the tag to a commit SHA, checks for an existing
 // package_version, and creates/re-tags as needed. The package_version_id is stored in the
 // handler context via WithResult so the listener can write it to the work_queue result column.
-func performGitLinkedUpdateCheckForTag(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, tag string) error {
+func performGitLinkedUpdateCheckForTag(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, tag string, skipImageCreation bool) error {
 	gitRemote := pf.GitRemote.String
 	melangeFilePath := pf.MelangeFilePath.String
 
@@ -616,9 +620,11 @@ func performGitLinkedUpdateCheckForTag(ctx context.Context, githubClient *github
 
 	// Queue builds
 	if result.SkipBuild {
-		for _, apkoInfo := range result.ImageAPKOs {
-			if err := queueImageBuildForAPKO(ctx, apkoInfo.ApkoID); err != nil {
-				logger.Error(fmt.Errorf("failed to queue image build for APKO %s: %w", apkoInfo.ApkoID, err))
+		if !skipImageCreation {
+			for _, apkoInfo := range result.ImageAPKOs {
+				if err := queueImageBuildForAPKO(ctx, apkoInfo.ApkoID); err != nil {
+					logger.Error(fmt.Errorf("failed to queue image build for APKO %s: %w", apkoInfo.ApkoID, err))
+				}
 			}
 		}
 	} else {
@@ -644,28 +650,27 @@ func findPackageVersionByGitTagAndSHA(ctx context.Context, pf *package_family.Pa
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	tmpl := "{name}-{major}.{minor}"
-	if pf.PackageNameTemplate != "" {
-		tmpl = pf.PackageNameTemplate
+	// Parse the tag as semver to generate the exact package name
+	v, err := semver.NewVersion(gitTag)
+	if err != nil {
+		return "", fmt.Errorf("invalid tag %s: %w", gitTag, err)
 	}
-	tmpl = strings.ReplaceAll(tmpl, "{name}", regexp.QuoteMeta(pf.Name))
-	tmpl = strings.ReplaceAll(tmpl, "{major}", "[0-9]+")
-	tmpl = strings.ReplaceAll(tmpl, "{minor}", "[0-9]+")
-	familyPattern := "^" + tmpl + "$"
+	packageName := package_family.GeneratePackageName(pf.PackageNameTemplate, pf.Name, int(v.Major()), int(v.Minor()))
 
 	query := `
 		SELECT pv.id
 		FROM package_version pv
 		INNER JOIN package p ON p.id = pv.package_id
 		WHERE p.parent_id IS NULL
-		  AND p.name ~ $1
+		  AND p.name = $1
 		  AND pv.git_tag = $2
 		  AND pv.git_commit_sha = $3
+		ORDER BY pv.apk_release DESC
 		LIMIT 1
 	`
 
 	var versionID string
-	err := conn.QueryRow(ctx, query, familyPattern, gitTag, gitCommitSHA).Scan(&versionID)
+	err = conn.QueryRow(ctx, query, packageName, gitTag, gitCommitSHA).Scan(&versionID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return "", nil
