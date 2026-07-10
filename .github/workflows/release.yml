@@ -83,6 +83,35 @@ jobs:
           name: securebuild-app
           path: securebuild-app/securebuild-app.tar.gz
 
+  build-cmd:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Build securebuild-cli (linux/${{ matrix.arch }})
+        run: |
+          export VERSION="${GITHUB_REF#refs/tags/v}"
+          export GIT_SHA="${GITHUB_SHA}"
+          make build-securebuild-cli-release-${{ matrix.arch }}
+
+      - name: Upload securebuild-cli binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: securebuild-cli-${{ matrix.arch }}
+          path: bin/securebuild-cli-linux-${{ matrix.arch }}
+
   build-api:
     runs-on: ubuntu-latest
     steps:
@@ -120,7 +149,7 @@ jobs:
           path: securebuild-api/securebuild-api.tar.gz
 
   release:
-    needs: [build-worker, build-app, build-api]
+    needs: [build-worker, build-cmd, build-app, build-api]
     runs-on: ubuntu-latest
     steps:
       - name: Download worker artifacts
@@ -132,6 +161,16 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: worker-arm64
+
+      - name: Download securebuild-cli amd64 artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: securebuild-cli-amd64
+
+      - name: Download securebuild-cli arm64 artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: securebuild-cli-arm64
 
       - name: Download app artifact
         uses: actions/download-artifact@v8
@@ -148,6 +187,8 @@ jobs:
           mkdir -p release-assets
           # Worker binaries: upload-artifact stores single-file path as basename only, so they land at workspace root
           mv securebuild-worker-linux-amd64 securebuild-worker-linux-arm64 release-assets/
+          # securebuild-cli binaries (single file at workspace root)
+          mv securebuild-cli-linux-amd64 securebuild-cli-linux-arm64 release-assets/
           # App from download-artifact (single file at workspace root)
           mv securebuild-app.tar.gz release-assets/
           # API from download-artifact (single file at workspace root)
