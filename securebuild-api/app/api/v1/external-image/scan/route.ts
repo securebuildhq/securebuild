@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
         image_digest: scanData.imageDigest,
         image_size_bytes: scanData.imageSizeBytes,
         digest_first_seen_at: scanData.digestFirstSeenAt,
-        last_scanned_at: scanData.scanCreatedAt,
+        last_scanned_at: scanData.scanCompletedAt,
         updated_at: scanData.updatedAt,
         scan_status: scanData.status,
         scan_status_message: scanData.scanStatusMessage,
@@ -341,7 +341,7 @@ const batchListScans = traceFunction('api.external_image.scan.batchListScans', a
     results.push({
       input: input,
       digest: scanData?.digest || null,
-      last_scanned_at: scanData?.scanCreatedAt || null,
+      last_scanned_at: scanData?.scanCompletedAt || null,
       digest_first_seen_at: scanData?.digestFirstSeenAt || null,
       result: parsedResult,
       not_found: scanData === null,
