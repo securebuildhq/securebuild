@@ -196,7 +196,7 @@ const batchListScanSummaries = traceFunction('api.external_image.scan_summary.ba
     results.push({
       input: input,
       digest: digest,
-      last_scanned_at: scanData?.scanCreatedAt || null,
+      last_scanned_at: scanData?.scanCompletedAt || null,
       digest_first_seen_at: scanData?.digestFirstSeenAt || null,
       counts: parsedResult || emptyCounts(),
       not_found: scanData === null,
