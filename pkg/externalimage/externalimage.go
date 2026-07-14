@@ -499,6 +499,9 @@ func AddExternalImage(ctx context.Context, registry string, imageName string, ta
 	}
 
 	// Insert into external_image_tag table
+	// Note: last_submitted_at is intentionally NOT set here — this function is
+	// called by the digest-change monitor, not the API. Only upsertExternalImage
+	// (the API path) sets last_submitted_at.
 	query = `
 		insert into external_image_tag (registry, image_name, image_tag, created_at, digest, next_check_digest_at, next_scan_at)
 		values ($1, $2, $3, $4, $5, $6, $7)
