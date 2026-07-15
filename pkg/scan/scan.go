@@ -505,3 +505,71 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 
 	return false, nil
 }
+
+// ReportScanMetrics sends gauge metrics for the scan backlog and running scans.
+//
+// For each tier (including never-scanned), it counts digests that have not been
+// scanned within their respective rescan interval — i.e., digests that are
+// eligible for scanning right now. It also counts how many scans are currently
+// in the 'running' status.
+//
+// Gauges sent:
+//   - securebuild.external_image.scan.backlog  (tag: tier=<never_scanned|active|recent|stale>)
+//   - securebuild.external_image.scan.running
+func ReportScanMetrics(ctx context.Context) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	referenceTime := util.GetNowFunc(ctx)()
+
+	// Never scanned: digests with SBOMs where last_security_scanned_at IS NULL
+	var neverScannedCount int
+	if err := conn.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT s.digest)
+		FROM external_image_sbom s
+		WHERE s.last_security_scanned_at IS NULL
+	`).Scan(&neverScannedCount); err != nil {
+		logger.Warn("failed to count never-scanned digests", zap.Error(err))
+	} else {
+		telemetry.Gauge(telemetry.MetricExternalImageScanBacklog, float64(neverScannedCount),
+			[]string{telemetry.TagScanTier + ":never_scanned"})
+	}
+
+	// Per-tier backlog: digests whose last_security_scanned_at is older than
+	// the tier's rescan interval, within the tier's last_submitted_at window.
+	for _, tier := range scanTiers {
+		var count int
+		query := fmt.Sprintf(`
+			WITH tier_tags AS (
+				SELECT digest
+				FROM external_image_tag
+				WHERE last_submitted_at > $1::timestamptz - interval '%s'
+				  AND last_submitted_at <= $1::timestamptz - interval '%s'
+				GROUP BY digest
+			)
+			SELECT COUNT(DISTINCT s.digest)
+			FROM external_image_sbom s
+			JOIN tier_tags t ON t.digest = s.digest
+			WHERE s.last_security_scanned_at IS NOT NULL
+			  AND s.last_security_scanned_at < $1::timestamptz - interval '%s'
+		`, tier.submittedAfter, tier.submittedBefore, tier.rescanInterval)
+
+		if err := conn.QueryRow(ctx, query, referenceTime).Scan(&count); err != nil {
+			logger.Warn("failed to count tier backlog", zap.String("tier", tier.name), zap.Error(err))
+			continue
+		}
+
+		telemetry.Gauge(telemetry.MetricExternalImageScanBacklog, float64(count),
+			[]string{telemetry.TagScanTier + ":" + tier.name})
+	}
+
+	// Running scans: count of external_image_scan rows with status = 'running'
+	var runningCount int
+	if err := conn.QueryRow(ctx, `
+		SELECT COUNT(*) FROM external_image_scan WHERE status = 'running'
+	`).Scan(&runningCount); err != nil {
+		logger.Warn("failed to count running scans", zap.Error(err))
+	} else {
+		telemetry.Gauge(telemetry.MetricExternalImageScansRunning, float64(runningCount), nil)
+	}
+}
