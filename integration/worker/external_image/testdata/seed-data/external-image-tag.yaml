@@ -1,0 +1,189 @@
+database: securebuild
+name: external_image_tag
+requires:
+  - external-image
+seedData:
+  rows:
+    # Active tier: submitted 1 day before reference (2026-01-15)
+    - columns:
+        - column: registry
+          value:
+            str: "docker.io"
+        - column: image_name
+          value:
+            str: "library/tier-test"
+        - column: image_tag
+          value:
+            str: "active"
+        - column: created_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: last_submitted_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: digest
+          value:
+            str: "sha256:active-tier-digest-12345678901234567890123456789012"
+        - column: next_check_digest_at
+          value:
+            str: "2026-01-16T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2026-01-16T00:00:00Z"
+    # Recent tier: submitted 10 days before reference
+    - columns:
+        - column: registry
+          value:
+            str: "docker.io"
+        - column: image_name
+          value:
+            str: "library/tier-test"
+        - column: image_tag
+          value:
+            str: "recent"
+        - column: created_at
+          value:
+            str: "2026-01-05T00:00:00Z"
+        - column: last_submitted_at
+          value:
+            str: "2026-01-05T00:00:00Z"
+        - column: digest
+          value:
+            str: "sha256:recent-tier-digest-12345678901234567890123456789012"
+        - column: next_check_digest_at
+          value:
+            str: "2026-01-06T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2026-01-06T00:00:00Z"
+    # Stale tier: submitted 45 days before reference
+    - columns:
+        - column: registry
+          value:
+            str: "docker.io"
+        - column: image_name
+          value:
+            str: "library/tier-test"
+        - column: image_tag
+          value:
+            str: "stale"
+        - column: created_at
+          value:
+            str: "2025-12-01T00:00:00Z"
+        - column: last_submitted_at
+          value:
+            str: "2025-12-01T00:00:00Z"
+        - column: digest
+          value:
+            str: "sha256:stale-tier-digest-12345678901234567890123456789012"
+        - column: next_check_digest_at
+          value:
+            str: "2025-12-02T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2025-12-02T00:00:00Z"
+    # Excluded tier: submitted 100 days before reference (>90 days)
+    - columns:
+        - column: registry
+          value:
+            str: "docker.io"
+        - column: image_name
+          value:
+            str: "library/tier-test"
+        - column: image_tag
+          value:
+            str: "excluded"
+        - column: created_at
+          value:
+            str: "2025-10-06T00:00:00Z"
+        - column: last_submitted_at
+          value:
+            str: "2025-10-06T00:00:00Z"
+        - column: digest
+          value:
+            str: "sha256:excluded-tier-digest-12345678901234567890123456789012"
+        - column: next_check_digest_at
+          value:
+            str: "2025-10-07T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2025-10-07T00:00:00Z"
+    # Never-scanned: submitted 1 day before reference, no scan ever
+    - columns:
+        - column: registry
+          value:
+            str: "docker.io"
+        - column: image_name
+          value:
+            str: "library/tier-test"
+        - column: image_tag
+          value:
+            str: "never-scanned"
+        - column: created_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: last_submitted_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: digest
+          value:
+            str: "sha256:never-scanned-digest-12345678901234567890123456789012"
+        - column: next_check_digest_at
+          value:
+            str: "2026-01-16T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2026-01-16T00:00:00Z"
+    # Fresh (not stale): submitted 1 day before reference, scanned 1h before reference
+    - columns:
+        - column: registry
+          value:
+            str: "docker.io"
+        - column: image_name
+          value:
+            str: "library/tier-test"
+        - column: image_tag
+          value:
+            str: "fresh"
+        - column: created_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: last_submitted_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: digest
+          value:
+            str: "sha256:fresh-active-digest-12345678901234567890123456789012"
+        - column: next_check_digest_at
+          value:
+            str: "2026-01-16T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2026-01-16T00:00:00Z"
+    # Active-scanned: submitted 1 day before reference, scanned 5h before (stale for 4h)
+    # Used to verify never-scanned is prioritized over active rescans
+    - columns:
+        - column: registry
+          value:
+            str: "docker.io"
+        - column: image_name
+          value:
+            str: "library/tier-test"
+        - column: image_tag
+          value:
+            str: "active-scanned"
+        - column: created_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: last_submitted_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: digest
+          value:
+            str: "sha256:active-scanned-digest-12345678901234567890123456789012"
+        - column: next_check_digest_at
+          value:
+            str: "2026-01-16T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2026-01-16T00:00:00Z"

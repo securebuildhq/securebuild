@@ -3,7 +3,7 @@ import { getImageDigest, parseImageRef } from '@/lib/externalimage/registry'
 import { enqueueWork, hasExistingSBOM } from '@/lib/utils/queue'
 import { NextRequest, NextResponse } from 'next/server'
 import { findServiceAccountWithValue } from '@/lib/team/service-account'
-import { getExternalImageDigestForTag, getExternalImageLastScannedAt, getExternalImagePlatforms, getExternalImageScan, getSBOMStatus, teamOwnsDigest } from '@/lib/externalimage/externalimage'
+import { getExternalImageDigestForTag, getExternalImageLastScannedAt, getExternalImagePlatforms, getExternalImageScan, getSBOMStatus, teamOwnsDigest, EnqueueScanForDigest } from '@/lib/externalimage/externalimage'
 
 export async function POST(request: NextRequest) {
   try {
@@ -162,6 +162,17 @@ export async function GET(request: NextRequest) {
     ])
     const sbomStatus = sbomStatusResult ?? null
 
+    // On-demand scan trigger: if the scan is stale (>4h or missing) and not
+    // already queued/running, enqueue a scan via the external_image_scan channel.
+    // Non-fatal: if this fails, we still return whatever scan data we have.
+    let scanStartedAt: Date | null = null
+    try {
+      const enqueueResult = await EnqueueScanForDigest(currentDigest)
+      scanStartedAt = enqueueResult.scanStartedAt
+    } catch (err) {
+      console.warn(`EnqueueScanForDigest failed for digest ${currentDigest}:`, err)
+    }
+
     // Build scan statuses array from individual architecture results
     const scanStatuses = []
     if (amd64Scan) {
@@ -214,6 +225,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       digest: currentDigest,
       last_scanned_at: lastScannedAt,
+      scan_started_at: scanStartedAt,
       platforms: platforms,
       scan_status: scanStatus,
       scan_status_message: scanStatusMessage,

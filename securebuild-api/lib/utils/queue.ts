@@ -1,6 +1,7 @@
 import { getDB } from "../data/db";
 import { getParam } from "../data/param";
 import * as srs from "secure-random-string";
+import { PoolClient } from "pg";
 
 interface QueuePayload {
   [key: string]: string | number | boolean | null | undefined | any;
@@ -11,23 +12,23 @@ interface QueuePayload {
 export const PRIORITY_NORMAL = 0
 export const PRIORITY_HIGH = 1
 
-export async function enqueueWork(channel: string, payload: QueuePayload): Promise<string> {
-  return enqueueWorkWithPriority(channel, payload, PRIORITY_NORMAL)
+export async function enqueueWork(channel: string, payload: QueuePayload, client?: PoolClient): Promise<string> {
+  return enqueueWorkWithPriority(channel, payload, PRIORITY_NORMAL, client)
 }
 
-export async function enqueueWorkWithPriority(channel: string, payload: QueuePayload, priority: number): Promise<string> {
-  const client = getDB(await getParam("DB_URI"));
+export async function enqueueWorkWithPriority(channel: string, payload: QueuePayload, priority: number, client?: PoolClient): Promise<string> {
+  const db = client ?? getDB(await getParam("DB_URI"));
 
   const id = srs.default({ length: 12, alphanumeric: true });
   const now = new Date();
 
-  await client.query(
+  await db.query(
     `INSERT INTO work_queue (id, channel, payload, created_at, priority) ` +
     `VALUES ($1, $2, $3, $4, $5)`,
     [id, channel, payload, now, priority]
   );
 
-  await client.query(`SELECT pg_notify('${channel}', $1)`, [id]);
+  await db.query(`SELECT pg_notify('${channel}', $1)`, [id]);
 
   return id;
 }

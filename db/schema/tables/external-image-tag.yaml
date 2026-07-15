@@ -11,6 +11,10 @@ schema:
         columns:
           - digest
         isUnique: false
+      - name: idx_external_image_tag_last_submitted_at
+        columns:
+          - last_submitted_at
+        isUnique: false
     columns:
     - name: registry
       type: text

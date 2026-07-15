@@ -11,6 +11,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/image"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
+	"github.com/securebuildhq/securebuild/pkg/util"
 )
 
 // SBOMStatus represents the status of SBOM generation for an external image.
@@ -41,6 +42,7 @@ const (
 type ScanStatus string
 
 const (
+	ScanStatusUnknown   ScanStatus = "unknown"
 	ScanStatusQueued    ScanStatus = "queued"
 	ScanStatusRunning   ScanStatus = "running"
 	ScanStatusSucceeded ScanStatus = "succeeded"
@@ -279,8 +281,8 @@ func SetSBOMStatusFailed(ctx context.Context, digest string, errorMessage string
 // InitializeScanStatusQueued creates a scan status record with status='queued'.
 // This is used after SBOM creation to indicate that a scan is pending.
 // Does not set scan_attempted_at or scan_completed_at (those are set when scan actually runs).
-// On conflict, updates status to 'queued' only if current status is 'pending_sbom' or 'generating_sbom'.
-// This allows proper state transition: pending_sbom -> generating_sbom -> queued.
+// On conflict, updates status to 'queued' only if current status is 'unknown',
+// 'pending_sbom', or 'generating_sbom'.
 func InitializeScanStatusQueued(ctx context.Context, digest, arch string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
@@ -294,7 +296,7 @@ func InitializeScanStatusQueued(ctx context.Context, digest, arch string) error 
 		SET status = $4,
 		    updated_at = $3,
 		    scan_status_updated_at = $3
-		WHERE external_image_scan.status IN ('pending_sbom', 'generating_sbom')
+		WHERE external_image_scan.status IN ('unknown', 'pending_sbom', 'generating_sbom')
 	`
 
 	_, err := conn.Exec(ctx, query, digest, arch, now, string(ScanStatusQueued))
@@ -418,6 +420,36 @@ func HasExistingSBOM(ctx context.Context, digest string) (bool, error) {
 		return false, err
 	}
 	return sbom != nil, nil
+}
+
+// WasScannedRecently checks whether the digest was scanned within the given duration.
+// Uses last_security_scanned_at from external_image_sbom (digest-level timestamp).
+// Returns true only if every architecture has been scanned and the oldest scan
+// is within the threshold. Returns false if any architecture has never been
+// scanned (NULL last_security_scanned_at) or if the oldest scan is stale.
+func WasScannedRecently(ctx context.Context, digest string, threshold time.Duration) (bool, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	var hasUnscanned bool
+	var lastScannedAt *time.Time
+	err := conn.QueryRow(ctx, `
+		SELECT
+			bool_or(last_security_scanned_at IS NULL),
+			min(last_security_scanned_at)
+		FROM external_image_sbom
+		WHERE digest = $1
+	`, digest).Scan(&hasUnscanned, &lastScannedAt)
+	if err != nil {
+		return false, fmt.Errorf("failed to check scan recency for digest %s: %w", digest, err)
+	}
+
+	if hasUnscanned || lastScannedAt == nil {
+		return false, nil
+	}
+
+	now := util.GetNowFunc(ctx)()
+	return now.Sub(*lastScannedAt) < threshold, nil
 }
 
 func SetExternalImageSBOM(ctx context.Context, digest string, sbom string, source string, arch string, imageSizeBytes int64, imageDigest string) error {

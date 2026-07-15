@@ -3,6 +3,7 @@ import { getDB, withTransaction } from '../data/db';
 import { getParam } from '../data/param';
 import { traceFunction } from '../observability/tracing';
 import { parseUTCTimestamp } from '../utils/timestamp';
+import { enqueueWork } from '../utils/queue';
 
 
 export async function upsertExternalImage(registry: string, imageName: string, imageTag: string, digest: string, username: string | null, password: string | null, teamId: string): Promise<TrackedExternalImage> {
@@ -641,7 +642,7 @@ export type SBOMStatus = 'pending' | 'generating' | 'succeeded' | 'failed'
  * 3. succeeded: Scan completed successfully with results
  * 4. failed: Scan failed with error (see scanStatusMessage for details)
  */
-export type ScanStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+export type ScanStatus = 'unknown' | 'queued' | 'running' | 'succeeded' | 'failed'
 
 export interface ScanStatusEntry {
   digest: string
@@ -1171,3 +1172,106 @@ export const getBatchDigestsForTags = traceFunction('lib.externalimage.getBatchD
       'args.image_tags.length': imageTags.length,
     })
   })
+
+export interface EnqueueScanResult {
+  scanStartedAt: Date | null
+  enqueued: boolean
+}
+
+/**
+ * EnqueueScanForDigest triggers an on-demand scan for a digest if the existing
+ * scan results are stale (older than 4 hours) or missing. Uses a transaction
+ * with row locking (SELECT ... FOR UPDATE) on external_image_sbom and
+ * external_image_scan to ensure atomicity and prevent duplicate enqueues.
+ *
+ * Steps (all inside one transaction):
+ *  1. LEFT JOIN external_image_sbom to external_image_scan with FOR UPDATE
+ *     — locks SBOM rows (must exist for a scan) and scan rows if they exist.
+ *  2. Staleness check: if any arch is queued/running, or all arches were
+ *     scanned within 4 hours, skip enqueue and return existing scan_attempted_at.
+ *  3. If stale/missing: insert into work_queue + pg_notify, then upsert
+ *     external_image_scan rows to 'queued' with a WHERE guard preventing
+ *     overwriting rows already in 'queued' or 'running' status.
+ *  4. Commit and return scan_attempted_at.
+ *
+ * @param digest - The image digest to scan
+ * @returns { scanStartedAt, enqueued } — scanStartedAt is the scan_attempted_at
+ *          timestamp (set to now() when enqueued, or existing value when not).
+ *          enqueued is true if a new scan was triggered.
+ */
+export async function EnqueueScanForDigest(digest: string): Promise<EnqueueScanResult> {
+  const db = getDB(await getParam("DB_URI"))
+
+  // Step 1 (pre-transaction): Ensure scan rows exist for both architectures.
+  // New rows get status='unknown' (no scan ever attempted).
+  // ON CONFLICT DO NOTHING leaves existing rows untouched.
+  const archs = ['x86_64', 'aarch64']
+  for (const arch of archs) {
+    await db.query(
+      `INSERT INTO external_image_scan (digest, arch, created_at, status, updated_at, scan_status_updated_at)
+       VALUES ($1, $2, $3, 'unknown', $3, $3)
+       ON CONFLICT (digest, arch) DO NOTHING`,
+      [digest, arch, new Date()]
+    )
+  }
+
+  // Step 2 (transaction): Lock scan rows, check staleness, enqueue if needed.
+  return withTransaction(db, async (client) => {
+    const lockQuery = `
+      SELECT digest, arch, status, scan_completed_at, scan_attempted_at
+      FROM external_image_scan
+      WHERE digest = $1
+      FOR UPDATE
+    `
+    const lockResult = await client.query(lockQuery, [digest])
+
+    // Step 3: Staleness check
+    let hasInProgress = false
+    let allRecent = true
+    let existingScanAttemptedAt: Date | null = null
+    const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000)
+
+    for (const row of lockResult.rows) {
+      const status = row.status
+      const scanCompletedAt = row.scan_completed_at
+
+      if (status === 'queued' || status === 'running') {
+        hasInProgress = true
+      }
+
+      if (status === 'unknown' || !scanCompletedAt || new Date(scanCompletedAt) < fourHoursAgo) {
+        allRecent = false
+      }
+
+      if (row.scan_attempted_at) {
+        const attemptedAt = new Date(row.scan_attempted_at)
+        if (!existingScanAttemptedAt || attemptedAt < existingScanAttemptedAt) {
+          existingScanAttemptedAt = attemptedAt
+        }
+      }
+    }
+
+    if (hasInProgress || (allRecent && lockResult.rows.length > 0)) {
+      return { scanStartedAt: existingScanAttemptedAt, enqueued: false }
+    }
+
+    // Step 4: Enqueue work + update scan rows to 'queued'
+    const now = new Date()
+
+    await enqueueWork('external_image_scan', { digest }, client)
+
+    for (const row of lockResult.rows) {
+      await client.query(
+        `UPDATE external_image_scan
+         SET status = 'queued',
+             updated_at = $3,
+             scan_attempted_at = $3,
+             scan_status_updated_at = $3
+         WHERE digest = $1 AND arch = $2 AND status NOT IN ('queued', 'running')`,
+        [digest, row.arch, now]
+      )
+    }
+
+    return { scanStartedAt: now, enqueued: true }
+  })
+}

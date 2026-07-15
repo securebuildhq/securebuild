@@ -1,0 +1,29 @@
+database: securebuild
+name: external_image_scan
+requires:
+  - external-image-sbom
+seedData:
+  rows:
+    # Fresh digest — scan succeeded 1 hour before reference time (within 4h threshold)
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:fresh-active-digest-12345678901234567890123456789012"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: created_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: scan_completed_at
+          value:
+            str: "2026-01-15T11:00:00Z"
+        - column: scan_attempted_at
+          value:
+            str: "2026-01-15T11:00:00Z"
+        - column: scan_status_updated_at
+          value:
+            str: "2026-01-15T11:00:00Z"

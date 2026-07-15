@@ -16,6 +16,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/security"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
+	"github.com/securebuildhq/securebuild/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -214,11 +215,42 @@ func getRegistryHostname(imageURL string) (string, error) {
 	return parts[0], nil
 }
 
-// selectExternalImageDigestsToScan returns a prioritized list of external image digests to scan.
-// Priority:
-// 1) Digests that have SBOMs but no successful scans yet
-// 2) Digests ordered by the time of their last successful scan (oldest first)
-func selectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]string, error) {
+// scanTier defines a back-off tier for rescan scheduling.
+// Each tier has a last_submitted_at window and a rescan interval.
+// Tiers are queried in priority order; higher tiers are filled before
+// lower tiers contribute digests. Images submitted >90 days ago (tier 5)
+// are excluded from the scheduler entirely (on-demand only).
+//
+// submittedAfter is the minimum age (e.g. "7 days" means submitted more than 7 days ago).
+// submittedBefore is the maximum age (e.g. "0 days" means submitted less than 0 days ago = now).
+// The tier window is: ref - submittedBefore < last_submitted_at <= ref - submittedAfter
+// For active: submitted 0-7 days ago → last_submitted > ref-7d AND last_submitted <= ref-0d
+type scanTier struct {
+	name            string
+	submittedAfter  string // minimum age: last_submitted_at > ref - interval
+	submittedBefore string // maximum age: last_submitted_at <= ref - interval
+	rescanInterval  string // rescan threshold: last_security_scanned_at < ref - interval
+}
+
+var scanTiers = []scanTier{
+	{name: "active", submittedAfter: "7 days", submittedBefore: "0 days", rescanInterval: "4 hours"},
+	{name: "recent", submittedAfter: "30 days", submittedBefore: "7 days", rescanInterval: "24 hours"},
+	{name: "stale", submittedAfter: "90 days", submittedBefore: "30 days", rescanInterval: "7 days"},
+}
+
+// SelectExternalImageDigestsToScan returns a prioritized list of external image digests to scan.
+//
+// Priority order:
+//  1. Never scanned: digests with SBOMs but no scans yet
+//  2. Active tier:  last_submitted < 7 days,    rescan if older than 4 hours
+//  3. Recent tier:  last_submitted 7-30 days,   rescan if older than 24 hours
+//  4. Stale tier:   last_submitted 30-90 days,  rescan if older than 7 days
+//  5. Excluded:     last_submitted > 90 days    — not scanned by scheduler
+//
+// Each tier uses ORDER BY random() for fair distribution within the tier.
+// After each query, remaining capacity is evaluated; if 0, lower tiers are skipped.
+// A seen map prevents duplicate digests across tiers.
+func SelectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]string, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -226,53 +258,68 @@ func selectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 		maxToProcess = 25
 	}
 
+	referenceTime := util.GetNowFunc(ctx)()
+
 	selectedDigests := make([]string, 0, maxToProcess)
 	seen := map[string]struct{}{}
 
-	// 1) Digests with SBOMs but no scans yet (based on last_security_scanned_at)
+	// Tier 1: Digests with SBOMs but no scans yet (first scan, highest priority)
 	rows, err := conn.Query(ctx, `
-		SELECT s.digest, MIN(s.created_at) AS first_sbom_at
+		SELECT s.digest
 		FROM external_image_sbom s
+		WHERE s.last_security_scanned_at IS NULL
 		GROUP BY s.digest
-		HAVING MIN(s.last_security_scanned_at) IS NULL
-		ORDER BY first_sbom_at ASC
+		ORDER BY random()
 		LIMIT $1
 	`, maxToProcess)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query digests missing scans: %w", err)
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var digest string
-		var firstSBOMAt time.Time
-		if err := rows.Scan(&digest, &firstSBOMAt); err != nil {
+		if err := rows.Scan(&digest); err != nil {
 			logger.Warn("failed to scan row for missing-scan digest", zap.Error(err))
 			continue
 		}
 		selectedDigests = append(selectedDigests, digest)
 		seen[digest] = struct{}{}
 	}
+	rows.Close()
 
 	remaining := maxToProcess - len(selectedDigests)
-	if remaining > 0 {
-		// 2) Digests with scans, order by oldest last scan using last_security_scanned_at on SBOMs
-		rows2, err := conn.Query(ctx, `
-			SELECT digest, MIN(last_security_scanned_at) AS last_security_scanned_at
-			FROM external_image_sbom
-			WHERE last_security_scanned_at IS NOT NULL AND last_security_scanned_at < now() - interval '4 hours'
-			GROUP BY digest
-			ORDER BY last_security_scanned_at ASC
-			LIMIT $1
-		`, remaining)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query digests by last scan time: %w", err)
+
+	// Tiers 2-4: Back-off tiers based on last_submitted_at
+	for _, tier := range scanTiers {
+		if remaining <= 0 {
+			break
 		}
-		defer rows2.Close()
-		for rows2.Next() {
+
+		query := fmt.Sprintf(`
+			WITH tier_tags AS (
+				SELECT digest
+				FROM external_image_tag
+				WHERE last_submitted_at > $2::timestamptz - interval '%s'
+				  AND last_submitted_at <= $2::timestamptz - interval '%s'
+				GROUP BY digest
+			)
+			SELECT s.digest
+			FROM external_image_sbom s
+			JOIN tier_tags t ON t.digest = s.digest
+			WHERE s.last_security_scanned_at IS NOT NULL
+			  AND s.last_security_scanned_at < $2::timestamptz - interval '%s'
+			GROUP BY s.digest
+			ORDER BY random()
+			LIMIT $1
+		`, tier.submittedAfter, tier.submittedBefore, tier.rescanInterval)
+
+		rows, err := conn.Query(ctx, query, remaining, referenceTime)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s tier digests: %w", tier.name, err)
+		}
+		for rows.Next() {
 			var digest string
-			var lastScannedAt time.Time
-			if err := rows2.Scan(&digest, &lastScannedAt); err != nil {
-				logger.Warn("failed to scan row for last-scanned digest", zap.Error(err))
+			if err := rows.Scan(&digest); err != nil {
+				logger.Warn("failed to scan row for tier digest", zap.String("tier", tier.name), zap.Error(err))
 				continue
 			}
 			if _, ok := seen[digest]; ok {
@@ -280,7 +327,9 @@ func selectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 			}
 			selectedDigests = append(selectedDigests, digest)
 			seen[digest] = struct{}{}
+			remaining--
 		}
+		rows.Close()
 	}
 
 	return selectedDigests, nil
@@ -298,12 +347,10 @@ func updateLastSecurityScannedAt(ctx context.Context, digest string, t time.Time
 }
 
 // processExternalImageScans selects external image SBOMs to scan and processes them.
-// Priority:
-// 1) Digests that have SBOMs but no successful scans yet
-// 2) Digests ordered by the time of their last successful scan (oldest first)
+// Selection uses tiered back-off based on last_submitted_at (see SelectExternalImageDigestsToScan).
 // returns true if there are no more digests to scan
 func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, error) {
-	selectedDigests, err := selectExternalImageDigestsToScan(ctx, maxToProcess)
+	selectedDigests, err := SelectExternalImageDigestsToScan(ctx, maxToProcess)
 	if err != nil {
 		return false, err
 	}

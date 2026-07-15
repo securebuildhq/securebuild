@@ -1,4 +1,4 @@
-import { getBatchDigestsForTags, getBatchExternalImageScans, type ImageRefTag, getExternalImageDigestForTag, getExternalImageScan, teamOwnsDigest, BatchScanResult } from "@/lib/externalimage/externalimage"
+import { getBatchDigestsForTags, getBatchExternalImageScans, type ImageRefTag, getExternalImageDigestForTag, getExternalImageScan, teamOwnsDigest, BatchScanResult, EnqueueScanForDigest } from "@/lib/externalimage/externalimage"
 import { parseImageRef } from "@/lib/externalimage/registry"
 import { NextRequest, NextResponse } from "next/server"
 import { findServiceAccountWithValue } from "@/lib/team/service-account"
@@ -91,6 +91,17 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Scan results not found' }, { status: 404 })
       }
 
+      // On-demand scan trigger: if the scan is stale (>4h or missing) and not
+      // already queued/running, enqueue a scan via the external_image_scan channel.
+      // Non-fatal: if this fails, we still return whatever scan data we have.
+      let scanStartedAt: Date | null = null
+      try {
+        const enqueueResult = await EnqueueScanForDigest(digest)
+        scanStartedAt = enqueueResult.scanStartedAt
+      } catch (err) {
+        console.warn(`EnqueueScanForDigest failed for digest ${digest}:`, err)
+      }
+
       // Get scan results using the unified function (returns a row even for queued/running when scan_result is NULL)
       const scanData = await getExternalImageScan(digest, dbArch, format as 'raw' | 'parsed')
       if (!scanData) {
@@ -103,6 +114,7 @@ export async function GET(request: NextRequest) {
         image_size_bytes: scanData.imageSizeBytes,
         digest_first_seen_at: scanData.digestFirstSeenAt,
         last_scanned_at: scanData.scanCompletedAt,
+        scan_started_at: scanStartedAt,
         updated_at: scanData.updatedAt,
         scan_status: scanData.status,
         scan_status_message: scanData.scanStatusMessage,

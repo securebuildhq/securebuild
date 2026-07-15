@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	extimgtypes "github.com/securebuildhq/securebuild/pkg/externalimage/types"
@@ -282,6 +283,34 @@ func storeScanResults(ctx context.Context, digest string, scanResults map[string
 		return 0, err
 	}
 	return successCount, nil
+}
+
+// HandleExternalImageScan processes an on-demand external image scan request
+// from the external_image_scan work queue channel. It performs an idempotency
+// check (discard if scanned within 4 hours) and then delegates to RunScanForDigest.
+// Exported for integration testing.
+func HandleExternalImageScan(ctx context.Context, payloadJSON string) error {
+	p := types.ExternalImageScanPayload{}
+	if err := json.Unmarshal([]byte(payloadJSON), &p); err != nil {
+		return fmt.Errorf("failed to unmarshal external image scan payload: %w", err)
+	}
+
+	if p.Digest == "" {
+		return fmt.Errorf("external image scan payload missing digest")
+	}
+
+	recent, err := externalimage.WasScannedRecently(ctx, p.Digest, 4*time.Hour)
+	if err != nil {
+		logger.Warn("failed to check scan recency, proceeding with scan",
+			zap.String("digest", p.Digest),
+			zap.Error(err))
+	} else if recent {
+		logger.Info("discarding external_image_scan message: scan completed within 4 hours",
+			zap.String("digest", p.Digest))
+		return nil
+	}
+
+	return RunScanForDigest(ctx, p.Digest)
 }
 
 // RunScanForDigest runs a security scan for a digest that already has SBOM data.
