@@ -26,6 +26,8 @@ schema:
       type: timestamp with time zone
       constraints:
         notNull: true
+    - name: last_submitted_at
+      type: timestamp with time zone
     - name: digest
       type: text
       constraints:
