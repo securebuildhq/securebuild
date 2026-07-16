@@ -1202,16 +1202,26 @@ export interface EnqueueScanResult {
 export async function EnqueueScanForDigest(digest: string): Promise<EnqueueScanResult> {
   const db = getDB(await getParam("DB_URI"))
 
-  // Step 1 (pre-transaction): Ensure scan rows exist for both architectures.
-  // New rows get status='unknown' (no scan ever attempted).
+  // Step 1 (pre-transaction): Ensure scan rows exist for architectures that
+  // have SBOMs. New rows get status='unknown' (no scan ever attempted).
   // ON CONFLICT DO NOTHING leaves existing rows untouched.
-  const archs = ['x86_64', 'aarch64']
-  for (const arch of archs) {
+  // Only arches with SBOMs are queued — an arch without an SBOM would leave
+  // a queued scan that can never be completed. Images may have one or both
+  // architectures.
+  const archResult = await db.query(
+    `SELECT DISTINCT arch FROM external_image_sbom WHERE digest = $1`,
+    [digest]
+  )
+  if (archResult.rows.length === 0) {
+    throw new Error(`no SBOMs found for digest ${digest}`)
+  }
+
+  for (const row of archResult.rows) {
     await db.query(
       `INSERT INTO external_image_scan (digest, arch, created_at, status, updated_at, scan_status_updated_at)
        VALUES ($1, $2, $3, 'unknown', $3, $3)
        ON CONFLICT (digest, arch) DO NOTHING`,
-      [digest, arch, new Date()]
+      [digest, row.arch, new Date()]
     )
   }
 

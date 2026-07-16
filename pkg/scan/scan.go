@@ -335,12 +335,18 @@ func SelectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 	return selectedDigests, nil
 }
 
-// updateLastSecurityScannedAt updates the last_security_scanned_at timestamp for all SBOMs of a digest.
-func updateLastSecurityScannedAt(ctx context.Context, digest string, t time.Time) error {
+// UpdateLastSecurityScanned updates the last_security_scanned_at timestamp
+// for the specified architectures of a digest. If archs is empty, no update
+// is performed.
+func UpdateLastSecurityScanned(ctx context.Context, digest string, archs []string, t time.Time) error {
+	if len(archs) == 0 {
+		return nil
+	}
+
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	if _, err := conn.Exec(ctx, `UPDATE external_image_sbom SET last_security_scanned_at = $2 WHERE digest = $1`, digest, t); err != nil {
+	if _, err := conn.Exec(ctx, `UPDATE external_image_sbom SET last_security_scanned_at = $3 WHERE digest = $1 AND arch = ANY($2)`, digest, archs, t); err != nil {
 		return err
 	}
 	return nil
@@ -385,11 +391,19 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 				zap.String("digest", digest),
 				zap.Error(err))
 
-			// Update last_scanned_at on failure to avoid hot-loop retries
-			if execErr := updateLastSecurityScannedAt(ctx, digest, time.Now().UTC()); execErr != nil {
+			// Update last_security_scanned_at for arches that were scanned (scanResults
+			// keys) to prevent hot-loop retries. When ScanExternalImage returns an error,
+			// scanResults is empty, so this is a no-op and all arches remain eligible
+			// for retry — the scheduler's MaxImagesPerCycle limit and cycle interval
+			// throttle retries naturally.
+			scannedArchs := make([]string, 0, len(scanResults))
+			for arch := range scanResults {
+				scannedArchs = append(scannedArchs, arch)
+			}
+			if err := UpdateLastSecurityScanned(ctx, digest, scannedArchs, time.Now().UTC()); err != nil {
 				logger.Warn("failed to update last_security_scanned_at after scan failure",
 					zap.String("digest", digest),
-					zap.Error(execErr))
+					zap.Error(err))
 			}
 
 			// Record failure for each architecture from the SBOMs
@@ -431,6 +445,7 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 			}
 		}
 
+		successArchs := make([]string, 0, len(scanResults))
 		for arch, scanResult := range scanResults {
 			parsedResults, err := image.ParseScanResultDetails(scanResult)
 			if err != nil {
@@ -478,6 +493,7 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 				recordArchFailure(arch, fmt.Sprintf("scan completed but failed to save results: %v", err))
 				continue
 			}
+			successArchs = append(successArchs, arch)
 		}
 
 		// Check for architectures in stored SBOMs that didn't get scan results
@@ -495,9 +511,11 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 			}
 		}
 
-		// Mark SBOMs for this digest as scanned now (digest-level timestamp)
-		if err := updateLastSecurityScannedAt(ctx, digest, time.Now().UTC()); err != nil {
-			logger.Warn("failed to update last_security_scanned_at for digest",
+		// Update last_security_scanned_at for architectures whose results were
+		// successfully stored. scanResults keys are the arches that ScanExternalImage
+		// scanned successfully; successArchs are the subset that were also stored.
+		if err := UpdateLastSecurityScanned(ctx, digest, successArchs, time.Now().UTC()); err != nil {
+			logger.Warn("failed to update last_security_scanned_at",
 				zap.String("digest", digest),
 				zap.Error(err))
 		}

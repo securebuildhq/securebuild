@@ -231,7 +231,8 @@ func extractArchFromPlatform(platform string) string {
 
 // storeScanResults parses and stores scan results per architecture.
 // The span is started inside this function so the traced operation is the function itself.
-func storeScanResults(ctx context.Context, digest string, scanResults map[string]string, attempt, maxAttempts int) (successCount int, err error) {
+// Returns the list of architectures that were successfully stored.
+func storeScanResults(ctx context.Context, digest string, scanResults map[string]string, attempt, maxAttempts int) (successArchs []string, err error) {
 	span, ctx := telemetry.StartSpan(ctx, "listener.external_image_scan.store_results")
 	defer func() {
 		if err != nil {
@@ -271,18 +272,18 @@ func storeScanResults(ctx context.Context, digest string, scanResults map[string
 			continue
 		}
 
-		successCount++
+		successArchs = append(successArchs, arch)
 		logger.Info("stored scan result for architecture",
 			zap.String("digest", digest),
 			zap.String("arch", arch),
 			zap.Int("attempt", attempt),
 			zap.Int("max_attempts", maxAttempts))
 	}
-	if len(scanResults) > 0 && successCount == 0 {
+	if len(scanResults) > 0 && len(successArchs) == 0 {
 		err = fmt.Errorf("failed to store scan results for any of %d architecture(s)", len(scanResults))
-		return 0, err
+		return nil, err
 	}
-	return successCount, nil
+	return successArchs, nil
 }
 
 // HandleExternalImageScan processes an on-demand external image scan request
@@ -357,7 +358,7 @@ func RunScanForDigest(ctx context.Context, digest string) error {
 	// If all architectures fail to parse/marshal/save, storeScanResults returns an error but
 	// each failure is already recorded via recordScanFailure. Return nil so the job finishes
 	// without retry (retrying would not fix data/parse/save issues).
-	successCount, err := storeScanResults(ctx, digest, scanResults, attempt, maxAttempts)
+	successArchs, err := storeScanResults(ctx, digest, scanResults, attempt, maxAttempts)
 	if err != nil {
 		logger.Warn("all architectures failed to store scan results; failures recorded, not retrying",
 			zap.String("digest", digest),
@@ -387,8 +388,17 @@ func RunScanForDigest(ctx context.Context, digest string) error {
 		zap.Int("max_attempts", maxAttempts))
 	// Only count as succeeded when (1) scan returned results for every expected arch, and
 	// (2) we successfully stored every result (parse/marshal/save for each arch).
-	if len(storedSBOMs) > 0 && allExpectedArchsGotScanResults && successCount == len(scanResults) {
+	if len(storedSBOMs) > 0 && allExpectedArchsGotScanResults && len(successArchs) == len(scanResults) {
 		telemetry.Increment(telemetry.MetricExternalImageScanSucceeded, []string{telemetry.TagChannelExternalImageScan})
+	}
+
+	// Update last_security_scanned_at for architectures whose results were
+	// successfully stored. scanResults keys are the arches that were scanned
+	// successfully; successArchs are the subset that were also stored.
+	if err := scan.UpdateLastSecurityScanned(ctx, digest, successArchs, time.Now().UTC()); err != nil {
+		logger.Warn("failed to update last_security_scanned_at",
+			zap.String("digest", digest),
+			zap.Error(err))
 	}
 
 	return nil

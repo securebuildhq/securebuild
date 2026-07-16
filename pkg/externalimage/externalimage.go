@@ -531,18 +531,19 @@ func AddExternalImage(ctx context.Context, registry string, imageName string, ta
 	}
 
 	// Insert into external_image_tag table
-	// Note: last_submitted_at is intentionally NOT set here — this function is
-	// called by the digest-change monitor, not the API. Only upsertExternalImage
-	// (the API path) sets last_submitted_at.
+	// Set last_submitted_at = now() so the digest is included in scan tier
+	// queries. The monitor re-adds an image when it detects a digest change,
+	// which indicates active tracking — same as the API submission path.
+	now := time.Now()
 	query = `
-		insert into external_image_tag (registry, image_name, image_tag, created_at, digest, next_check_digest_at, next_scan_at)
-		values ($1, $2, $3, $4, $5, $6, $7)
+		insert into external_image_tag (registry, image_name, image_tag, created_at, last_submitted_at, digest, next_check_digest_at, next_scan_at)
+		values ($1, $2, $3, $4, $4, $5, $6, $7)
 		on conflict (registry, image_name, image_tag) do update
-		set digest = $5, next_check_digest_at = $6, next_scan_at = $7, created_at = $4
+		set digest = $5, last_submitted_at = $4, next_check_digest_at = $6, next_scan_at = $7, created_at = $4
 	`
 
-	inFourHours := time.Now().Add(time.Hour * 4)
-	_, err = conn.Exec(ctx, query, registry, imageName, tag, time.Now(), digest, inFourHours, inFourHours)
+	inFourHours := now.Add(time.Hour * 4)
+	_, err = conn.Exec(ctx, query, registry, imageName, tag, now, digest, inFourHours, inFourHours)
 	if err != nil {
 		return fmt.Errorf("failed to insert/update external image tag %s/%s:%s: %w", registry, imageName, tag, err)
 	}
