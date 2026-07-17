@@ -136,6 +136,24 @@ func runWorker(ctx context.Context) error {
 		}
 	}
 
+	// Initialize scan capacity cache from builder filesystems (synchronous —
+	// must complete before listeners start so the external_image_scan handler
+	// has a populated cache for builder selection).
+	scanCache, err := scan.InitScanCapacityCache(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize scan capacity cache: %w", err)
+	}
+
+	// Add scan cache to context for the external_image_scan handler
+	ctx = listener.WithScanCapacityCache(ctx, scanCache)
+
+	// Start scan status poller (collects results from builders every 10s)
+	go func() {
+		if err := listener.StartExternalImageScanStatusChecker(ctx, scanCache); err != nil {
+			logger.Error(fmt.Errorf("failed to start external image scan status checker: %w", err))
+		}
+	}()
+
 	go func() {
 		if err := listener.StartListeners(ctx); err != nil {
 			logger.Error(fmt.Errorf("failed to start listeners: %w", err))
@@ -201,7 +219,7 @@ func runWorker(ctx context.Context) error {
 
 	// Start the catalog scanner scheduler (grype scans)
 	go func() {
-		if err := scan.StartScheduler(ctx); err != nil {
+		if err := scan.StartScheduler(ctx, scanCache); err != nil {
 			logger.Error(fmt.Errorf("failed to start catalog scanner scheduler: %w", err))
 		}
 	}()

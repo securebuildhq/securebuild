@@ -11,8 +11,8 @@ import (
 	syftpkg "github.com/anchore/syft/syft/pkg"
 	"github.com/securebuildhq/securebuild/pkg/anchore"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
-	"github.com/securebuildhq/securebuild/pkg/image"
 	"github.com/securebuildhq/securebuild/pkg/logger"
+	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/security"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
@@ -52,7 +52,7 @@ func ScanExternalImage(ctx context.Context, digest string) (results map[string]s
 		startTime := time.Now()
 
 		// Parse the SBOM to extract packages
-		sbomObj, err := scanner.ParseSBOM(sbom.SBOM)
+		sbomObj, err := anchore.ParseSBOM(sbom.SBOM)
 		if err != nil {
 			logger.Warn("failed to parse SBOM",
 				zap.String("digest", digest),
@@ -352,10 +352,20 @@ func UpdateLastSecurityScanned(ctx context.Context, digest string, archs []strin
 	return nil
 }
 
-// processExternalImageScans selects external image SBOMs to scan and processes them.
+// processExternalImageScans selects external image SBOMs to scan and enqueues
+// them as external_image_scan work items for builder-based dispatch.
 // Selection uses tiered back-off based on last_submitted_at (see SelectExternalImageDigestsToScan).
+// Scheduler backpressure: only enqueues if the total in-memory scan count is below
+// PoolSize * MaxScansPerBuilder.
 // returns true if there are no more digests to scan
-func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, error) {
+func processExternalImageScans(ctx context.Context, maxToProcess int, cache *ScanCapacityCache) (bool, error) {
+	if cache != nil {
+		maxConcurrent := param.GetParam(ctx).PoolSize * param.GetParam(ctx).MaxScansPerBuilder
+		if cache.GetTotalScanCount() >= maxConcurrent {
+			return false, nil
+		}
+	}
+
 	selectedDigests, err := SelectExternalImageDigestsToScan(ctx, maxToProcess)
 	if err != nil {
 		return false, err
@@ -365,159 +375,22 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 		return true, nil
 	}
 
-	logger.Info("processing external image scans", zap.Int("count", len(selectedDigests)))
+	logger.Info("enqueuing external image scans", zap.Int("count", len(selectedDigests)))
 
 	for _, digest := range selectedDigests {
-		// Get SBOMs to know the architectures, then mark them as running before starting scan
-		storedSBOMs, sbomErr := externalimage.GetExternalImageSBOMs(ctx, digest)
-		if sbomErr != nil {
-			logger.Warn("failed to get SBOMs for setting running status",
-				zap.String("digest", digest),
-				zap.Error(sbomErr))
-		} else {
-			for _, s := range storedSBOMs {
-				if err := externalimage.SetScanStatusRunning(ctx, digest, s.Arch); err != nil {
-					logger.Warn("failed to set scan status to running",
-						zap.String("digest", digest),
-						zap.String("arch", s.Arch),
-						zap.Error(err))
-				}
-			}
-		}
-
-		scanResults, err := ScanExternalImage(ctx, digest)
+		payload, err := json.Marshal(map[string]string{"digest": digest})
 		if err != nil {
-			logger.Warn("failed to scan external image SBOMs",
+			logger.Warn("failed to marshal scan payload",
 				zap.String("digest", digest),
 				zap.Error(err))
-
-			// Update last_security_scanned_at for arches that were scanned (scanResults
-			// keys) to prevent hot-loop retries. When ScanExternalImage returns an error,
-			// scanResults is empty, so this is a no-op and all arches remain eligible
-			// for retry — the scheduler's MaxImagesPerCycle limit and cycle interval
-			// throttle retries naturally.
-			scannedArchs := make([]string, 0, len(scanResults))
-			for arch := range scanResults {
-				scannedArchs = append(scannedArchs, arch)
-			}
-			if err := UpdateLastSecurityScanned(ctx, digest, scannedArchs, time.Now().UTC()); err != nil {
-				logger.Warn("failed to update last_security_scanned_at after scan failure",
-					zap.String("digest", digest),
-					zap.Error(err))
-			}
-
-			// Record failure for each architecture from the SBOMs
-			storedSBOMs, sbomErr := externalimage.GetExternalImageSBOMs(ctx, digest)
-			if sbomErr != nil {
-				logger.Warn("failed to get SBOMs for recording scan failure",
-					zap.String("digest", digest),
-					zap.Error(sbomErr))
-			} else {
-				for _, s := range storedSBOMs {
-					if recordErr := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
-						Digest:            digest,
-						Arch:              s.Arch,
-						Status:            externalimage.ScanStatusFailed,
-						ScanStatusMessage: err.Error(),
-					}); recordErr != nil {
-						logger.Warn("failed to record scan failure",
-							zap.String("digest", digest),
-							zap.String("arch", s.Arch),
-							zap.Error(recordErr))
-					}
-				}
-			}
 			continue
 		}
 
-		// Helper to record scan failure for a specific arch
-		recordArchFailure := func(arch, reason string) {
-			if recordErr := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
-				Digest:            digest,
-				Arch:              arch,
-				Status:            externalimage.ScanStatusFailed,
-				ScanStatusMessage: reason,
-			}); recordErr != nil {
-				logger.Warn("failed to record scan failure",
-					zap.String("digest", digest),
-					zap.String("arch", arch),
-					zap.Error(recordErr))
-			}
-		}
-
-		successArchs := make([]string, 0, len(scanResults))
-		for arch, scanResult := range scanResults {
-			parsedResults, err := image.ParseScanResultDetails(scanResult)
-			if err != nil {
-				logger.Warn("failed to parse scan result",
-					zap.String("digest", digest),
-					zap.String("arch", arch),
-					zap.Error(err))
-				recordArchFailure(arch, fmt.Sprintf("failed to parse scan result: %v", err))
-				continue
-			}
-
-			countsJSON, err := json.Marshal(parsedResults.Counts)
-			if err != nil {
-				logger.Warn("failed to marshal scan counts",
-					zap.String("digest", digest),
-					zap.String("arch", arch),
-					zap.Error(err))
-				recordArchFailure(arch, fmt.Sprintf("failed to marshal scan counts: %v", err))
-				continue
-			}
-
-			summaryJSON, err := json.Marshal(parsedResults)
-			if err != nil {
-				logger.Warn("failed to marshal scan summary",
-					zap.String("digest", digest),
-					zap.String("arch", arch),
-					zap.Error(err))
-				recordArchFailure(arch, fmt.Sprintf("failed to marshal scan summary: %v", err))
-				continue
-			}
-
-			if err := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
-				Digest:               digest,
-				Arch:                 arch,
-				Status:               externalimage.ScanStatusSucceeded,
-				ParsedResults:        string(countsJSON),
-				ParsedResultsDetails: string(summaryJSON),
-				RawResult:            scanResult,
-			}); err != nil {
-				logger.Warn("failed to set external image scan status to succeeded, recording as failed",
-					zap.String("digest", digest),
-					zap.String("arch", arch),
-					zap.Error(err))
-				// If we can't save the success, record a failure so status doesn't stay "running" forever
-				recordArchFailure(arch, fmt.Sprintf("scan completed but failed to save results: %v", err))
-				continue
-			}
-			successArchs = append(successArchs, arch)
-		}
-
-		// Check for architectures in stored SBOMs that didn't get scan results
-		// This handles partial failures where scan succeeds for some arches but not others
-		// (e.g., x86_64 succeeds but aarch64 fails silently in ScanExternalImage)
-		if storedSBOMs != nil && len(storedSBOMs) > 0 {
-			for _, s := range storedSBOMs {
-				// Check if this arch got a scan result
-				if _, hasResult := scanResults[s.Arch]; !hasResult {
-					logger.Warn("no scan result for architecture with SBOM",
-						zap.String("digest", digest),
-						zap.String("arch", s.Arch))
-					recordArchFailure(s.Arch, "scan did not return results for this architecture")
-				}
-			}
-		}
-
-		// Update last_security_scanned_at for architectures whose results were
-		// successfully stored. scanResults keys are the arches that ScanExternalImage
-		// scanned successfully; successArchs are the subset that were also stored.
-		if err := UpdateLastSecurityScanned(ctx, digest, successArchs, time.Now().UTC()); err != nil {
-			logger.Warn("failed to update last_security_scanned_at",
+		if err := persistence.EnqueueWork(ctx, "external_image_scan", string(payload)); err != nil {
+			logger.Warn("failed to enqueue external image scan",
 				zap.String("digest", digest),
 				zap.Error(err))
+			continue
 		}
 	}
 

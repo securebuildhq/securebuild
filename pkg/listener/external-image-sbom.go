@@ -13,6 +13,7 @@ import (
 	image "github.com/securebuildhq/securebuild/pkg/image"
 	"github.com/securebuildhq/securebuild/pkg/listener/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
+	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/sbom"
 	"github.com/securebuildhq/securebuild/pkg/scan"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
@@ -315,14 +316,46 @@ func HandleExternalImageScan(ctx context.Context, payloadJSON string) error {
 }
 
 // RunScanForDigest runs a security scan for a digest that already has SBOM data.
-// It records failures in the database and returns nil on success (scan failures
-// are recorded but don't fail the job).
+//
+// In production, it enqueues an external_image_scan work item for builder-based
+// dispatch. The work item is processed by HandleExternalImageScanOnBuilder which
+// dispatches the scan to a builder VM, and the poller collects results.
+//
+// When a mock scan function is injected via WithMockScanExternalImage (used by
+// integration tests), it falls back to the in-process scan path: sets status to
+// running, calls the scan function, and stores results or failures synchronously.
+// This allows integration tests to verify scan state transitions without builders.
+//
 // Exported for integration testing.
 func RunScanForDigest(ctx context.Context, digest string) error {
 	attempt, maxAttempts := GetAttemptInfo(ctx)
 
-	// Get SBOMs to know the architectures, then mark them as running before starting scan.
-	// No span around GetExternalImageSBOMs: SQL is already traced by the client.
+	// If a mock scan function is injected, use the in-process scan path.
+	// This is used by integration tests that don't have builder VMs.
+	if _, hasMock := ctx.Value(scanExternalImageFuncKey).(func(context.Context, string) (map[string]string, error)); hasMock {
+		return runScanForDigestInProcess(ctx, digest, attempt, maxAttempts)
+	}
+
+	// Production: enqueue work item for builder-based dispatch.
+	payload, err := json.Marshal(types.ExternalImageScanPayload{Digest: digest})
+	if err != nil {
+		return fmt.Errorf("failed to marshal scan payload: %w", err)
+	}
+
+	if err := persistence.EnqueueWork(ctx, "external_image_scan", string(payload)); err != nil {
+		return fmt.Errorf("failed to enqueue external image scan: %w", err)
+	}
+
+	logger.Info("enqueued external image scan for digest",
+		zap.String("digest", digest))
+
+	return nil
+}
+
+// runScanForDigestInProcess runs the scan synchronously in-process using the
+// scan function from context (real or mocked). This is the legacy path used
+// by integration tests that inject mock scan functions.
+func runScanForDigestInProcess(ctx context.Context, digest string, attempt, maxAttempts int) error {
 	var storedSBOMs []extimgtypes.ExternalImageSBOM
 	storedSBOMs, err := externalimage.GetExternalImageSBOMs(ctx, digest)
 	if err != nil {
@@ -335,13 +368,11 @@ func RunScanForDigest(ctx context.Context, digest string) error {
 	for _, s := range storedSBOMs {
 		if err := externalimage.SetScanStatusRunning(ctx, digest, s.Arch); err != nil {
 			logger.Warn("failed to set scan status to running", zap.String("digest", digest), zap.String("arch", s.Arch), zap.Error(err), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", true))
-			// Continue with remaining architectures - this is a non-critical status update
 		}
 	}
 
 	scanResults, err := getScanExternalImageFunc(ctx)(ctx, digest)
 	if err != nil {
-		// Record the failure for each architecture so DB and Datadog metric are updated
 		storedSBOMsForFail, sbomErr := externalimage.GetExternalImageSBOMs(ctx, digest)
 		if sbomErr != nil {
 			return fmt.Errorf("failed to get SBOMs for recording scan failure: %w", sbomErr)
@@ -350,14 +381,9 @@ func RunScanForDigest(ctx context.Context, digest string) error {
 		for _, s := range storedSBOMsForFail {
 			recordScanFailure(ctx, digest, s.Arch, scanErr, false, attempt, maxAttempts)
 		}
-		// Don't fail the job - the scan failure is recorded and user can retry
 		return nil
 	}
 
-	// Store scan results for each architecture.
-	// If all architectures fail to parse/marshal/save, storeScanResults returns an error but
-	// each failure is already recorded via recordScanFailure. Return nil so the job finishes
-	// without retry (retrying would not fix data/parse/save issues).
 	successArchs, err := storeScanResults(ctx, digest, scanResults, attempt, maxAttempts)
 	if err != nil {
 		logger.Warn("all architectures failed to store scan results; failures recorded, not retrying",
@@ -369,10 +395,6 @@ func RunScanForDigest(ctx context.Context, digest string) error {
 		return nil
 	}
 
-	// Check for architectures in stored SBOMs that didn't get scan results.
-	// This handles partial failures where scan succeeds for some arches but not others.
-	// Reuse storedSBOMs from above so a transient refetch failure cannot skip verification
-	// (which would leave allExpectedArchsGotScanResults true and incorrectly fire the success metric).
 	allExpectedArchsGotScanResults := true
 	for _, sbom := range storedSBOMs {
 		if _, hasResult := scanResults[sbom.Arch]; !hasResult {
@@ -386,15 +408,10 @@ func RunScanForDigest(ctx context.Context, digest string) error {
 		zap.Int("architectures_scanned", len(scanResults)),
 		zap.Int("attempt", attempt),
 		zap.Int("max_attempts", maxAttempts))
-	// Only count as succeeded when (1) scan returned results for every expected arch, and
-	// (2) we successfully stored every result (parse/marshal/save for each arch).
 	if len(storedSBOMs) > 0 && allExpectedArchsGotScanResults && len(successArchs) == len(scanResults) {
 		telemetry.Increment(telemetry.MetricExternalImageScanSucceeded, []string{telemetry.TagChannelExternalImageScan})
 	}
 
-	// Update last_security_scanned_at for architectures whose results were
-	// successfully stored. scanResults keys are the arches that were scanned
-	// successfully; successArchs are the subset that were also stored.
 	if err := scan.UpdateLastSecurityScanned(ctx, digest, successArchs, time.Now().UTC()); err != nil {
 		logger.Warn("failed to update last_security_scanned_at",
 			zap.String("digest", digest),

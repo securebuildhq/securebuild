@@ -24,8 +24,11 @@ const (
 	MetricExternalImageScanFailed    = "securebuild.external_image.scan.failed"
 	MetricExternalImageScanSucceeded = "securebuild.external_image.scan.succeeded"
 
-	MetricExternalImageScanBacklog = "securebuild.external_image.scan.backlog"
+	MetricExternalImageScanBacklog  = "securebuild.external_image.scan.backlog"
 	MetricExternalImageScansRunning = "securebuild.external_image.scan.running"
+
+	MetricExternalImageScanCapacityTotal = "securebuild.external_image.scan.capacity.total"
+	MetricExternalImageScanCapacityUsed  = "securebuild.external_image.scan.capacity.used"
 
 	TagChannelExternalImageSBOM = "channel:external_image_sbom"
 	TagChannelExternalImageScan = "channel:external_image_scan"
