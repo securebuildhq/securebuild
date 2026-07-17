@@ -11,6 +11,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/image"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
+	"github.com/securebuildhq/securebuild/pkg/util"
 )
 
 // SBOMStatus represents the status of SBOM generation for an external image.
@@ -41,6 +42,7 @@ const (
 type ScanStatus string
 
 const (
+	ScanStatusUnknown   ScanStatus = "unknown"
 	ScanStatusQueued    ScanStatus = "queued"
 	ScanStatusRunning   ScanStatus = "running"
 	ScanStatusSucceeded ScanStatus = "succeeded"
@@ -279,8 +281,8 @@ func SetSBOMStatusFailed(ctx context.Context, digest string, errorMessage string
 // InitializeScanStatusQueued creates a scan status record with status='queued'.
 // This is used after SBOM creation to indicate that a scan is pending.
 // Does not set scan_attempted_at or scan_completed_at (those are set when scan actually runs).
-// On conflict, updates status to 'queued' only if current status is 'pending_sbom' or 'generating_sbom'.
-// This allows proper state transition: pending_sbom -> generating_sbom -> queued.
+// On conflict, updates status to 'queued' only if current status is 'unknown',
+// 'pending_sbom', or 'generating_sbom'.
 func InitializeScanStatusQueued(ctx context.Context, digest, arch string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
@@ -294,7 +296,7 @@ func InitializeScanStatusQueued(ctx context.Context, digest, arch string) error 
 		SET status = $4,
 		    updated_at = $3,
 		    scan_status_updated_at = $3
-		WHERE external_image_scan.status IN ('pending_sbom', 'generating_sbom')
+		WHERE external_image_scan.status IN ('unknown', 'pending_sbom', 'generating_sbom')
 	`
 
 	_, err := conn.Exec(ctx, query, digest, arch, now, string(ScanStatusQueued))
@@ -420,6 +422,36 @@ func HasExistingSBOM(ctx context.Context, digest string) (bool, error) {
 	return sbom != nil, nil
 }
 
+// WasScannedRecently checks whether the digest was scanned within the given duration.
+// Uses last_security_scanned_at from external_image_sbom (digest-level timestamp).
+// Returns true only if every architecture has been scanned and the oldest scan
+// is within the threshold. Returns false if any architecture has never been
+// scanned (NULL last_security_scanned_at) or if the oldest scan is stale.
+func WasScannedRecently(ctx context.Context, digest string, threshold time.Duration) (bool, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	var hasUnscanned bool
+	var lastScannedAt *time.Time
+	err := conn.QueryRow(ctx, `
+		SELECT
+			bool_or(last_security_scanned_at IS NULL),
+			min(last_security_scanned_at)
+		FROM external_image_sbom
+		WHERE digest = $1
+	`, digest).Scan(&hasUnscanned, &lastScannedAt)
+	if err != nil {
+		return false, fmt.Errorf("failed to check scan recency for digest %s: %w", digest, err)
+	}
+
+	if hasUnscanned || lastScannedAt == nil {
+		return false, nil
+	}
+
+	now := util.GetNowFunc(ctx)()
+	return now.Sub(*lastScannedAt) < threshold, nil
+}
+
 func SetExternalImageSBOM(ctx context.Context, digest string, sbom string, source string, arch string, imageSizeBytes int64, imageDigest string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
@@ -499,18 +531,19 @@ func AddExternalImage(ctx context.Context, registry string, imageName string, ta
 	}
 
 	// Insert into external_image_tag table
-	// Note: last_submitted_at is intentionally NOT set here — this function is
-	// called by the digest-change monitor, not the API. Only upsertExternalImage
-	// (the API path) sets last_submitted_at.
+	// Set last_submitted_at = now() so the digest is included in scan tier
+	// queries. The monitor re-adds an image when it detects a digest change,
+	// which indicates active tracking — same as the API submission path.
+	now := time.Now()
 	query = `
-		insert into external_image_tag (registry, image_name, image_tag, created_at, digest, next_check_digest_at, next_scan_at)
-		values ($1, $2, $3, $4, $5, $6, $7)
+		insert into external_image_tag (registry, image_name, image_tag, created_at, last_submitted_at, digest, next_check_digest_at, next_scan_at)
+		values ($1, $2, $3, $4, $4, $5, $6, $7)
 		on conflict (registry, image_name, image_tag) do update
-		set digest = $5, next_check_digest_at = $6, next_scan_at = $7, created_at = $4
+		set digest = $5, last_submitted_at = $4, next_check_digest_at = $6, next_scan_at = $7, created_at = $4
 	`
 
-	inFourHours := time.Now().Add(time.Hour * 4)
-	_, err = conn.Exec(ctx, query, registry, imageName, tag, time.Now(), digest, inFourHours, inFourHours)
+	inFourHours := now.Add(time.Hour * 4)
+	_, err = conn.Exec(ctx, query, registry, imageName, tag, now, digest, inFourHours, inFourHours)
 	if err != nil {
 		return fmt.Errorf("failed to insert/update external image tag %s/%s:%s: %w", registry, imageName, tag, err)
 	}

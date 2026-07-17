@@ -24,6 +24,9 @@ const (
 
 	// MaxImagesPerCycle limits how many images are processed in each scheduler cycle
 	MaxImagesPerCycle = 25
+
+	// MetricsReportInterval is how often scan backlog and running scan gauges are sent
+	MetricsReportInterval = 1 * time.Minute
 )
 
 // GetRandomizedScanInterval returns ScanInterval plus a random offset of ±60 minutes
@@ -35,6 +38,20 @@ func GetRandomizedScanInterval() time.Duration {
 
 func StartScheduler(ctx context.Context) error {
 	logger.Info("Starting scan scheduler")
+
+	// Periodic metrics reporter for scan backlog and running scan counts
+	go func() {
+		ticker := time.NewTicker(MetricsReportInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ReportScanMetrics(ctx)
+			}
+		}
+	}()
 
 	go func() {
 		for {

@@ -1,0 +1,15 @@
+database: securebuild
+name: external_image
+requires: []
+seedData:
+  rows:
+    - columns:
+        - column: registry
+          value:
+            str: "docker.io"
+        - column: image_name
+          value:
+            str: "library/tier-test"
+        - column: created_at
+          value:
+            str: "2025-10-01T00:00:00Z"

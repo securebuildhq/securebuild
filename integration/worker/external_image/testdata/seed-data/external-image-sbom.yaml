@@ -1,0 +1,143 @@
+database: securebuild
+name: external_image_sbom
+requires:
+  - external-image-tag
+seedData:
+  rows:
+    # Active tier SBOM — scanned 5h before reference (stale for 4h interval)
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:active-tier-digest-12345678901234567890123456789012"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"artifacts":[]}'
+        - column: source
+          value:
+            str: "syft"
+        - column: created_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: last_security_scanned_at
+          value:
+            str: "2026-01-15T07:00:00Z"
+    # Recent tier SBOM — scanned 2 days before reference (stale for 24h interval)
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:recent-tier-digest-12345678901234567890123456789012"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"artifacts":[]}'
+        - column: source
+          value:
+            str: "syft"
+        - column: created_at
+          value:
+            str: "2026-01-05T00:00:00Z"
+        - column: last_security_scanned_at
+          value:
+            str: "2026-01-13T12:00:00Z"
+    # Stale tier SBOM — scanned 10 days before reference (stale for 7d interval)
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:stale-tier-digest-12345678901234567890123456789012"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"artifacts":[]}'
+        - column: source
+          value:
+            str: "syft"
+        - column: created_at
+          value:
+            str: "2025-12-01T00:00:00Z"
+        - column: last_security_scanned_at
+          value:
+            str: "2026-01-05T00:00:00Z"
+    # Excluded tier SBOM — scanned 30 days before reference (stale, but >90d excluded)
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:excluded-tier-digest-12345678901234567890123456789012"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"artifacts":[]}'
+        - column: source
+          value:
+            str: "syft"
+        - column: created_at
+          value:
+            str: "2025-10-06T00:00:00Z"
+        - column: last_security_scanned_at
+          value:
+            str: "2025-12-15T00:00:00Z"
+    # Never-scanned SBOM — no last_security_scanned_at
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:never-scanned-digest-12345678901234567890123456789012"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"artifacts":[]}'
+        - column: source
+          value:
+            str: "syft"
+        - column: created_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+    # Fresh SBOM — scanned 1h before reference (within 4h interval, NOT stale)
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:fresh-active-digest-12345678901234567890123456789012"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"artifacts":[]}'
+        - column: source
+          value:
+            str: "syft"
+        - column: created_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: last_security_scanned_at
+          value:
+            str: "2026-01-15T11:00:00Z"
+    # Active-scanned SBOM — scanned 5h before reference (stale for 4h interval)
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:active-scanned-digest-12345678901234567890123456789012"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: sbom
+          value:
+            str: '{"artifacts":[]}'
+        - column: source
+          value:
+            str: "syft"
+        - column: created_at
+          value:
+            str: "2026-01-14T00:00:00Z"
+        - column: last_security_scanned_at
+          value:
+            str: "2026-01-15T07:00:00Z"

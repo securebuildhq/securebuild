@@ -274,9 +274,14 @@ func StartExternalImageSbomListener(ctx context.Context, l *Listener) {
 }
 
 func StartExternalImageScanListener(ctx context.Context, l *Listener) {
-	l.AddHandler(ctx, "external_image_scan", 1, time.Minute*1, func(ctx context.Context, notification *pgconn.Notification) error {
-		// this handler has been removed in favor of selecting digests from the DB directly
-		return nil
+	l.AddHandler(ctx, "external_image_scan", 1, time.Minute*5, func(ctx context.Context, notification *pgconn.Notification) error {
+		return telemetry.WithSpan(ctx, "listener.external_image_scan", func(ctx context.Context) error {
+			if err := HandleExternalImageScan(ctx, notification.Payload); err != nil {
+				logger.Error(fmt.Errorf("failed to handle external image scan notification: %w", err))
+				return fmt.Errorf("failed to handle external image scan notification: %w", err)
+			}
+			return nil
+		})
 	})
 }
 

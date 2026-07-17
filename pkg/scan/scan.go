@@ -16,6 +16,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/security"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
+	"github.com/securebuildhq/securebuild/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -214,11 +215,42 @@ func getRegistryHostname(imageURL string) (string, error) {
 	return parts[0], nil
 }
 
-// selectExternalImageDigestsToScan returns a prioritized list of external image digests to scan.
-// Priority:
-// 1) Digests that have SBOMs but no successful scans yet
-// 2) Digests ordered by the time of their last successful scan (oldest first)
-func selectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]string, error) {
+// scanTier defines a back-off tier for rescan scheduling.
+// Each tier has a last_submitted_at window and a rescan interval.
+// Tiers are queried in priority order; higher tiers are filled before
+// lower tiers contribute digests. Images submitted >90 days ago (tier 5)
+// are excluded from the scheduler entirely (on-demand only).
+//
+// submittedAfter is the minimum age (e.g. "7 days" means submitted more than 7 days ago).
+// submittedBefore is the maximum age (e.g. "0 days" means submitted less than 0 days ago = now).
+// The tier window is: ref - submittedBefore < last_submitted_at <= ref - submittedAfter
+// For active: submitted 0-7 days ago → last_submitted > ref-7d AND last_submitted <= ref-0d
+type scanTier struct {
+	name            string
+	submittedAfter  string // minimum age: last_submitted_at > ref - interval
+	submittedBefore string // maximum age: last_submitted_at <= ref - interval
+	rescanInterval  string // rescan threshold: last_security_scanned_at < ref - interval
+}
+
+var scanTiers = []scanTier{
+	{name: "active", submittedAfter: "7 days", submittedBefore: "0 days", rescanInterval: "4 hours"},
+	{name: "recent", submittedAfter: "30 days", submittedBefore: "7 days", rescanInterval: "24 hours"},
+	{name: "stale", submittedAfter: "90 days", submittedBefore: "30 days", rescanInterval: "7 days"},
+}
+
+// SelectExternalImageDigestsToScan returns a prioritized list of external image digests to scan.
+//
+// Priority order:
+//  1. Never scanned: digests with SBOMs but no scans yet
+//  2. Active tier:  last_submitted < 7 days,    rescan if older than 4 hours
+//  3. Recent tier:  last_submitted 7-30 days,   rescan if older than 24 hours
+//  4. Stale tier:   last_submitted 30-90 days,  rescan if older than 7 days
+//  5. Excluded:     last_submitted > 90 days    — not scanned by scheduler
+//
+// Each tier uses ORDER BY random() for fair distribution within the tier.
+// After each query, remaining capacity is evaluated; if 0, lower tiers are skipped.
+// A seen map prevents duplicate digests across tiers.
+func SelectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]string, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -226,53 +258,68 @@ func selectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 		maxToProcess = 25
 	}
 
+	referenceTime := util.GetNowFunc(ctx)()
+
 	selectedDigests := make([]string, 0, maxToProcess)
 	seen := map[string]struct{}{}
 
-	// 1) Digests with SBOMs but no scans yet (based on last_security_scanned_at)
+	// Tier 1: Digests with SBOMs but no scans yet (first scan, highest priority)
 	rows, err := conn.Query(ctx, `
-		SELECT s.digest, MIN(s.created_at) AS first_sbom_at
+		SELECT s.digest
 		FROM external_image_sbom s
+		WHERE s.last_security_scanned_at IS NULL
 		GROUP BY s.digest
-		HAVING MIN(s.last_security_scanned_at) IS NULL
-		ORDER BY first_sbom_at ASC
+		ORDER BY random()
 		LIMIT $1
 	`, maxToProcess)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query digests missing scans: %w", err)
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var digest string
-		var firstSBOMAt time.Time
-		if err := rows.Scan(&digest, &firstSBOMAt); err != nil {
+		if err := rows.Scan(&digest); err != nil {
 			logger.Warn("failed to scan row for missing-scan digest", zap.Error(err))
 			continue
 		}
 		selectedDigests = append(selectedDigests, digest)
 		seen[digest] = struct{}{}
 	}
+	rows.Close()
 
 	remaining := maxToProcess - len(selectedDigests)
-	if remaining > 0 {
-		// 2) Digests with scans, order by oldest last scan using last_security_scanned_at on SBOMs
-		rows2, err := conn.Query(ctx, `
-			SELECT digest, MIN(last_security_scanned_at) AS last_security_scanned_at
-			FROM external_image_sbom
-			WHERE last_security_scanned_at IS NOT NULL AND last_security_scanned_at < now() - interval '4 hours'
-			GROUP BY digest
-			ORDER BY last_security_scanned_at ASC
-			LIMIT $1
-		`, remaining)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query digests by last scan time: %w", err)
+
+	// Tiers 2-4: Back-off tiers based on last_submitted_at
+	for _, tier := range scanTiers {
+		if remaining <= 0 {
+			break
 		}
-		defer rows2.Close()
-		for rows2.Next() {
+
+		query := fmt.Sprintf(`
+			WITH tier_tags AS (
+				SELECT digest
+				FROM external_image_tag
+				WHERE last_submitted_at > $2::timestamptz - interval '%s'
+				  AND last_submitted_at <= $2::timestamptz - interval '%s'
+				GROUP BY digest
+			)
+			SELECT s.digest
+			FROM external_image_sbom s
+			JOIN tier_tags t ON t.digest = s.digest
+			WHERE s.last_security_scanned_at IS NOT NULL
+			  AND s.last_security_scanned_at < $2::timestamptz - interval '%s'
+			GROUP BY s.digest
+			ORDER BY random()
+			LIMIT $1
+		`, tier.submittedAfter, tier.submittedBefore, tier.rescanInterval)
+
+		rows, err := conn.Query(ctx, query, remaining, referenceTime)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query %s tier digests: %w", tier.name, err)
+		}
+		for rows.Next() {
 			var digest string
-			var lastScannedAt time.Time
-			if err := rows2.Scan(&digest, &lastScannedAt); err != nil {
-				logger.Warn("failed to scan row for last-scanned digest", zap.Error(err))
+			if err := rows.Scan(&digest); err != nil {
+				logger.Warn("failed to scan row for tier digest", zap.String("tier", tier.name), zap.Error(err))
 				continue
 			}
 			if _, ok := seen[digest]; ok {
@@ -280,30 +327,36 @@ func selectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 			}
 			selectedDigests = append(selectedDigests, digest)
 			seen[digest] = struct{}{}
+			remaining--
 		}
+		rows.Close()
 	}
 
 	return selectedDigests, nil
 }
 
-// updateLastSecurityScannedAt updates the last_security_scanned_at timestamp for all SBOMs of a digest.
-func updateLastSecurityScannedAt(ctx context.Context, digest string, t time.Time) error {
+// UpdateLastSecurityScanned updates the last_security_scanned_at timestamp
+// for the specified architectures of a digest. If archs is empty, no update
+// is performed.
+func UpdateLastSecurityScanned(ctx context.Context, digest string, archs []string, t time.Time) error {
+	if len(archs) == 0 {
+		return nil
+	}
+
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	if _, err := conn.Exec(ctx, `UPDATE external_image_sbom SET last_security_scanned_at = $2 WHERE digest = $1`, digest, t); err != nil {
+	if _, err := conn.Exec(ctx, `UPDATE external_image_sbom SET last_security_scanned_at = $3 WHERE digest = $1 AND arch = ANY($2)`, digest, archs, t); err != nil {
 		return err
 	}
 	return nil
 }
 
 // processExternalImageScans selects external image SBOMs to scan and processes them.
-// Priority:
-// 1) Digests that have SBOMs but no successful scans yet
-// 2) Digests ordered by the time of their last successful scan (oldest first)
+// Selection uses tiered back-off based on last_submitted_at (see SelectExternalImageDigestsToScan).
 // returns true if there are no more digests to scan
 func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, error) {
-	selectedDigests, err := selectExternalImageDigestsToScan(ctx, maxToProcess)
+	selectedDigests, err := SelectExternalImageDigestsToScan(ctx, maxToProcess)
 	if err != nil {
 		return false, err
 	}
@@ -338,11 +391,19 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 				zap.String("digest", digest),
 				zap.Error(err))
 
-			// Update last_scanned_at on failure to avoid hot-loop retries
-			if execErr := updateLastSecurityScannedAt(ctx, digest, time.Now().UTC()); execErr != nil {
+			// Update last_security_scanned_at for arches that were scanned (scanResults
+			// keys) to prevent hot-loop retries. When ScanExternalImage returns an error,
+			// scanResults is empty, so this is a no-op and all arches remain eligible
+			// for retry — the scheduler's MaxImagesPerCycle limit and cycle interval
+			// throttle retries naturally.
+			scannedArchs := make([]string, 0, len(scanResults))
+			for arch := range scanResults {
+				scannedArchs = append(scannedArchs, arch)
+			}
+			if err := UpdateLastSecurityScanned(ctx, digest, scannedArchs, time.Now().UTC()); err != nil {
 				logger.Warn("failed to update last_security_scanned_at after scan failure",
 					zap.String("digest", digest),
-					zap.Error(execErr))
+					zap.Error(err))
 			}
 
 			// Record failure for each architecture from the SBOMs
@@ -384,6 +445,7 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 			}
 		}
 
+		successArchs := make([]string, 0, len(scanResults))
 		for arch, scanResult := range scanResults {
 			parsedResults, err := image.ParseScanResultDetails(scanResult)
 			if err != nil {
@@ -431,6 +493,7 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 				recordArchFailure(arch, fmt.Sprintf("scan completed but failed to save results: %v", err))
 				continue
 			}
+			successArchs = append(successArchs, arch)
 		}
 
 		// Check for architectures in stored SBOMs that didn't get scan results
@@ -448,13 +511,83 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 			}
 		}
 
-		// Mark SBOMs for this digest as scanned now (digest-level timestamp)
-		if err := updateLastSecurityScannedAt(ctx, digest, time.Now().UTC()); err != nil {
-			logger.Warn("failed to update last_security_scanned_at for digest",
+		// Update last_security_scanned_at for architectures whose results were
+		// successfully stored. scanResults keys are the arches that ScanExternalImage
+		// scanned successfully; successArchs are the subset that were also stored.
+		if err := UpdateLastSecurityScanned(ctx, digest, successArchs, time.Now().UTC()); err != nil {
+			logger.Warn("failed to update last_security_scanned_at",
 				zap.String("digest", digest),
 				zap.Error(err))
 		}
 	}
 
 	return false, nil
+}
+
+// ReportScanMetrics sends gauge metrics for the scan backlog and running scans.
+//
+// For each tier (including never-scanned), it counts digests that have not been
+// scanned within their respective rescan interval — i.e., digests that are
+// eligible for scanning right now. It also counts how many scans are currently
+// in the 'running' status.
+//
+// Gauges sent:
+//   - securebuild.external_image.scan.backlog  (tag: tier=<never_scanned|active|recent|stale>)
+//   - securebuild.external_image.scan.running
+func ReportScanMetrics(ctx context.Context) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	referenceTime := util.GetNowFunc(ctx)()
+
+	// Never scanned: digests with SBOMs where last_security_scanned_at IS NULL
+	var neverScannedCount int
+	if err := conn.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT s.digest)
+		FROM external_image_sbom s
+		WHERE s.last_security_scanned_at IS NULL
+	`).Scan(&neverScannedCount); err != nil {
+		logger.Warn("failed to count never-scanned digests", zap.Error(err))
+	} else {
+		telemetry.Gauge(telemetry.MetricExternalImageScanBacklog, float64(neverScannedCount),
+			[]string{telemetry.TagScanTier + ":never_scanned"})
+	}
+
+	// Per-tier backlog: digests whose last_security_scanned_at is older than
+	// the tier's rescan interval, within the tier's last_submitted_at window.
+	for _, tier := range scanTiers {
+		var count int
+		query := fmt.Sprintf(`
+			WITH tier_tags AS (
+				SELECT digest
+				FROM external_image_tag
+				WHERE last_submitted_at > $1::timestamptz - interval '%s'
+				  AND last_submitted_at <= $1::timestamptz - interval '%s'
+				GROUP BY digest
+			)
+			SELECT COUNT(DISTINCT s.digest)
+			FROM external_image_sbom s
+			JOIN tier_tags t ON t.digest = s.digest
+			WHERE s.last_security_scanned_at IS NOT NULL
+			  AND s.last_security_scanned_at < $1::timestamptz - interval '%s'
+		`, tier.submittedAfter, tier.submittedBefore, tier.rescanInterval)
+
+		if err := conn.QueryRow(ctx, query, referenceTime).Scan(&count); err != nil {
+			logger.Warn("failed to count tier backlog", zap.String("tier", tier.name), zap.Error(err))
+			continue
+		}
+
+		telemetry.Gauge(telemetry.MetricExternalImageScanBacklog, float64(count),
+			[]string{telemetry.TagScanTier + ":" + tier.name})
+	}
+
+	// Running scans: count of external_image_scan rows with status = 'running'
+	var runningCount int
+	if err := conn.QueryRow(ctx, `
+		SELECT COUNT(*) FROM external_image_scan WHERE status = 'running'
+	`).Scan(&runningCount); err != nil {
+		logger.Warn("failed to count running scans", zap.Error(err))
+	} else {
+		telemetry.Gauge(telemetry.MetricExternalImageScansRunning, float64(runningCount), nil)
+	}
 }

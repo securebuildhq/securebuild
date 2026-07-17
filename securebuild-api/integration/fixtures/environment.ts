@@ -12,6 +12,7 @@ import { createTestServiceAccount } from './auth';
 import { setupTestRegistry, teardownTestRegistry, TestRegistry } from './registry';
 import { startTestServer, TestServer } from './server';
 import { HttpClient } from './http-client';
+import { Pool } from 'pg';
 
 // Seeded "existing" image used for read endpoint validation.
 export const SEEDED_EXISTING_IMAGE = 'test-registry.example.com/test-org/test-image:latest';
@@ -29,6 +30,8 @@ export interface TestEnvironment {
   createImage: string;
   existingImage: string;
   existingDigest: string;
+  dbPool: Pool;
+  connectionString: string;
   teardown: () => Promise<void>;
 }
 
@@ -67,6 +70,8 @@ export async function setupTestEnvironment(seedDataDir: string): Promise<TestEnv
     createImage: registry.imageUrl,
     existingImage: SEEDED_EXISTING_IMAGE,
     existingDigest: SEEDED_EXISTING_DIGEST,
+    dbPool: testDB.pool,
+    connectionString: testDB.connectionString,
     teardown,
   };
 }
