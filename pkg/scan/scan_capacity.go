@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,6 +40,12 @@ const (
 	// time to start up and begin processing.
 	ScanStartupGracePeriod = 60 * time.Second
 )
+
+// ErrNoBuilderAvailable is returned by SelectBuilderForScan when all running
+// builders are at capacity. Callers should check for this with errors.Is and
+// handle it gracefully (e.g. return nil from the handler so the scheduler
+// re-enqueues on the next cycle).
+var ErrNoBuilderAvailable = errors.New("no builder available for scan")
 
 // ScanMetadata is the JSON metadata file written to each scan directory on the
 // builder. It allows the poller to discover scans and know which DB rows to update.
@@ -381,7 +388,7 @@ func SelectBuilderForScan(ctx context.Context, cache *ScanCapacityCache, digest 
 		}
 	}
 
-	return buildertypes.BuilderVM{}, fmt.Errorf("no builder available for scan (all at capacity)")
+	return buildertypes.BuilderVM{}, ErrNoBuilderAvailable
 }
 
 // GetRunningBuilders returns all running builder VMs from the machine pool,

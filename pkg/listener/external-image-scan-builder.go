@@ -3,6 +3,7 @@ package listener
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -132,7 +133,8 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 	}
 
 	// Atomically claim the scan: set status to "running" for archs that are
-	// still "queued". If 0 rows are updated, another handler already claimed it.
+	// not already running. If 0 rows are updated, another handler already
+	// claimed it.
 	claimed, claimErr := claimScanForDispatch(ctx, p.Digest, archsToScan)
 	if claimErr != nil {
 		// DB error during claim — return error so the listener retries.
@@ -145,20 +147,28 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 	}
 
 	// If dispatch fails after the claim, revert the scan status to "queued"
-	// so the listener retry can re-dispatch. Otherwise the scan would stay
-	// "running" forever with no builder work directory for the poller to find.
+	// so the scheduler can re-enqueue on the next cycle. A "no builder
+	// available" failure is not an error — it's a normal capacity condition
+	// that happens when all builders are full. We return nil so the message
+	// is cleanly completed (not retried by the listener) and the scheduler
+	// re-enqueues when capacity frees up.
 	dispatchErr := dispatchScanToBuilder(ctx, cache, p.Digest, sbomByArch, archsToScan)
 	if dispatchErr != nil {
 		revertScanToQueued(ctx, p.Digest, archsToScan)
+		if errors.Is(dispatchErr, scan.ErrNoBuilderAvailable) {
+			logger.Info("no builder available for scan, will retry on next scheduler cycle",
+				zap.String("digest", p.Digest))
+			return nil
+		}
 		return dispatchErr
 	}
 
 	return nil
 }
 
-// dispatchScanToBuilder handles the actual builder selection, file copy, and
-// grype launch. It reserves a capacity slot atomically and releases it if
-// any step fails before the scan is fully launched.
+// dispatchScanToBuilder handles builder selection, file copy, and grype launch.
+// It reserves a capacity slot atomically and releases it if any step fails
+// before the scan is fully launched.
 //
 // The dispatch is split into two phases:
 //  1. Prepare all files (dirs, scan.json, sbom.json per arch) — if any step
@@ -169,7 +179,7 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, digest string, sbomByArch map[string]string, archsToScan []string) error {
 	builderVM, err := scan.SelectBuilderForScan(ctx, cache, digest)
 	if err != nil {
-		return fmt.Errorf("no builder available for scan: %w", err)
+		return fmt.Errorf("failed to select builder for scan: %w", err)
 	}
 
 	// SelectBuilderForScan already reserved a capacity slot and added a
