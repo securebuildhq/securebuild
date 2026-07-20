@@ -381,11 +381,11 @@ func UpdateLastSecurityScanned(ctx context.Context, digest string, archs []strin
 // them as external_image_scan work items for builder-based dispatch.
 // Selection uses tiered back-off based on last_submitted_at (see SelectExternalImageDigestsToScan).
 // Scheduler backpressure: only enqueues if the total in-memory scan count is below
-// PoolSize * MaxScansPerBuilder.
+// PoolSize * 2 * MaxScansPerBuilder (×2 for the two architecture pools).
 // returns true if there are no more digests to scan
 func processExternalImageScans(ctx context.Context, maxToProcess int, cache *ScanCapacityCache) (bool, error) {
 	if cache != nil {
-		maxConcurrent := param.GetParam(ctx).PoolSize * param.GetParam(ctx).MaxScansPerBuilder
+		maxConcurrent := param.GetParam(ctx).PoolSize * 2 * param.GetParam(ctx).MaxScansPerBuilder
 		if cache.GetTotalScanCount() >= maxConcurrent {
 			return false, nil
 		}
