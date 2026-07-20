@@ -238,6 +238,13 @@ var scanTiers = []scanTier{
 	{name: "stale", submittedAfter: "90 days", submittedBefore: "30 days", rescanInterval: "7 days"},
 }
 
+// ScanStalenessThreshold is how old a 'queued' or 'running' scan row must be
+// before the scheduler considers it stale and re-selects the digest. This
+// handles rows orphaned by lost queue messages, worker crashes, or builder
+// disappearances. Must be longer than ScanTimeout (10 min) + poller interval
+// (10 s) to avoid re-enqueueing scans that are still legitimately in flight.
+const ScanStalenessThreshold = 1 * time.Hour
+
 // SelectExternalImageDigestsToScan returns a prioritized list of external image digests to scan.
 //
 // Priority order:
@@ -263,11 +270,23 @@ func SelectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 	selectedDigests := make([]string, 0, maxToProcess)
 	seen := map[string]struct{}{}
 
-	// Tier 1: Digests with SBOMs but no scans yet (first scan, highest priority)
+	// Tier 1: Digests with SBOMs but no scans yet (first scan, highest priority).
+	// Exclude digests that have a recent scan in 'running' or 'queued' status
+	// so the scheduler doesn't re-enqueue digests that are already in flight.
+	// Stale rows (older than ScanStalenessThreshold) are ignored so that
+	// orphaned queue messages or crashed workers don't permanently block a
+	// digest from being scanned.
+	staleThreshold := fmt.Sprintf("%d minutes", int(ScanStalenessThreshold.Minutes()))
 	rows, err := conn.Query(ctx, `
 		SELECT s.digest
 		FROM external_image_sbom s
 		WHERE s.last_security_scanned_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM external_image_scan sc
+		    WHERE sc.digest = s.digest
+		      AND sc.status IN ('running', 'queued')
+		      AND sc.scan_status_updated_at > NOW() - interval '`+staleThreshold+`'
+		  )
 		GROUP BY s.digest
 		ORDER BY random()
 		LIMIT $1
@@ -307,10 +326,16 @@ func SelectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 			JOIN tier_tags t ON t.digest = s.digest
 			WHERE s.last_security_scanned_at IS NOT NULL
 			  AND s.last_security_scanned_at < $2::timestamptz - interval '%s'
+			  AND NOT EXISTS (
+			    SELECT 1 FROM external_image_scan sc
+			    WHERE sc.digest = s.digest
+			      AND sc.status IN ('running', 'queued')
+			      AND sc.scan_status_updated_at > NOW() - interval '%s'
+			  )
 			GROUP BY s.digest
 			ORDER BY random()
 			LIMIT $1
-		`, tier.submittedAfter, tier.submittedBefore, tier.rescanInterval)
+		`, tier.submittedAfter, tier.submittedBefore, tier.rescanInterval, staleThreshold)
 
 		rows, err := conn.Query(ctx, query, remaining, referenceTime)
 		if err != nil {

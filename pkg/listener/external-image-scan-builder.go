@@ -383,15 +383,22 @@ func storeBuilderScanResult(ctx context.Context, digest, arch, scanResult string
 }
 
 // isScanAlreadyRunning checks if any external_image_scan row for the digest
-// has status 'running'. This prevents duplicate dispatch when the scheduler
-// enqueues multiple work items before the first handler sets the status.
+// has a recent 'running' status. This prevents duplicate dispatch when the
+// scheduler enqueues multiple work items before the first handler sets the
+// status. Stale 'running' rows (older than scan.ScanStalenessThreshold) are
+// ignored so that orphaned scans from crashed workers or disappeared builders
+// can be recovered by a new dispatch.
 func isScanAlreadyRunning(ctx context.Context, digest string) bool {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
+	staleThreshold := fmt.Sprintf("%d minutes", int(scan.ScanStalenessThreshold.Minutes()))
+
 	var count int
 	err := conn.QueryRow(ctx,
-		`SELECT COUNT(*) FROM external_image_scan WHERE digest = $1 AND status = 'running'`,
+		`SELECT COUNT(*) FROM external_image_scan
+		 WHERE digest = $1 AND status = 'running'
+		   AND scan_status_updated_at > NOW() - interval '`+staleThreshold+`'`,
 		digest).Scan(&count)
 	if err != nil {
 		logger.Warn("failed to check if scan is already running, proceeding",
@@ -402,20 +409,41 @@ func isScanAlreadyRunning(ctx context.Context, digest string) bool {
 	return count > 0
 }
 
-// claimScanForDispatch atomically transitions scan rows from "queued" to
-// "running" for the given digest and architectures. Returns (true, nil) if at
-// least one row was claimed, (false, nil) if another handler already claimed
-// it, or (false, err) if the claim failed due to a database error. On DB
-// error, the caller returns the error so the listener retries the message
-// instead of dispatching without a durable claim.
+// claimScanForDispatch atomically transitions scan rows to "running" for the
+// given digest and architectures. This handles:
+//   - First scans: rows in "queued" status
+//   - Re-scans: rows in "succeeded" or "failed" status from a previous scan
+//   - Stale recovery: rows in "running" status older than ScanStalenessThreshold
+//     (orphaned by crashed workers or disappeared builders)
+//
+// Recent "running" rows are excluded so we don't double-dispatch a scan that's
+// genuinely in flight. The isScanAlreadyRunning check above provides a fast
+// path to discard duplicates before reaching this query.
+//
+// Previous scan results (parsed_results, raw_result, scan_completed_at) are
+// NOT cleared here. They remain in the row until the new scan completes and
+// overwrites them. If the dispatch fails and reverts to "queued", the prior
+// results are preserved so the API can still serve the last successful scan
+// while waiting for the retry.
+//
+// Returns (true, nil) if at least one row was claimed, (false, nil) if another
+// handler already claimed it, or (false, err) if the claim failed due to a
+// database error. On DB error, the caller returns the error so the listener
+// retries the message instead of dispatching without a durable claim.
 func claimScanForDispatch(ctx context.Context, digest string, archs []string) (bool, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
+	staleThreshold := fmt.Sprintf("%d minutes", int(scan.ScanStalenessThreshold.Minutes()))
+
 	tag, err := conn.Exec(ctx,
 		`UPDATE external_image_scan
-		 SET status = 'running', scan_status_updated_at = NOW(), scan_attempted_at = COALESCE(scan_attempted_at, NOW())
-		 WHERE digest = $1 AND arch = ANY($2::text[]) AND status = 'queued'`,
+		 SET status = 'running',
+		     scan_status_updated_at = NOW(),
+		     scan_status_message = NULL,
+		     scan_attempted_at = COALESCE(scan_attempted_at, NOW())
+		 WHERE digest = $1 AND arch = ANY($2::text[])
+		   AND (status != 'running' OR scan_status_updated_at <= NOW() - interval '`+staleThreshold+`')`,
 		digest, archs)
 	if err != nil {
 		return false, fmt.Errorf("failed to claim scan rows: %w", err)
