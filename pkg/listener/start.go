@@ -274,7 +274,10 @@ func StartExternalImageSbomListener(ctx context.Context, l *Listener) {
 }
 
 func StartExternalImageScanListener(ctx context.Context, l *Listener) {
-	maxWorkers := param.GetParam(ctx).PoolSize * param.GetParam(ctx).MaxScansPerBuilder
+	// PoolSize is the per-architecture pool size (e.g. 12 arm + 12 amd = 24
+	// total builders). Double it to account for both architectures so the
+	// listener worker count matches the actual builder capacity.
+	maxWorkers := param.GetParam(ctx).PoolSize * 2 * param.GetParam(ctx).MaxScansPerBuilder
 	if maxWorkers < 1 {
 		maxWorkers = 1
 	}
