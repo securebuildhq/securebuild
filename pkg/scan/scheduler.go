@@ -22,6 +22,12 @@ const (
 	// ExternalImageCheckInterval is how long the scheduler pauses if there are no external images to scan
 	ExternalImageCheckInterval = 15 * time.Second
 
+	// ExternalImageEnqueueInterval is how long the scheduler pauses after enqueuing
+	// scan work items, before the next selection cycle. This gives handlers time to
+	// claim the work items and transition scan status to "running", preventing the
+	// tight loop from re-enqueuing the same digests thousands of times.
+	ExternalImageEnqueueInterval = 5 * time.Second
+
 	// MaxImagesPerCycle limits how many images are processed in each scheduler cycle
 	MaxImagesPerCycle = 25
 
@@ -36,19 +42,36 @@ func GetRandomizedScanInterval() time.Duration {
 	return ScanInterval + time.Duration(randomMinutes)*time.Minute
 }
 
-func StartScheduler(ctx context.Context) error {
+func StartScheduler(ctx context.Context, cache *ScanCapacityCache) error {
 	logger.Info("Starting scan scheduler")
 
-	// Periodic metrics reporter for scan backlog and running scan counts
+	// Periodic metrics reporter for scan backlog, running scan counts,
+	// and scan capacity gauges. Also dumps the in-memory capacity cache
+	// to a temp file for debugging visibility.
 	go func() {
 		ticker := time.NewTicker(MetricsReportInterval)
 		defer ticker.Stop()
+		// Report immediately on startup so metrics are available without
+		// waiting for the first tick.
+		ReportScanMetrics(ctx)
+		if cache != nil {
+			cache.ReportCapacityMetrics(ctx)
+			if err := cache.DumpToFile(); err != nil {
+				logger.Warn("failed to dump scan capacity cache to file", zap.Error(err))
+			}
+		}
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				ReportScanMetrics(ctx)
+				if cache != nil {
+					cache.ReportCapacityMetrics(ctx)
+					if err := cache.DumpToFile(); err != nil {
+						logger.Warn("failed to dump scan capacity cache to file", zap.Error(err))
+					}
+				}
 			}
 		}
 	}()
@@ -68,16 +91,24 @@ func StartScheduler(ctx context.Context) error {
 	}()
 
 	for {
-		noImages, err := processExternalImageScans(ctx, MaxImagesPerCycle)
+		noImages, err := processExternalImageScans(ctx, MaxImagesPerCycle, cache)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to process external image scans: %w", err))
 		}
-		if noImages {
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(ExternalImageCheckInterval):
-			}
+
+		// Always pause between cycles. When images were enqueued, the sleep
+		// gives handlers time to claim the work items and transition scan
+		// status to "running" before the next selection cycle re-selects
+		// the same digests. Without this, the tight loop re-enqueues
+		// thousands of duplicate work items before any handler claims them.
+		wait := ExternalImageCheckInterval
+		if !noImages {
+			wait = ExternalImageEnqueueInterval
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(wait):
 		}
 	}
 }

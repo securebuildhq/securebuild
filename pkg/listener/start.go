@@ -274,9 +274,13 @@ func StartExternalImageSbomListener(ctx context.Context, l *Listener) {
 }
 
 func StartExternalImageScanListener(ctx context.Context, l *Listener) {
-	l.AddHandler(ctx, "external_image_scan", 1, time.Minute*5, func(ctx context.Context, notification *pgconn.Notification) error {
+	maxWorkers := param.GetParam(ctx).PoolSize * param.GetParam(ctx).MaxScansPerBuilder
+	if maxWorkers < 1 {
+		maxWorkers = 1
+	}
+	l.AddHandler(ctx, "external_image_scan", maxWorkers, time.Minute*5, func(ctx context.Context, notification *pgconn.Notification) error {
 		return telemetry.WithSpan(ctx, "listener.external_image_scan", func(ctx context.Context) error {
-			if err := HandleExternalImageScan(ctx, notification.Payload); err != nil {
+			if err := HandleExternalImageScanOnBuilder(ctx, notification.Payload); err != nil {
 				logger.Error(fmt.Errorf("failed to handle external image scan notification: %w", err))
 				return fmt.Errorf("failed to handle external image scan notification: %w", err)
 			}

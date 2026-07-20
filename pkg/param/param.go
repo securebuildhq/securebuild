@@ -127,6 +127,11 @@ type Param struct {
 	MaxParallelBuilds int        `yaml:"max_parallel_builds"`
 	StaticVMs         []StaticVM `yaml:"static_vms"`
 
+	// MaxScansPerBuilder is the maximum number of concurrent external image scans
+	// per builder VM. Scans are lightweight (grype matching against a local SBOM)
+	// so this can be higher than max_parallel_builds. Default: 3.
+	MaxScansPerBuilder int `yaml:"max_scans_per_builder"`
+
 	// Authentication configuration
 	AuthMethod        string `yaml:"auth_method"`
 	AdminUserEmail    string `yaml:"admin_user_email"`
@@ -292,6 +297,10 @@ func Init(source InitSource, overrides map[string]string) (context.Context, erro
 		logger.Warn("CMX backend limits MaxParallelBuilds to 1; overriding config",
 			zap.Int("configured", p.MaxParallelBuilds))
 		p.MaxParallelBuilds = 1
+	}
+
+	if p.MaxScansPerBuilder <= 0 {
+		p.MaxScansPerBuilder = 3
 	}
 
 	normalizePoolSizeForBackend(p)

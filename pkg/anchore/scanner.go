@@ -160,7 +160,7 @@ func (s *GrypeScanner) ScanSBOMForCVEs(ctx context.Context, sbomJSON string) (re
 	}()
 
 	// Parse the SBOM
-	sbomObj, err := s.ParseSBOM(sbomJSON)
+	sbomObj, err := ParseSBOM(sbomJSON)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse SBOM: %w", err)
 	}
@@ -267,8 +267,11 @@ func (s *GrypeScanner) ScanSBOMForCVEs(ctx context.Context, sbomJSON string) (re
 	return buf.String(), nil
 }
 
-// ParseSBOM parses an SBOM string (either Syft JSON or SPDX JSON) into an SBOM object
-func (s *GrypeScanner) ParseSBOM(sbomJSON string) (*sbom.SBOM, error) {
+// ParseSBOM parses an SBOM string (either Syft JSON or SPDX JSON) into an SBOM object.
+// This is a standalone function that does not require a GrypeScanner instance,
+// useful when only SBOM parsing is needed (e.g. for package fix-version updates)
+// without loading the vulnerability database.
+func ParseSBOM(sbomJSON string) (*sbom.SBOM, error) {
 	// Auto-detect format by examining the JSON structure
 	format, err := detectSBOMFormat(sbomJSON)
 	if err != nil {
