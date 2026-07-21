@@ -100,27 +100,22 @@ func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm 
 		return
 	}
 
-	// Reconcile cache with discovered scan dirs. If a scan dir is still
-	// running (not all archs done) but not tracked in the cache (e.g. it
-	// was missed during InitScanCapacityCache because the builder was
-	// unreachable at startup), add it so capacity tracking is accurate
-	// and missing-builder recovery can re-enqueue it if the VM disappears.
-	cachedDigests := make(map[string]bool)
-	for _, info := range cache.GetScansForBuilder(vm.ID) {
-		cachedDigests[info.Digest] = true
-	}
+	// Resync the cache for this builder with what's actually on the
+	// filesystem. This replaces all entries (including leaked placeholders
+	// and stale scans) with the current set of active scan dirs. Only
+	// scans that are still in progress (not all archs done) are counted
+	// toward capacity.
+	activeScans := make([]scan.ScanDirInfo, 0)
 	for _, sd := range scanDirs {
-		if sd.Metadata.Digest != "" && !sd.AllArchsDone && !cachedDigests[sd.Metadata.Digest] {
-			cache.AddScanWithCount(vm.ID, scan.ScanDirInfo{
+		if sd.Metadata.Digest != "" && !sd.AllArchsDone {
+			activeScans = append(activeScans, scan.ScanDirInfo{
 				Digest:    sd.Metadata.Digest,
 				WorkDir:   sd.WorkDir,
 				CreatedAt: sd.Metadata.CreatedAt,
 			})
-			logger.Info("added discovered scan to cache during poll",
-				zap.String("digest", sd.Metadata.Digest),
-				zap.String("machineID", vm.ID))
 		}
 	}
+	cache.SetBuilderScans(vm.ID, activeScans)
 
 	for _, sd := range scanDirs {
 		processScanDir(ctx, cache, vm, runner, sd)

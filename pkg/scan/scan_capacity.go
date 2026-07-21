@@ -95,35 +95,24 @@ func (c *ScanCapacityCache) setReady(ready bool) {
 	c.ready = ready
 }
 
-// AddScan updates the scan metadata for a builder. The capacity count was
-// already incremented by tryReserveSlot during SelectBuilderForScan, which
-// also added a placeholder entry to the scans map. This function fills in
-// the placeholder with the full scan dir info (workDir, createdAt). For
-// scans discovered during cache init (not via SelectBuilderForScan), use
-// AddScanWithCount which increments both.
-func (c *ScanCapacityCache) AddScan(machineID string, info ScanDirInfo) {
+// SetBuilderScans replaces all scan entries for a builder with the given
+// list. The count is set to the length of the list. Called by the poller
+// every 10s to resync the cache with what's actually on the builder
+// filesystem, eliminating leaked placeholders and stale entries.
+func (c *ScanCapacityCache) SetBuilderScans(machineID string, scans []ScanDirInfo) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for i, s := range c.scans[machineID] {
-		if s.Digest == info.Digest && s.WorkDir == "" {
-			c.scans[machineID][i] = info
-			return
-		}
+	if len(scans) == 0 {
+		delete(c.counts, machineID)
+		delete(c.scans, machineID)
+		return
 	}
-	c.scans[machineID] = append(c.scans[machineID], info)
+	c.scans[machineID] = scans
+	c.counts[machineID] = len(scans)
 }
 
-// AddScanWithCount records scan metadata AND increments the capacity count.
-// Used by InitScanCapacityCache for scans discovered on builder filesystems
-// during startup (not dispatched via SelectBuilderForScan).
-func (c *ScanCapacityCache) AddScanWithCount(machineID string, info ScanDirInfo) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.scans[machineID] = append(c.scans[machineID], info)
-	c.counts[machineID]++
-}
-
-// RemoveScan removes a scan for a builder by digest.
+// RemoveScan removes a scan for a builder by digest. Called by the poller
+// when a scan completes.
 func (c *ScanCapacityCache) RemoveScan(machineID, digest string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -189,12 +178,11 @@ func (c *ScanCapacityCache) GetBuilderIDs() []string {
 }
 
 // tryReserveSlot atomically checks whether a builder has capacity for one
-// more scan and, if so, increments the count and adds a placeholder scan
-// entry under the write lock. The placeholder prevents the poller's
-// reconciliation from double-counting the scan via AddScanWithCount during
-// the window between reservation and AddScan. Returns true if the slot was
-// reserved.
-func (c *ScanCapacityCache) tryReserveSlot(machineID string, hasBuildAssignment bool, maxScansPerBuilder int, digest string) bool {
+// more scan and, if so, increments the count under the write lock. Returns
+// true if the slot was reserved. The poller resyncs the cache every 10s, so
+// any leaked reservations (dispatch failure before scan files are written)
+// are automatically cleaned up on the next poll cycle.
+func (c *ScanCapacityCache) tryReserveSlot(machineID string, hasBuildAssignment bool, maxScansPerBuilder int) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -211,24 +199,17 @@ func (c *ScanCapacityCache) tryReserveSlot(machineID string, hasBuildAssignment 
 	}
 
 	c.counts[machineID] = current + 1
-	c.scans[machineID] = append(c.scans[machineID], ScanDirInfo{Digest: digest})
 	return true
 }
 
-// ReleaseScanSlot decrements the capacity count and removes the placeholder
-// scan entry for a builder. Used when a reservation was made but the scan
-// dispatch failed before the scan was fully set up.
-func (c *ScanCapacityCache) ReleaseScanSlot(machineID string, digest string) {
+// ReleaseScanSlot decrements the capacity count for a builder. Used when a
+// reservation was made but the scan dispatch failed before scan files were
+// written. The poller will correct the count on the next resync anyway, but
+// this avoids temporarily over-counting.
+func (c *ScanCapacityCache) ReleaseScanSlot(machineID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.counts[machineID]--
-	scans := c.scans[machineID]
-	for i, s := range scans {
-		if s.Digest == digest {
-			c.scans[machineID] = append(scans[:i], scans[i+1:]...)
-			break
-		}
-	}
 	if c.counts[machineID] <= 0 {
 		delete(c.counts, machineID)
 		if len(c.scans[machineID]) == 0 {
@@ -329,16 +310,18 @@ func InitScanCapacityCache(ctx context.Context) (*ScanCapacityCache, error) {
 			continue
 		}
 
+		activeScans := make([]ScanDirInfo, 0)
 		for _, s := range scans {
 			if s.AllArchsDone {
 				continue
 			}
-			cache.AddScanWithCount(b.BuilderVM.ID, ScanDirInfo{
+			activeScans = append(activeScans, ScanDirInfo{
 				Digest:    s.Metadata.Digest,
 				WorkDir:   s.WorkDir,
 				CreatedAt: s.Metadata.CreatedAt,
 			})
 		}
+		cache.SetBuilderScans(b.BuilderVM.ID, activeScans)
 	}
 
 	cache.setReady(true)
@@ -362,15 +345,13 @@ type builderForScan struct {
 //   - Idle builders (no machine_assignment rows): up to maxScansPerBuilder concurrent scans
 //   - Busy builders (has machine_assignment rows): at most 1 concurrent scan
 //
-// The reservation is atomic: the capacity count is incremented AND a
-// placeholder scan entry is added to the scans map under the cache write
-// lock before returning. This prevents concurrent handlers from all
-// selecting the same builder and exceeding MaxScansPerBuilder, and ensures
-// the poller's reconciliation can see the reserved digest without
-// double-counting it via AddScanWithCount.
-// If the caller fails to dispatch the scan, it must call ReleaseScanSlot
-// to undo the reservation.
-func SelectBuilderForScan(ctx context.Context, cache *ScanCapacityCache, digest string) (buildertypes.BuilderVM, error) {
+// The reservation is atomic: the capacity count is incremented under the
+// cache write lock before returning, preventing concurrent handlers from
+// all selecting the same builder and exceeding MaxScansPerBuilder.
+// The poller resyncs the cache from builder filesystems every 10s, so any
+// leaked reservations (dispatch failure before scan files are written) are
+// automatically corrected on the next poll cycle.
+func SelectBuilderForScan(ctx context.Context, cache *ScanCapacityCache) (buildertypes.BuilderVM, error) {
 	if cache == nil || !cache.IsReady() {
 		return buildertypes.BuilderVM{}, fmt.Errorf("scan capacity cache is not ready")
 	}
@@ -383,7 +364,7 @@ func SelectBuilderForScan(ctx context.Context, cache *ScanCapacityCache, digest 
 	}
 
 	for _, b := range builders {
-		if cache.tryReserveSlot(b.ID, b.HasBuildAssignment, maxScansPerBuilder, digest) {
+		if cache.tryReserveSlot(b.ID, b.HasBuildAssignment, maxScansPerBuilder) {
 			return b.BuilderVM, nil
 		}
 	}

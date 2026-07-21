@@ -167,18 +167,19 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 //     grype processes are killed before returning, preventing orphaned
 //     processes that would race with a retry on a different builder.
 func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, digest string, sbomByArch map[string]string, archsToScan []string) error {
-	builderVM, err := scan.SelectBuilderForScan(ctx, cache, digest)
+	builderVM, err := scan.SelectBuilderForScan(ctx, cache)
 	if err != nil {
 		return fmt.Errorf("failed to select builder for scan: %w", err)
 	}
 
-	// SelectBuilderForScan already reserved a capacity slot and added a
-	// placeholder to the scans map. If we fail before calling AddScan to
-	// fill in the full metadata, release the slot and remove the placeholder.
+	// SelectBuilderForScan reserved a capacity slot. If we fail before the
+	// scan files are written to the builder, release the slot. The poller
+	// will resync the cache on the next cycle anyway, but this avoids
+	// temporarily over-counting.
 	slotReserved := true
 	defer func() {
 		if slotReserved {
-			cache.ReleaseScanSlot(builderVM.ID, digest)
+			cache.ReleaseScanSlot(builderVM.ID)
 		}
 	}()
 
@@ -235,14 +236,9 @@ func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, d
 			zap.String("workDir", workDir))
 	}
 
-	// Scan successfully launched. AddScan records the scan metadata and
-	// keeps the reserved slot. The deferred ReleaseScanSlot is prevented
-	// by setting slotReserved to false.
-	cache.AddScan(builderVM.ID, scan.ScanDirInfo{
-		Digest:    digest,
-		WorkDir:   workDir,
-		CreatedAt: metadata.CreatedAt,
-	})
+	// Scan successfully launched. The poller will discover the scan dir
+	// on the next cycle and add it to the cache via SetBuilderScans. Keep
+	// the reserved slot counted until then.
 	slotReserved = false
 
 	logger.Info("dispatched external image scan to builder",
