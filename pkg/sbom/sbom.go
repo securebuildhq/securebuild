@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -84,14 +85,16 @@ func FetchSBOM(ctx context.Context, registry string, imageName string, digest st
 	for _, platform := range architectures {
 		sbom, imageSize, imageDigest, err := generateSBOMWithSyft(ctx, registry, imageName, digest, auth, isAnonDockerHub, platform)
 		if err != nil {
-			// Only log errors that are not platform mismatches
-			if !isPlatformMismatchError(err) {
-				logger.Warn("failed to generate SBOM with syft",
+			if strings.Contains(err.Error(), "does not match user specified platform") {
+				logger.Info("no SBOM for architecture, skipping",
 					zap.String("imageName", imageName),
 					zap.String("digest", digest),
-					zap.String("platform", platform), zap.Error(err))
+					zap.String("platform", platform))
+				continue
 			}
-			continue
+			logger.Errorf("failed to generate SBOM, aborting: %s (imageName: %s, digest: %s, platform: %s)",
+				err, imageName, digest, platform)
+			return nil, err
 		}
 
 		if sbom != "" {
@@ -116,7 +119,7 @@ func FetchSBOM(ctx context.Context, registry string, imageName string, digest st
 	return results, nil
 }
 
-func generateSBOMWithSyft(ctx context.Context, registry string, imageName string, digest string, auth authn.Authenticator, isAnonDockerHub bool, platform string) (string, int64, string, error) {
+func generateSBOMWithSyft(ctx context.Context, registry string, imageName string, digest string, auth authn.Authenticator, isAnonDockerHub bool, platform string) (sbom string, imageSizeBytes int64, imageDigest string, err error) {
 	logger.Info("generating SBOM with syft", zap.String("imageRef", registry+"/"+imageName+"@"+digest), zap.String("platform", platform))
 
 	// Create a timeout context for syft execution (syft can take a while)
@@ -238,25 +241,17 @@ func generateSBOMWithSyft(ctx context.Context, registry string, imageName string
 	cmd.Env = env
 
 	// Capture both stdout and stderr
-	var stdout, stderr bytes.Buffer
+	var stdout, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stderr = &stderrBuf
 
 	logger.Debug("executing syft command", zap.String("command", cmd.String()))
 
 	// Execute the command
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
-		stderrStr := stderr.String()
-		stdoutStr := stdout.String()
-		if !isPlatformMismatchString(stderrStr) {
-			logger.Warn("syft generation failed for image",
-				zap.String("imageName", imageName),
-				zap.String("digest", digest),
-				zap.Error(err),
-				zap.String("stderr", stderrStr),
-				zap.String("stdout", stdoutStr),
-			)
+		if stderrStr := stderrBuf.String(); stderrStr != "" {
+			return "", 0, "", fmt.Errorf("syft generation failed for image %s@%s: %w", imageName, digest, errors.New(stderrStr))
 		}
 		return "", 0, "", fmt.Errorf("syft generation failed for image %s@%s: %w", imageName, digest, err)
 	}
@@ -264,30 +259,18 @@ func generateSBOMWithSyft(ctx context.Context, registry string, imageName string
 	// Read SBOM from spdx-json output file
 	spdxBytes, readErr := os.ReadFile(spdxPath)
 	if readErr != nil {
-		imageRef := registry + "/" + imageName + "@" + digest
-		logger.Warn("failed to read spdx-json output from syft", zap.String("imageRef", imageRef), zap.Error(readErr))
 		return "", 0, "", fmt.Errorf("failed to read spdx-json output: %w", readErr)
 	}
 
 	// Validate that it's valid JSON
 	var sbomData interface{}
 	if err := json.Unmarshal(spdxBytes, &sbomData); err != nil {
-		logger.Warn("syft output is not valid JSON", zap.Error(err))
 		return "", 0, "", fmt.Errorf("syft produced invalid JSON: %w", err)
 	}
 
-	imageRef := registry + "/" + imageName + "@" + digest
-	logger.Info("successfully generated SBOM with syft",
-		zap.String("imageRef", imageRef),
-		zap.Int("size", len(spdxBytes)))
-
 	// Read syft-json output to extract image size and image digest
-	var imageSizeBytes int64
-	var imageDigest string
 	syftBytes, readSyftErr := os.ReadFile(syftPath)
-	if readSyftErr != nil {
-		logger.Warn("failed to read syft-json output from syft", zap.Error(readSyftErr))
-	} else {
+	if readSyftErr == nil {
 		type syftJSONMetadata struct {
 			Source struct {
 				Metadata struct {
@@ -297,16 +280,9 @@ func generateSBOMWithSyft(ctx context.Context, registry string, imageName string
 			} `json:"source"`
 		}
 		var sj syftJSONMetadata
-		if err := json.Unmarshal(syftBytes, &sj); err != nil {
-			logger.Warn("failed to parse syft JSON for image size", zap.Error(err))
-		} else {
+		if err := json.Unmarshal(syftBytes, &sj); err == nil {
 			imageSizeBytes = sj.Source.Metadata.ImageSize
 			imageDigest = sj.Source.Metadata.ManifestDigest
-			logger.Info("extracted metadata from syft output",
-				zap.String("imageRef", registry+"/"+imageName+"@"+digest),
-				zap.String("platform", platform),
-				zap.Int64("imageSizeBytes", imageSizeBytes),
-				zap.String("imageDigest", imageDigest))
 		}
 	}
 
@@ -333,20 +309,6 @@ func normalizeRegistryNameForDockerConfig(registry string) string {
 	}
 
 	return registry
-}
-
-// isPlatformMismatchError checks if an error is due to platform mismatch
-func isPlatformMismatchError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	errStr := err.Error()
-	return isPlatformMismatchString(errStr)
-}
-
-func isPlatformMismatchString(errStr string) bool {
-	return strings.Contains(errStr, "does not match user specified platform")
 }
 
 // getDockerHubAuth gets an authentication token from Docker Hub

@@ -113,19 +113,9 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 	for _, arch := range expectedArchs {
 		if _, hasSBOM := sbomByArch[arch]; hasSBOM {
 			archsToScan = append(archsToScan, arch)
-		} else {
-			if err := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
-				Digest:            p.Digest,
-				Arch:              arch,
-				Status:            externalimage.ScanStatusFailed,
-				ScanStatusMessage: "no SBOM for this architecture",
-			}); err != nil {
-				logger.Warn("failed to set scan status to failed for missing arch SBOM",
-					zap.String("digest", p.Digest),
-					zap.String("arch", arch),
-					zap.Error(err))
-			}
 		}
+		// Archs without SBOMs are silently skipped — images are not required
+		// to have both architectures. No scan status row is written for them.
 	}
 
 	if len(archsToScan) == 0 {
