@@ -144,7 +144,13 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 	// re-enqueues when capacity frees up.
 	dispatchErr := dispatchScanToBuilder(ctx, cache, p.Digest, sbomByArch, archsToScan)
 	if dispatchErr != nil {
-		revertScanToQueued(ctx, p.Digest, archsToScan)
+		if revertErr := revertScanToQueued(ctx, p.Digest, archsToScan); revertErr != nil {
+			// Revert failed — return the revert error so the listener retries
+			// the message instead of acking it. Without this, the scan row
+			// stays "running" with no builder work directory until the 1-hour
+			// staleness window expires.
+			return fmt.Errorf("dispatch failed (%v) and revert also failed: %w", dispatchErr, revertErr)
+		}
 		if errors.Is(dispatchErr, scan.ErrNoBuilderAvailable) {
 			logger.Info("no builder available for scan, will retry on next scheduler cycle",
 				zap.String("digest", p.Digest))
@@ -451,7 +457,7 @@ func claimScanForDispatch(ctx context.Context, digest string, archs []string) (b
 // after a failed dispatch. This allows the listener retry to re-dispatch
 // the scan to a different builder. Without this, the scan would stay
 // "running" forever with no builder work directory for the poller to find.
-func revertScanToQueued(ctx context.Context, digest string, archs []string) {
+func revertScanToQueued(ctx context.Context, digest string, archs []string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -461,8 +467,7 @@ func revertScanToQueued(ctx context.Context, digest string, archs []string) {
 		 WHERE digest = $1 AND arch = ANY($2::text[]) AND status = 'running'`,
 		digest, archs)
 	if err != nil {
-		logger.Warn("failed to revert scan status to queued after dispatch failure",
-			zap.String("digest", digest),
-			zap.Error(err))
+		return fmt.Errorf("failed to revert scan status to queued: %w", err)
 	}
+	return nil
 }

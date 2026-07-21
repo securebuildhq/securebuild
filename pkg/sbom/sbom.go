@@ -92,9 +92,7 @@ func FetchSBOM(ctx context.Context, registry string, imageName string, digest st
 					zap.String("platform", platform))
 				continue
 			}
-			logger.Errorf("failed to generate SBOM, aborting: %s (imageName: %s, digest: %s, platform: %s)",
-				err, imageName, digest, platform)
-			return nil, err
+			return nil, fmt.Errorf("failed to generate SBOM for %s@%s platform %s: %w", imageName, digest, platform, err)
 		}
 
 		if sbom != "" {
