@@ -271,11 +271,15 @@ func SelectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 	seen := map[string]struct{}{}
 
 	// Tier 1: Digests with SBOMs but no scans yet (first scan, highest priority).
-	// Exclude digests that have a recent scan in 'running' or 'queued' status
-	// so the scheduler doesn't re-enqueue digests that are already in flight.
-	// Stale rows (older than ScanStalenessThreshold) are ignored so that
-	// orphaned queue messages or crashed workers don't permanently block a
-	// digest from being scanned.
+	// Exclude digests that have a recent scan in 'running' status so the
+	// scheduler doesn't re-enqueue scans that are already in flight.
+	// 'queued' rows are NOT excluded — when no builder is available, the
+	// handler discards the message without claiming, leaving the row as
+	// 'queued'. The scheduler must be able to re-select these so the scan
+	// is retried when a builder frees up. Duplicate work items are handled
+	// by claimScanForDispatch (first handler wins) and isScanAlreadyRunning.
+	// Stale 'running' rows (older than ScanStalenessThreshold) are ignored
+	// so that orphaned scans from crashed workers can be recovered.
 	staleThreshold := fmt.Sprintf("%d minutes", int(ScanStalenessThreshold.Minutes()))
 	rows, err := conn.Query(ctx, `
 		SELECT s.digest
@@ -284,7 +288,7 @@ func SelectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 		  AND NOT EXISTS (
 		    SELECT 1 FROM external_image_scan sc
 		    WHERE sc.digest = s.digest
-		      AND sc.status IN ('running', 'queued')
+		      AND sc.status = 'running'
 		      AND sc.scan_status_updated_at > NOW() - interval '`+staleThreshold+`'
 		  )
 		GROUP BY s.digest
@@ -329,7 +333,7 @@ func SelectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 			  AND NOT EXISTS (
 			    SELECT 1 FROM external_image_scan sc
 			    WHERE sc.digest = s.digest
-			      AND sc.status IN ('running', 'queued')
+			      AND sc.status = 'running'
 			      AND sc.scan_status_updated_at > NOW() - interval '%s'
 			  )
 			GROUP BY s.digest
@@ -386,7 +390,11 @@ func UpdateLastSecurityScanned(ctx context.Context, digest string, archs []strin
 func processExternalImageScans(ctx context.Context, maxToProcess int, cache *ScanCapacityCache) (bool, error) {
 	if cache != nil {
 		maxConcurrent := param.GetParam(ctx).PoolSize * 2 * param.GetParam(ctx).MaxScansPerBuilder
-		if cache.GetTotalScanCount() >= maxConcurrent {
+		activeScans := cache.GetTotalScanCount()
+		if activeScans >= maxConcurrent {
+			logger.Info("scan scheduler at capacity, pausing enqueue",
+				zap.Int("active_scans", activeScans),
+				zap.Int("max_concurrent", maxConcurrent))
 			return false, nil
 		}
 	}

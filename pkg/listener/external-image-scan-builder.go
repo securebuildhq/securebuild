@@ -3,6 +3,7 @@ package listener
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -112,19 +113,9 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 	for _, arch := range expectedArchs {
 		if _, hasSBOM := sbomByArch[arch]; hasSBOM {
 			archsToScan = append(archsToScan, arch)
-		} else {
-			if err := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
-				Digest:            p.Digest,
-				Arch:              arch,
-				Status:            externalimage.ScanStatusFailed,
-				ScanStatusMessage: "no SBOM for this architecture",
-			}); err != nil {
-				logger.Warn("failed to set scan status to failed for missing arch SBOM",
-					zap.String("digest", p.Digest),
-					zap.String("arch", arch),
-					zap.Error(err))
-			}
 		}
+		// Archs without SBOMs are silently skipped — images are not required
+		// to have both architectures. No scan status row is written for them.
 	}
 
 	if len(archsToScan) == 0 {
@@ -132,7 +123,8 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 	}
 
 	// Atomically claim the scan: set status to "running" for archs that are
-	// still "queued". If 0 rows are updated, another handler already claimed it.
+	// not already running. If 0 rows are updated, another handler already
+	// claimed it.
 	claimed, claimErr := claimScanForDispatch(ctx, p.Digest, archsToScan)
 	if claimErr != nil {
 		// DB error during claim — return error so the listener retries.
@@ -145,20 +137,34 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 	}
 
 	// If dispatch fails after the claim, revert the scan status to "queued"
-	// so the listener retry can re-dispatch. Otherwise the scan would stay
-	// "running" forever with no builder work directory for the poller to find.
+	// so the scheduler can re-enqueue on the next cycle. A "no builder
+	// available" failure is not an error — it's a normal capacity condition
+	// that happens when all builders are full. We return nil so the message
+	// is cleanly completed (not retried by the listener) and the scheduler
+	// re-enqueues when capacity frees up.
 	dispatchErr := dispatchScanToBuilder(ctx, cache, p.Digest, sbomByArch, archsToScan)
 	if dispatchErr != nil {
-		revertScanToQueued(ctx, p.Digest, archsToScan)
+		if revertErr := revertScanToQueued(ctx, p.Digest, archsToScan); revertErr != nil {
+			// Revert failed — return the revert error so the listener retries
+			// the message instead of acking it. Without this, the scan row
+			// stays "running" with no builder work directory until the 1-hour
+			// staleness window expires.
+			return fmt.Errorf("dispatch failed (%v) and revert also failed: %w", dispatchErr, revertErr)
+		}
+		if errors.Is(dispatchErr, scan.ErrNoBuilderAvailable) {
+			logger.Info("no builder available for scan, will retry on next scheduler cycle",
+				zap.String("digest", p.Digest))
+			return nil
+		}
 		return dispatchErr
 	}
 
 	return nil
 }
 
-// dispatchScanToBuilder handles the actual builder selection, file copy, and
-// grype launch. It reserves a capacity slot atomically and releases it if
-// any step fails before the scan is fully launched.
+// dispatchScanToBuilder handles builder selection, file copy, and grype launch.
+// It reserves a capacity slot atomically and releases it if any step fails
+// before the scan is fully launched.
 //
 // The dispatch is split into two phases:
 //  1. Prepare all files (dirs, scan.json, sbom.json per arch) — if any step
@@ -167,18 +173,19 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 //     grype processes are killed before returning, preventing orphaned
 //     processes that would race with a retry on a different builder.
 func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, digest string, sbomByArch map[string]string, archsToScan []string) error {
-	builderVM, err := scan.SelectBuilderForScan(ctx, cache, digest)
+	builderVM, err := scan.SelectBuilderForScan(ctx, cache)
 	if err != nil {
-		return fmt.Errorf("no builder available for scan: %w", err)
+		return fmt.Errorf("failed to select builder for scan: %w", err)
 	}
 
-	// SelectBuilderForScan already reserved a capacity slot and added a
-	// placeholder to the scans map. If we fail before calling AddScan to
-	// fill in the full metadata, release the slot and remove the placeholder.
+	// SelectBuilderForScan reserved a capacity slot. If we fail before the
+	// scan files are written to the builder, release the slot. The poller
+	// will resync the cache on the next cycle anyway, but this avoids
+	// temporarily over-counting.
 	slotReserved := true
 	defer func() {
 		if slotReserved {
-			cache.ReleaseScanSlot(builderVM.ID, digest)
+			cache.ReleaseScanSlot(builderVM.ID)
 		}
 	}()
 
@@ -235,14 +242,9 @@ func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, d
 			zap.String("workDir", workDir))
 	}
 
-	// Scan successfully launched. AddScan records the scan metadata and
-	// keeps the reserved slot. The deferred ReleaseScanSlot is prevented
-	// by setting slotReserved to false.
-	cache.AddScan(builderVM.ID, scan.ScanDirInfo{
-		Digest:    digest,
-		WorkDir:   workDir,
-		CreatedAt: metadata.CreatedAt,
-	})
+	// Scan successfully launched. The poller will discover the scan dir
+	// on the next cycle and add it to the cache via SetBuilderScans. Keep
+	// the reserved slot counted until then.
 	slotReserved = false
 
 	logger.Info("dispatched external image scan to builder",
@@ -455,7 +457,7 @@ func claimScanForDispatch(ctx context.Context, digest string, archs []string) (b
 // after a failed dispatch. This allows the listener retry to re-dispatch
 // the scan to a different builder. Without this, the scan would stay
 // "running" forever with no builder work directory for the poller to find.
-func revertScanToQueued(ctx context.Context, digest string, archs []string) {
+func revertScanToQueued(ctx context.Context, digest string, archs []string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -465,8 +467,7 @@ func revertScanToQueued(ctx context.Context, digest string, archs []string) {
 		 WHERE digest = $1 AND arch = ANY($2::text[]) AND status = 'running'`,
 		digest, archs)
 	if err != nil {
-		logger.Warn("failed to revert scan status to queued after dispatch failure",
-			zap.String("digest", digest),
-			zap.Error(err))
+		return fmt.Errorf("failed to revert scan status to queued: %w", err)
 	}
+	return nil
 }
