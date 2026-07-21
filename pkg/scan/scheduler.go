@@ -53,7 +53,7 @@ func StartScheduler(ctx context.Context, cache *ScanCapacityCache) error {
 		defer ticker.Stop()
 		// Report immediately on startup so metrics are available without
 		// waiting for the first tick.
-		ReportScanMetrics(ctx)
+		ReportScanMetrics(ctx, cache)
 		if cache != nil {
 			cache.ReportCapacityMetrics(ctx)
 			if err := cache.DumpToFile(); err != nil {
@@ -65,7 +65,7 @@ func StartScheduler(ctx context.Context, cache *ScanCapacityCache) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				ReportScanMetrics(ctx)
+				ReportScanMetrics(ctx, cache)
 				if cache != nil {
 					cache.ReportCapacityMetrics(ctx)
 					if err := cache.DumpToFile(); err != nil {
@@ -91,7 +91,7 @@ func StartScheduler(ctx context.Context, cache *ScanCapacityCache) error {
 	}()
 
 	for {
-		noImages, err := processExternalImageScans(ctx, MaxImagesPerCycle, cache)
+		noImages, err := processExternalImageScans(ctx, MaxImagesPerCycle)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to process external image scans: %w", err))
 		}
