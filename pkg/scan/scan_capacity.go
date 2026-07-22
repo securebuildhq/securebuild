@@ -111,6 +111,30 @@ func (c *ScanCapacityCache) SetBuilderScans(machineID string, scans []ScanDirInf
 	c.counts[machineID] = len(scans)
 }
 
+// AddScan appends a scan entry to the scans map for a builder without
+// modifying counts (tryReserveSlot already incremented the count). This
+// makes the scan immediately visible in the scans map so that
+// GetTotalActiveScanCount and the running metric reflect it without
+// waiting for the poller to discover it on the filesystem. The poller's
+// SetBuilderScans call will eventually reconcile both maps.
+//
+// If an entry with the same digest already exists for the builder (e.g.
+// the poller discovered it on the filesystem between the scan files being
+// written and this call), the existing entry is updated in place instead
+// of appending a duplicate.
+func (c *ScanCapacityCache) AddScan(machineID string, info ScanDirInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	scans := c.scans[machineID]
+	for i, s := range scans {
+		if s.Digest == info.Digest {
+			scans[i] = info
+			return
+		}
+	}
+	c.scans[machineID] = append(scans, info)
+}
+
 // RemoveScan removes a scan for a builder by digest. Called by the poller
 // when a scan completes.
 func (c *ScanCapacityCache) RemoveScan(machineID, digest string) {
