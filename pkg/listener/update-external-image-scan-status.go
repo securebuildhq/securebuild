@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/securebuildhq/securebuild/pkg/buildbackend"
@@ -59,9 +60,15 @@ func pollScanStatus(ctx context.Context, cache *scan.ScanCapacityCache) error {
 		runningBuilderIDs[b.ID] = true
 	}
 
+	var wg sync.WaitGroup
 	for _, b := range builders {
-		processBuilderScans(ctx, cache, b)
+		wg.Add(1)
+		go func(b buildertypes.BuilderVM) {
+			defer wg.Done()
+			processBuilderScans(ctx, cache, b)
+		}(b)
 	}
+	wg.Wait()
 
 	for _, machineID := range cache.GetBuilderIDs() {
 		if !runningBuilderIDs[machineID] {

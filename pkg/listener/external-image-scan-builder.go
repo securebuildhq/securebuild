@@ -242,10 +242,16 @@ func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, d
 			zap.String("workDir", workDir))
 	}
 
-	// Scan successfully launched. The poller will discover the scan dir
-	// on the next cycle and add it to the cache via SetBuilderScans. Keep
-	// the reserved slot counted until then.
+	// Scan successfully launched. Add the scan to the cache's scans map
+	// so the running metric reflects it immediately, without waiting for
+	// the poller to discover it on the filesystem. The poller's
+	// SetBuilderScans call will reconcile on the next cycle.
 	slotReserved = false
+	cache.AddScan(builderVM.ID, scan.ScanDirInfo{
+		Digest:    digest,
+		WorkDir:   workDir,
+		CreatedAt: metadata.CreatedAt,
+	})
 
 	logger.Info("dispatched external image scan to builder",
 		zap.String("digest", digest),

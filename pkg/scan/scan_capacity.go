@@ -111,6 +111,30 @@ func (c *ScanCapacityCache) SetBuilderScans(machineID string, scans []ScanDirInf
 	c.counts[machineID] = len(scans)
 }
 
+// AddScan appends a scan entry to the scans map for a builder without
+// modifying counts (tryReserveSlot already incremented the count). This
+// makes the scan immediately visible in the scans map so that
+// GetTotalActiveScanCount and the running metric reflect it without
+// waiting for the poller to discover it on the filesystem. The poller's
+// SetBuilderScans call will eventually reconcile both maps.
+//
+// If an entry with the same digest already exists for the builder (e.g.
+// the poller discovered it on the filesystem between the scan files being
+// written and this call), the existing entry is updated in place instead
+// of appending a duplicate.
+func (c *ScanCapacityCache) AddScan(machineID string, info ScanDirInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	scans := c.scans[machineID]
+	for i, s := range scans {
+		if s.Digest == info.Digest {
+			scans[i] = info
+			return
+		}
+	}
+	c.scans[machineID] = append(scans, info)
+}
+
 // RemoveScan removes a scan for a builder by digest. Called by the poller
 // when a scan completes.
 func (c *ScanCapacityCache) RemoveScan(machineID, digest string) {
@@ -317,28 +341,34 @@ func InitScanCapacityCache(ctx context.Context) (*ScanCapacityCache, error) {
 		return nil, fmt.Errorf("failed to query running builders for scan cache init: %w", err)
 	}
 
+	var wg sync.WaitGroup
 	for _, b := range builders {
-		scans, err := ListScanDirsOnBuilder(ctx, b.BuilderVM)
-		if err != nil {
-			logger.Warn("failed to list scan dirs on builder during init, skipping",
-				zap.String("machineID", b.BuilderVM.ID),
-				zap.Error(err))
-			continue
-		}
-
-		activeScans := make([]ScanDirInfo, 0)
-		for _, s := range scans {
-			if s.AllArchsDone {
-				continue
+		wg.Add(1)
+		go func(b builderForScan) {
+			defer wg.Done()
+			scans, err := ListScanDirsOnBuilder(ctx, b.BuilderVM)
+			if err != nil {
+				logger.Warn("failed to list scan dirs on builder during init, skipping",
+					zap.String("machineID", b.BuilderVM.ID),
+					zap.Error(err))
+				return
 			}
-			activeScans = append(activeScans, ScanDirInfo{
-				Digest:    s.Metadata.Digest,
-				WorkDir:   s.WorkDir,
-				CreatedAt: s.Metadata.CreatedAt,
-			})
-		}
-		cache.SetBuilderScans(b.BuilderVM.ID, activeScans)
+
+			activeScans := make([]ScanDirInfo, 0)
+			for _, s := range scans {
+				if s.AllArchsDone {
+					continue
+				}
+				activeScans = append(activeScans, ScanDirInfo{
+					Digest:    s.Metadata.Digest,
+					WorkDir:   s.WorkDir,
+					CreatedAt: s.Metadata.CreatedAt,
+				})
+			}
+			cache.SetBuilderScans(b.BuilderVM.ID, activeScans)
+		}(b)
 	}
+	wg.Wait()
 
 	cache.setReady(true)
 	logger.Info("scan capacity cache initialized",
