@@ -166,6 +166,22 @@ func (c *ScanCapacityCache) GetTotalScanCount() int {
 	return total
 }
 
+// GetTotalActiveScanCount returns the total number of active scan directories
+// across all builders, based on the scans map (not the counts map). This is
+// more accurate than GetTotalScanCount because counts can be temporarily
+// inflated by tryReserveSlot reservations between poller resync cycles, while
+// scans only reflects scan directories the poller has actually observed on
+// builder filesystems.
+func (c *ScanCapacityCache) GetTotalActiveScanCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	total := 0
+	for _, scans := range c.scans {
+		total += len(scans)
+	}
+	return total
+}
+
 // GetBuilderIDs returns the machine IDs of all builders that have active scans.
 func (c *ScanCapacityCache) GetBuilderIDs() []string {
 	c.mu.RLock()

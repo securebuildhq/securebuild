@@ -12,7 +12,6 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/anchore"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	"github.com/securebuildhq/securebuild/pkg/logger"
-	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/security"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
@@ -384,21 +383,10 @@ func UpdateLastSecurityScanned(ctx context.Context, digest string, archs []strin
 // processExternalImageScans selects external image SBOMs to scan and enqueues
 // them as external_image_scan work items for builder-based dispatch.
 // Selection uses tiered back-off based on last_submitted_at (see SelectExternalImageDigestsToScan).
-// Scheduler backpressure: only enqueues if the total in-memory scan count is below
-// PoolSize * 2 * MaxScansPerBuilder (×2 for the two architecture pools).
+// Builder-level capacity is enforced by SelectBuilderForScan in the handler via
+// tryReserveSlot, which returns ErrNoBuilderAvailable when all builders are full.
 // returns true if there are no more digests to scan
-func processExternalImageScans(ctx context.Context, maxToProcess int, cache *ScanCapacityCache) (bool, error) {
-	if cache != nil {
-		maxConcurrent := param.GetParam(ctx).PoolSize * 2 * param.GetParam(ctx).MaxScansPerBuilder
-		activeScans := cache.GetTotalScanCount()
-		if activeScans >= maxConcurrent {
-			logger.Info("scan scheduler at capacity, pausing enqueue",
-				zap.Int("active_scans", activeScans),
-				zap.Int("max_concurrent", maxConcurrent))
-			return false, nil
-		}
-	}
-
+func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, error) {
 	selectedDigests, err := SelectExternalImageDigestsToScan(ctx, maxToProcess)
 	if err != nil {
 		return false, err
@@ -434,13 +422,20 @@ func processExternalImageScans(ctx context.Context, maxToProcess int, cache *Sca
 //
 // For each tier (including never-scanned), it counts digests that have not been
 // scanned within their respective rescan interval — i.e., digests that are
-// eligible for scanning right now. It also counts how many scans are currently
-// in the 'running' status.
+// eligible for scanning right now. It also reports how many scans are currently
+// active on builders.
 //
 // Gauges sent:
 //   - securebuild.external_image.scan.backlog  (tag: tier=<never_scanned|active|recent|stale>)
 //   - securebuild.external_image.scan.running
-func ReportScanMetrics(ctx context.Context) {
+//
+// The running scan count is sourced from the in-memory ScanCapacityCache (scans
+// map), which reflects scan directories the poller has actually observed on
+// builder filesystems. This is more accurate than querying the DB for
+// status='running' rows, which can be inflated by rows that have been claimed
+// to 'running' but whose grype process already completed and hasn't been
+// collected by the poller yet.
+func ReportScanMetrics(ctx context.Context, cache *ScanCapacityCache) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -487,13 +482,13 @@ func ReportScanMetrics(ctx context.Context) {
 			[]string{telemetry.TagScanTier + ":" + tier.name})
 	}
 
-	// Running scans: count of external_image_scan rows with status = 'running'
+	// Running scans: count of active scan directories across all builders,
+	// sourced from the in-memory cache (scans map). This reflects scans the
+	// poller has actually observed on builder filesystems and excludes
+	// completed-but-uncollected scans that would inflate a DB-based count.
 	var runningCount int
-	if err := conn.QueryRow(ctx, `
-		SELECT COUNT(*) FROM external_image_scan WHERE status = 'running'
-	`).Scan(&runningCount); err != nil {
-		logger.Warn("failed to count running scans", zap.Error(err))
-	} else {
-		telemetry.Gauge(telemetry.MetricExternalImageScansRunning, float64(runningCount), nil)
+	if cache != nil {
+		runningCount = cache.GetTotalActiveScanCount()
 	}
+	telemetry.Gauge(telemetry.MetricExternalImageScansRunning, float64(runningCount), nil)
 }
