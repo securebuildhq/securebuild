@@ -317,28 +317,34 @@ func InitScanCapacityCache(ctx context.Context) (*ScanCapacityCache, error) {
 		return nil, fmt.Errorf("failed to query running builders for scan cache init: %w", err)
 	}
 
+	var wg sync.WaitGroup
 	for _, b := range builders {
-		scans, err := ListScanDirsOnBuilder(ctx, b.BuilderVM)
-		if err != nil {
-			logger.Warn("failed to list scan dirs on builder during init, skipping",
-				zap.String("machineID", b.BuilderVM.ID),
-				zap.Error(err))
-			continue
-		}
-
-		activeScans := make([]ScanDirInfo, 0)
-		for _, s := range scans {
-			if s.AllArchsDone {
-				continue
+		wg.Add(1)
+		go func(b builderForScan) {
+			defer wg.Done()
+			scans, err := ListScanDirsOnBuilder(ctx, b.BuilderVM)
+			if err != nil {
+				logger.Warn("failed to list scan dirs on builder during init, skipping",
+					zap.String("machineID", b.BuilderVM.ID),
+					zap.Error(err))
+				return
 			}
-			activeScans = append(activeScans, ScanDirInfo{
-				Digest:    s.Metadata.Digest,
-				WorkDir:   s.WorkDir,
-				CreatedAt: s.Metadata.CreatedAt,
-			})
-		}
-		cache.SetBuilderScans(b.BuilderVM.ID, activeScans)
+
+			activeScans := make([]ScanDirInfo, 0)
+			for _, s := range scans {
+				if s.AllArchsDone {
+					continue
+				}
+				activeScans = append(activeScans, ScanDirInfo{
+					Digest:    s.Metadata.Digest,
+					WorkDir:   s.WorkDir,
+					CreatedAt: s.Metadata.CreatedAt,
+				})
+			}
+			cache.SetBuilderScans(b.BuilderVM.ID, activeScans)
+		}(b)
 	}
+	wg.Wait()
 
 	cache.setReady(true)
 	logger.Info("scan capacity cache initialized",
