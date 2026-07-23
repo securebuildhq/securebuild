@@ -25,7 +25,7 @@ var (
 	activeDigest    = "sha256:active-tier-digest-12345678901234567890123456789012"
 	recentDigest    = "sha256:recent-tier-digest-12345678901234567890123456789012"
 	staleDigest     = "sha256:stale-tier-digest-12345678901234567890123456789012"
-	excludedDigest  = "sha256:excluded-tier-digest-12345678901234567890123456789012"
+	inactiveDigest  = "sha256:inactive-tier-digest-12345678901234567890123456789012"
 	neverScannedDg  = "sha256:never-scanned-digest-12345678901234567890123456789012"
 	freshDigest     = "sha256:fresh-active-digest-12345678901234567890123456789012"
 	activeScannedDg = "sha256:active-scanned-digest-12345678901234567890123456789012"
@@ -74,7 +74,7 @@ func setupTierTestDB(t *testing.T) (context.Context, func()) {
 
 // TestSelectExternalImageDigestsToScanTiers verifies that the tiered back-off
 // scheduling selects digests from the correct tier based on last_submitted_at
-// and that images >90 days old are excluded from the scheduler.
+// and that images >90 days old are included in the inactive tier.
 func TestSelectExternalImageDigestsToScanTiers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -92,7 +92,7 @@ func TestSelectExternalImageDigestsToScanTiers(t *testing.T) {
 		assert.Contains(t, digests, activeDigest, "active tier digest should be selected")
 		assert.Contains(t, digests, recentDigest, "recent tier digest should be selected")
 		assert.Contains(t, digests, staleDigest, "stale tier digest should be selected")
-		assert.NotContains(t, digests, excludedDigest, "excluded digest (>90 days) should NOT be selected")
+		assert.Contains(t, digests, inactiveDigest, "inactive tier digest should be selected")
 	})
 
 	t.Run("Never-scanned prioritized over rescans when capacity=1", func(t *testing.T) {
@@ -126,11 +126,11 @@ func TestSelectExternalImageDigestsToScanTiers(t *testing.T) {
 		assert.NotContains(t, digests, staleDigest, "stale tier should not be reached with capacity 3")
 	})
 
-	t.Run("Excluded digest (>90 days) never selected", func(t *testing.T) {
+	t.Run("Inactive digest (>90 days) is selected", func(t *testing.T) {
 		digests, err := scan.SelectExternalImageDigestsToScan(ctx, 25)
 		require.NoError(t, err)
 
-		assert.NotContains(t, digests, excludedDigest, "excluded digest should never be selected")
+		assert.Contains(t, digests, inactiveDigest, "inactive tier digest should be selected")
 	})
 }
 

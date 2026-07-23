@@ -692,35 +692,6 @@ export async function resetScanStatus(digest: string): Promise<void> {
 }
 
 /**
- * Update the digest for an existing tag.
- * This is used during rescan when the registry returns a new digest for a tag.
- *
- * @param registry - The registry (e.g., "docker.io", "ghcr.io")
- * @param imageName - The image name (e.g., "library/nginx")
- * @param imageTag - The image tag (e.g., "latest")
- * @param digest - The new digest from the registry
- */
-export async function updateTagDigest(registry: string, imageName: string, imageTag: string, digest: string): Promise<void> {
-  const db = getDB(await getParam("DB_URI"))
-
-  // Set next check/scan times to 4 hours from now to prevent duplicate work
-  // from the background monitor picking up this tag immediately
-  const inFourHours = new Date(Date.now() + 4 * 60 * 60 * 1000)
-
-  const query = `
-    UPDATE external_image_tag
-    SET digest = $4, next_check_digest_at = $5, next_scan_at = $5
-    WHERE registry = $1 AND image_name = $2 AND image_tag = $3
-  `
-  const result = await db.query(query, [registry, imageName, imageTag, digest, inFourHours])
-
-  if (result.rowCount === 0) {
-    throw new Error(`Tag not found: ${registry}/${imageName}:${imageTag}`)
-  }
-}
-
-
-/**
  * Initialize SBOM status as 'pending' for a digest.
  * Uses ON CONFLICT DO NOTHING to avoid overwriting existing status.
  * This should be called when an image is first tracked and SBOM work is enqueued.
