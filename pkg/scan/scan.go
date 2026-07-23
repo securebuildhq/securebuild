@@ -233,7 +233,7 @@ type scanTier struct {
 
 var scanTiers = []scanTier{
 	{name: "active", submittedAfter: "7 days", submittedBefore: "0 days", rescanInterval: "4 hours"},
-	{name: "recent", submittedAfter: "30 days", submittedBefore: "7 days", rescanInterval: "4 hours"},
+	{name: "recent", submittedAfter: "30 days", submittedBefore: "7 days", rescanInterval: "12 hours"},
 	{name: "stale", submittedAfter: "90 days", submittedBefore: "30 days", rescanInterval: "24 hours"},
 	{name: "inactive", submittedAfter: "", submittedBefore: "90 days", rescanInterval: "24 hours"},
 }
@@ -250,7 +250,7 @@ const ScanStalenessThreshold = 1 * time.Hour
 // Priority order:
 //  1. Never scanned: digests with SBOMs but no scans yet
 //  2. Active tier:   last_submitted 0-7 days,    rescan if older than 4 hours
-//  3. Recent tier:   last_submitted 7-30 days,   rescan if older than 4 hours
+//  3. Recent tier:   last_submitted 7-30 days,   rescan if older than 12 hours
 //  4. Stale tier:    last_submitted 30-90 days,  rescan if older than 24 hours
 //  5. Inactive tier: last_submitted >90 days,    rescan if older than 24 hours
 //
