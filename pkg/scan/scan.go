@@ -217,24 +217,25 @@ func getRegistryHostname(imageURL string) (string, error) {
 // scanTier defines a back-off tier for rescan scheduling.
 // Each tier has a last_submitted_at window and a rescan interval.
 // Tiers are queried in priority order; higher tiers are filled before
-// lower tiers contribute digests. Images submitted >90 days ago (tier 5)
-// are excluded from the scheduler entirely (on-demand only).
+// lower tiers contribute digests.
 //
 // submittedAfter is the minimum age (e.g. "7 days" means submitted more than 7 days ago).
+// An empty submittedAfter means no lower bound (all images older than submittedBefore).
 // submittedBefore is the maximum age (e.g. "0 days" means submitted less than 0 days ago = now).
 // The tier window is: ref - submittedBefore < last_submitted_at <= ref - submittedAfter
 // For active: submitted 0-7 days ago → last_submitted > ref-7d AND last_submitted <= ref-0d
 type scanTier struct {
 	name            string
-	submittedAfter  string // minimum age: last_submitted_at > ref - interval
+	submittedAfter  string // minimum age: last_submitted_at > ref - interval; empty = unbounded
 	submittedBefore string // maximum age: last_submitted_at <= ref - interval
 	rescanInterval  string // rescan threshold: last_security_scanned_at < ref - interval
 }
 
 var scanTiers = []scanTier{
 	{name: "active", submittedAfter: "7 days", submittedBefore: "0 days", rescanInterval: "4 hours"},
-	{name: "recent", submittedAfter: "30 days", submittedBefore: "7 days", rescanInterval: "24 hours"},
-	{name: "stale", submittedAfter: "90 days", submittedBefore: "30 days", rescanInterval: "7 days"},
+	{name: "recent", submittedAfter: "30 days", submittedBefore: "7 days", rescanInterval: "4 hours"},
+	{name: "stale", submittedAfter: "90 days", submittedBefore: "30 days", rescanInterval: "24 hours"},
+	{name: "inactive", submittedAfter: "", submittedBefore: "90 days", rescanInterval: "24 hours"},
 }
 
 // ScanStalenessThreshold is how old a 'queued' or 'running' scan row must be
@@ -248,10 +249,10 @@ const ScanStalenessThreshold = 1 * time.Hour
 //
 // Priority order:
 //  1. Never scanned: digests with SBOMs but no scans yet
-//  2. Active tier:  last_submitted < 7 days,    rescan if older than 4 hours
-//  3. Recent tier:  last_submitted 7-30 days,   rescan if older than 24 hours
-//  4. Stale tier:   last_submitted 30-90 days,  rescan if older than 7 days
-//  5. Excluded:     last_submitted > 90 days    — not scanned by scheduler
+//  2. Active tier:   last_submitted 0-7 days,    rescan if older than 4 hours
+//  3. Recent tier:   last_submitted 7-30 days,   rescan if older than 4 hours
+//  4. Stale tier:    last_submitted 30-90 days,  rescan if older than 24 hours
+//  5. Inactive tier: last_submitted >90 days,    rescan if older than 24 hours
 //
 // Each tier uses ORDER BY random() for fair distribution within the tier.
 // After each query, remaining capacity is evaluated; if 0, lower tiers are skipped.
@@ -310,18 +311,22 @@ func SelectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 
 	remaining := maxToProcess - len(selectedDigests)
 
-	// Tiers 2-4: Back-off tiers based on last_submitted_at
+	// Tiers 2-5: Back-off tiers based on last_submitted_at
 	for _, tier := range scanTiers {
 		if remaining <= 0 {
 			break
+		}
+
+		tierTagsWhere := fmt.Sprintf("last_submitted_at <= $2::timestamptz - interval '%s'", tier.submittedBefore)
+		if tier.submittedAfter != "" {
+			tierTagsWhere = fmt.Sprintf("last_submitted_at > $2::timestamptz - interval '%s' AND %s", tier.submittedAfter, tierTagsWhere)
 		}
 
 		query := fmt.Sprintf(`
 			WITH tier_tags AS (
 				SELECT digest
 				FROM external_image_tag
-				WHERE last_submitted_at > $2::timestamptz - interval '%s'
-				  AND last_submitted_at <= $2::timestamptz - interval '%s'
+				WHERE %s
 				GROUP BY digest
 			)
 			SELECT s.digest
@@ -338,7 +343,7 @@ func SelectExternalImageDigestsToScan(ctx context.Context, maxToProcess int) ([]
 			GROUP BY s.digest
 			ORDER BY random()
 			LIMIT $1
-		`, tier.submittedAfter, tier.submittedBefore, tier.rescanInterval, staleThreshold)
+		`, tierTagsWhere, tier.rescanInterval, staleThreshold)
 
 		rows, err := conn.Query(ctx, query, remaining, referenceTime)
 		if err != nil {
@@ -426,7 +431,7 @@ func processExternalImageScans(ctx context.Context, maxToProcess int) (bool, err
 // active on builders.
 //
 // Gauges sent:
-//   - securebuild.external_image.scan.backlog  (tag: tier=<never_scanned|active|recent|stale>)
+//   - securebuild.external_image.scan.backlog  (tag: tier=<never_scanned|active|recent|stale|inactive>)
 //   - securebuild.external_image.scan.running
 //
 // The running scan count is sourced from the in-memory ScanCapacityCache (scans
@@ -458,12 +463,16 @@ func ReportScanMetrics(ctx context.Context, cache *ScanCapacityCache) {
 	// the tier's rescan interval, within the tier's last_submitted_at window.
 	for _, tier := range scanTiers {
 		var count int
+		tierTagsWhere := fmt.Sprintf("last_submitted_at <= $1::timestamptz - interval '%s'", tier.submittedBefore)
+		if tier.submittedAfter != "" {
+			tierTagsWhere = fmt.Sprintf("last_submitted_at > $1::timestamptz - interval '%s' AND %s", tier.submittedAfter, tierTagsWhere)
+		}
+
 		query := fmt.Sprintf(`
 			WITH tier_tags AS (
 				SELECT digest
 				FROM external_image_tag
-				WHERE last_submitted_at > $1::timestamptz - interval '%s'
-				  AND last_submitted_at <= $1::timestamptz - interval '%s'
+				WHERE %s
 				GROUP BY digest
 			)
 			SELECT COUNT(DISTINCT s.digest)
@@ -471,7 +480,7 @@ func ReportScanMetrics(ctx context.Context, cache *ScanCapacityCache) {
 			JOIN tier_tags t ON t.digest = s.digest
 			WHERE s.last_security_scanned_at IS NOT NULL
 			  AND s.last_security_scanned_at < $1::timestamptz - interval '%s'
-		`, tier.submittedAfter, tier.submittedBefore, tier.rescanInterval)
+		`, tierTagsWhere, tier.rescanInterval)
 
 		if err := conn.QueryRow(ctx, query, referenceTime).Scan(&count); err != nil {
 			logger.Warn("failed to count tier backlog", zap.String("tier", tier.name), zap.Error(err))

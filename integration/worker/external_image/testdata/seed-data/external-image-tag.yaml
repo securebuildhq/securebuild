@@ -82,7 +82,7 @@ seedData:
         - column: next_scan_at
           value:
             str: "2025-12-02T00:00:00Z"
-    # Excluded tier: submitted 100 days before reference (>90 days)
+    # Inactive tier: submitted 100 days before reference (>90 days)
     - columns:
         - column: registry
           value:
@@ -92,7 +92,7 @@ seedData:
             str: "library/tier-test"
         - column: image_tag
           value:
-            str: "excluded"
+            str: "inactive"
         - column: created_at
           value:
             str: "2025-10-06T00:00:00Z"
@@ -101,7 +101,7 @@ seedData:
             str: "2025-10-06T00:00:00Z"
         - column: digest
           value:
-            str: "sha256:excluded-tier-digest-12345678901234567890123456789012"
+            str: "sha256:inactive-tier-digest-12345678901234567890123456789012"
         - column: next_check_digest_at
           value:
             str: "2025-10-07T00:00:00Z"

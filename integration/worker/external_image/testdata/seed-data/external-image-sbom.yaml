@@ -24,7 +24,7 @@ seedData:
         - column: last_security_scanned_at
           value:
             str: "2026-01-15T07:00:00Z"
-    # Recent tier SBOM — scanned 2 days before reference (stale for 24h interval)
+    # Recent tier SBOM — scanned 2 days before reference (stale for 4h interval)
     - columns:
         - column: digest
           value:
@@ -44,7 +44,7 @@ seedData:
         - column: last_security_scanned_at
           value:
             str: "2026-01-13T12:00:00Z"
-    # Stale tier SBOM — scanned 10 days before reference (stale for 7d interval)
+    # Stale tier SBOM — scanned 10 days before reference (stale for 24h interval)
     - columns:
         - column: digest
           value:
@@ -64,11 +64,11 @@ seedData:
         - column: last_security_scanned_at
           value:
             str: "2026-01-05T00:00:00Z"
-    # Excluded tier SBOM — scanned 30 days before reference (stale, but >90d excluded)
+    # Inactive tier SBOM — scanned 30 days before reference (stale for 24h interval)
     - columns:
         - column: digest
           value:
-            str: "sha256:excluded-tier-digest-12345678901234567890123456789012"
+            str: "sha256:inactive-tier-digest-12345678901234567890123456789012"
         - column: arch
           value:
             str: "x86_64"
