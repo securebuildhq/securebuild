@@ -8,12 +8,10 @@ import (
 	"sync"
 	"time"
 
-	syftpkg "github.com/anchore/syft/syft/pkg"
 	"github.com/securebuildhq/securebuild/pkg/anchore"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
-	"github.com/securebuildhq/securebuild/pkg/security"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"github.com/securebuildhq/securebuild/pkg/util"
 	"go.uber.org/zap"
@@ -50,16 +48,6 @@ func ScanExternalImage(ctx context.Context, digest string) (results map[string]s
 	for _, sbom := range sboms {
 		startTime := time.Now()
 
-		// Parse the SBOM to extract packages
-		sbomObj, err := anchore.ParseSBOM(sbom.SBOM)
-		if err != nil {
-			logger.Warn("failed to parse SBOM",
-				zap.String("digest", digest),
-				zap.String("arch", sbom.Arch),
-				zap.Error(err))
-			continue
-		}
-
 		// Scan the SBOM using Grype library and get official JSON
 		grypeJSON, err := scanner.ScanSBOMForCVEs(ctx, sbom.SBOM)
 		duration := time.Since(startTime)
@@ -74,26 +62,6 @@ func ScanExternalImage(ctx context.Context, digest string) (results map[string]s
 		}
 
 		results[sbom.Arch] = grypeJSON
-
-		// Update package fixed versions for APK packages in this SBOM
-		// This helps us discover which package versions contain fixed artifact versions
-		for pkg := range sbomObj.Artifacts.Packages.Enumerate() {
-			// Only process APK packages (OS packages), not language dependencies
-			if pkg.Type != syftpkg.ApkPkg {
-				continue
-			}
-
-			err := security.UpdatePackageFixVersions(ctx, sbomObj, pkg)
-			if err != nil {
-				logger.Warn("failed to update package fix versions",
-					zap.String("digest", digest),
-					zap.String("arch", sbom.Arch),
-					zap.String("package", pkg.Name),
-					zap.String("version", pkg.Version),
-					zap.Error(err))
-				// Continue processing other packages even if one fails
-			}
-		}
 
 		logger.Debug("successfully scanned SBOM",
 			zap.String("digest", digest),
