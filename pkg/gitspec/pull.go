@@ -14,8 +14,8 @@ import (
 
 // SpecContent holds the content pulled from a git repo at a specific tag.
 type SpecContent struct {
-	Content    string
-	CommitSHA  string
+	Content         string
+	CommitSHA       string
 	AdditionalFiles []AdditionalFile
 }
 

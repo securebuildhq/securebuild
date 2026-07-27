@@ -316,33 +316,26 @@ func buildGrypeLaunchCommand(workDir, arch string) string {
 }
 
 // storeBuilderScanResult parses and stores a successful scan result for a
-// single architecture. Returns true if the result was stored successfully.
-func storeBuilderScanResult(ctx context.Context, digest, arch, scanResult string) bool {
+// single architecture. Returns an error if parsing, marshalling, or DB
+// storage fails. The error is wrapped in a ScanFailureError with the
+// appropriate error code for the caller to pass to recordScanFailure.
+func storeBuilderScanResult(ctx context.Context, digest, arch, scanResult string) error {
 	parsedResults, err := image.ParseScanResultDetails(scanResult)
 	if err != nil {
-		recordScanFailure(ctx, digest, arch,
-			externalimage.NewScanFailureError(externalimage.ErrParseScanResult,
-				fmt.Sprintf("failed to parse scan result: %s", err.Error())),
-			false, 0, 0)
-		return false
+		return externalimage.NewScanFailureError(externalimage.ErrParseScanResult,
+			fmt.Sprintf("failed to parse scan result: %s", err.Error()))
 	}
 
 	countsJSON, err := json.Marshal(parsedResults.Counts)
 	if err != nil {
-		recordScanFailure(ctx, digest, arch,
-			externalimage.NewScanFailureError(externalimage.ErrMarshalScanCounts,
-				fmt.Sprintf("failed to marshal scan counts: %s", err.Error())),
-			false, 0, 0)
-		return false
+		return externalimage.NewScanFailureError(externalimage.ErrMarshalScanCounts,
+			fmt.Sprintf("failed to marshal scan counts: %s", err.Error()))
 	}
 
 	summaryJSON, err := json.Marshal(parsedResults)
 	if err != nil {
-		recordScanFailure(ctx, digest, arch,
-			externalimage.NewScanFailureError(externalimage.ErrMarshalScanSummary,
-				fmt.Sprintf("failed to marshal scan summary: %s", err.Error())),
-			false, 0, 0)
-		return false
+		return externalimage.NewScanFailureError(externalimage.ErrMarshalScanSummary,
+			fmt.Sprintf("failed to marshal scan summary: %s", err.Error()))
 	}
 
 	if err := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
@@ -353,14 +346,11 @@ func storeBuilderScanResult(ctx context.Context, digest, arch, scanResult string
 		ParsedResultsDetails: string(summaryJSON),
 		RawResult:            scanResult,
 	}); err != nil {
-		recordScanFailure(ctx, digest, arch,
-			externalimage.NewScanFailureError(externalimage.ErrSaveScanStatus,
-				fmt.Sprintf("scan completed but failed to save results: %s", err.Error())),
-			false, 0, 0)
-		return false
+		return externalimage.NewScanFailureError(externalimage.ErrSaveScanStatus,
+			fmt.Sprintf("scan completed but failed to save results: %s", err.Error()))
 	}
 
-	return true
+	return nil
 }
 
 // isScanAlreadyRunning checks if any external_image_scan row for the digest

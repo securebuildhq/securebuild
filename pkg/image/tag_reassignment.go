@@ -15,9 +15,9 @@ import (
 
 // APKOTagInfo represents an APKO with its tags
 type APKOTagInfo struct {
-	ID      string
-	Tags    []string
-	GitTag  string // empty if not a linked image
+	ID     string
+	Tags   []string
+	GitTag string // empty if not a linked image
 }
 
 // countVersionParts counts how many numeric parts a version string has (major, major.minor, or major.minor.patch)

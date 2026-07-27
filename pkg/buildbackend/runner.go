@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -19,6 +20,15 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
+
+// ErrSSH is a sentinel error used to mark failures from SSH connection or
+// session operations (dial, NewSession). It is NOT returned for remote
+// command execution failures (e.g., cat failing on a missing file) — those
+// are file-level errors, not SSH errors.
+//
+// Callers can distinguish transient SSH outages from permanent scan failures
+// with errors.Is(err, buildbackend.ErrSSH).
+var ErrSSH = errors.New("ssh error")
 
 // Runner abstracts command execution and file operations on a build machine.
 // It can be backed by local process execution or SSH.
@@ -271,7 +281,7 @@ type SSHRunner struct {
 func NewSSHRunner(ctx context.Context, vm buildertypes.BuilderVM) (*SSHRunner, error) {
 	client, err := dialSSH(ctx, vm)
 	if err != nil {
-		return nil, fmt.Errorf("SSH connection to %s (%s:%d): %w", vm.ID, vm.IPAddress, vm.Port, err)
+		return nil, fmt.Errorf("SSH connection to %s (%s:%d): %w: %w", vm.ID, vm.IPAddress, vm.Port, ErrSSH, err)
 	}
 	return &SSHRunner{client: client, vmID: vm.ID}, nil
 }
@@ -288,7 +298,7 @@ func (r *SSHRunner) Close() error {
 func (r *SSHRunner) RunCommand(ctx context.Context, command string) (string, error) {
 	sess, err := r.client.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("failed to create SSH session: %w", err)
+		return "", fmt.Errorf("failed to create SSH session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
@@ -302,7 +312,7 @@ func (r *SSHRunner) RunCommand(ctx context.Context, command string) (string, err
 func (r *SSHRunner) RunBackgroundCommand(ctx context.Context, command string, executionID string) error {
 	sess, err := r.client.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create SSH session: %w", err)
+		return fmt.Errorf("failed to create SSH session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
@@ -328,7 +338,7 @@ func (r *SSHRunner) WriteBinaryFile(path string, data []byte) error {
 func (r *SSHRunner) ReadFile(path string) (string, error) {
 	sess, err := r.client.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("failed to create SSH session: %w", err)
+		return "", fmt.Errorf("failed to create SSH session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
@@ -342,7 +352,7 @@ func (r *SSHRunner) ReadFile(path string) (string, error) {
 func (r *SSHRunner) ReadFileTail(path string, maxBytes int) (string, error) {
 	sess, err := r.client.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("failed to create SSH session: %w", err)
+		return "", fmt.Errorf("failed to create SSH session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
@@ -356,7 +366,7 @@ func (r *SSHRunner) ReadFileTail(path string, maxBytes int) (string, error) {
 func (r *SSHRunner) FileExists(path string) (bool, error) {
 	sess, err := r.client.NewSession()
 	if err != nil {
-		return false, fmt.Errorf("failed to create SSH session: %w", err)
+		return false, fmt.Errorf("failed to create SSH session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
@@ -370,7 +380,7 @@ func (r *SSHRunner) FileExists(path string) (bool, error) {
 func (r *SSHRunner) MkdirAll(path string) error {
 	sess, err := r.client.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create SSH session: %w", err)
+		return fmt.Errorf("failed to create SSH session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
