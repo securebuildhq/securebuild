@@ -3,6 +3,7 @@ package listener
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -175,22 +176,22 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 				exitCode = 1
 			}
 
-			if exitCode == 0 {
-				err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch)
-				if err != nil {
-					if isSSHError(err) {
-						logger.Warn("transient SSH error reading grype result, will retry next cycle",
-							zap.String("digest", digest),
-							zap.String("arch", arch),
-							zap.Error(err))
-						allDone = false
-					} else {
-						logger.Warn("failed to handle successful scan",
-							zap.String("digest", digest),
-							zap.String("arch", arch),
-							zap.Error(err))
-						recordScanFailure(ctx, digest, arch, err, false, 0, 0)
-					}
+		if exitCode == 0 {
+			err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch)
+			if err != nil {
+				if errors.Is(err, buildbackend.ErrSSH) {
+					logger.Warn("transient SSH error reading grype result, will retry next cycle",
+						zap.String("digest", digest),
+						zap.String("arch", arch),
+						zap.Error(err))
+					allDone = false
+				} else {
+					logger.Warn("failed to handle successful scan",
+						zap.String("digest", digest),
+						zap.String("arch", arch),
+						zap.Error(err))
+					recordScanFailure(ctx, digest, arch, err, false, 0, 0)
+				}
 				} else {
 					successArchs = append(successArchs, arch)
 				}
@@ -415,19 +416,4 @@ func reenqueueScan(ctx context.Context, digest string) {
 
 	logger.Info("re-enqueued external image scan",
 		zap.String("digest", digest))
-}
-
-// isSSHError returns true if the error is caused by an SSH connection or
-// session failure (e.g., MaxSessions exceeded, connection dropped). These
-// are transient: the grype output is on the builder, we just can't read it
-// right now. The poller will retry on the next cycle with a fresh SSH
-// connection.
-func isSSHError(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "ssh:") ||
-		strings.Contains(msg, "SSH") ||
-		strings.Contains(msg, "handshake failed") ||
-		strings.Contains(msg, "connect failed") ||
-		strings.Contains(msg, "connection refused") ||
-		strings.Contains(msg, "EOF")
 }
