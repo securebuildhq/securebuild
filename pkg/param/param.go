@@ -132,6 +132,11 @@ type Param struct {
 	// so this can be higher than max_parallel_builds. Default: 3.
 	MaxScansPerBuilder int `yaml:"max_scans_per_builder"`
 
+	// MaxImagesPerCycle limits how many images are enqueued per scheduler cycle.
+	// Higher values increase dispatch throughput at the cost of more queue
+	// messages per cycle. Default: 25.
+	MaxImagesPerCycle int `yaml:"max_images_per_cycle"`
+
 	// Authentication configuration
 	AuthMethod        string `yaml:"auth_method"`
 	AdminUserEmail    string `yaml:"admin_user_email"`
@@ -301,6 +306,10 @@ func Init(source InitSource, overrides map[string]string) (context.Context, erro
 
 	if p.MaxScansPerBuilder <= 0 {
 		p.MaxScansPerBuilder = 3
+	}
+
+	if p.MaxImagesPerCycle <= 0 {
+		p.MaxImagesPerCycle = 25
 	}
 
 	normalizePoolSizeForBackend(p)

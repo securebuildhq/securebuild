@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"time"
 
-	syftpkg "github.com/anchore/syft/syft/pkg"
-	"github.com/securebuildhq/securebuild/pkg/anchore"
 	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	image "github.com/securebuildhq/securebuild/pkg/image"
@@ -17,7 +15,6 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/scan"
-	"github.com/securebuildhq/securebuild/pkg/security"
 	"go.uber.org/zap"
 )
 
@@ -316,30 +313,6 @@ func buildGrypeLaunchCommand(workDir, arch string) string {
   wait $grype_pid
   echo $? > output/exit_code
 ' > %q 2>&1 < /dev/null &`, archDir, filepath.Join(archDir, "scan.log"))
-}
-
-// updatePackageFixVersionsForSBOM parses the SBOM and updates package fix
-// versions for APK packages. This is called by the poller after a successful
-// scan, using the SBOM from the DB (not from the builder).
-func updatePackageFixVersionsForSBOM(ctx context.Context, sbomJSON string) {
-	sbomObj, err := anchore.ParseSBOM(sbomJSON)
-	if err != nil {
-		logger.Warn("failed to parse SBOM for fix-version update",
-			zap.Error(err))
-		return
-	}
-
-	for pkg := range sbomObj.Artifacts.Packages.Enumerate() {
-		if pkg.Type != syftpkg.ApkPkg {
-			continue
-		}
-		if err := security.UpdatePackageFixVersions(ctx, sbomObj, pkg); err != nil {
-			logger.Warn("failed to update package fix versions",
-				zap.String("package", pkg.Name),
-				zap.String("version", pkg.Version),
-				zap.Error(err))
-		}
-	}
 }
 
 // storeBuilderScanResult parses and stores a successful scan result for a

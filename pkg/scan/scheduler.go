@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/securebuildhq/securebuild/pkg/logger"
+	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"go.uber.org/zap"
 )
@@ -28,8 +29,10 @@ const (
 	// tight loop from re-enqueuing the same digests thousands of times.
 	ExternalImageEnqueueInterval = 5 * time.Second
 
-	// MaxImagesPerCycle limits how many images are processed in each scheduler cycle
-	MaxImagesPerCycle = 25
+	// DefaultMaxImagesPerCycle is the default limit for how many images are
+	// processed in each scheduler cycle. Overridden by the MaxImagesPerCycle
+	// param at runtime.
+	DefaultMaxImagesPerCycle = 25
 
 	// MetricsReportInterval is how often scan backlog and running scan gauges are sent
 	MetricsReportInterval = 1 * time.Minute
@@ -90,8 +93,13 @@ func StartScheduler(ctx context.Context, cache *ScanCapacityCache) error {
 		}
 	}()
 
+	maxImagesPerCycle := param.GetParam(ctx).MaxImagesPerCycle
+	if maxImagesPerCycle <= 0 {
+		maxImagesPerCycle = DefaultMaxImagesPerCycle
+	}
+
 	for {
-		noImages, err := processExternalImageScans(ctx, MaxImagesPerCycle)
+		noImages, err := processExternalImageScans(ctx, maxImagesPerCycle)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to process external image scans: %w", err))
 		}
@@ -114,6 +122,11 @@ func StartScheduler(ctx context.Context, cache *ScanCapacityCache) error {
 }
 
 func processPeriodicScans(ctx context.Context) error {
+	maxImagesPerCycle := param.GetParam(ctx).MaxImagesPerCycle
+	if maxImagesPerCycle <= 0 {
+		maxImagesPerCycle = DefaultMaxImagesPerCycle
+	}
+
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -128,7 +141,7 @@ func processPeriodicScans(ctx context.Context) error {
 		LIMIT $2
 	`
 
-	rows, err := conn.Query(ctx, query, now, MaxImagesPerCycle)
+	rows, err := conn.Query(ctx, query, now, maxImagesPerCycle)
 	if err != nil {
 		return fmt.Errorf("failed to query catalog images for scanning: %w", err)
 	}

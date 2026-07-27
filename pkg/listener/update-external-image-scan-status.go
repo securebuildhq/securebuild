@@ -124,9 +124,15 @@ func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm 
 	}
 	cache.SetBuilderScans(vm.ID, activeScans)
 
+	var scanWG sync.WaitGroup
 	for _, sd := range scanDirs {
-		processScanDir(ctx, cache, vm, runner, sd)
+		scanWG.Add(1)
+		go func(sd scan.ScanDirStatus) {
+			defer scanWG.Done()
+			processScanDir(ctx, cache, vm, runner, sd)
+		}(sd)
 	}
+	scanWG.Wait()
 }
 
 // processScanDir processes a single scan directory on a builder.
@@ -206,8 +212,7 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 	}
 }
 
-// handleSuccessfulScan reads the grype JSON result, stores it in the DB,
-// and updates package fix versions for APK packages.
+// handleSuccessfulScan reads the grype JSON result and stores it in the DB.
 // Returns true if the result was stored successfully.
 func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string) bool {
 	grypeJSONPath := filepath.Join(workDir, arch, "grype-scan.json")
@@ -237,15 +242,6 @@ func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workD
 
 	stored := storeBuilderScanResult(ctx, digest, arch, grypeJSON)
 	if stored {
-		sboms, sbomErr := externalimage.GetExternalImageSBOMs(ctx, digest)
-		if sbomErr == nil {
-			for _, s := range sboms {
-				if s.Arch == arch {
-					updatePackageFixVersionsForSBOM(ctx, s.SBOM)
-					break
-				}
-			}
-		}
 		logger.Info("stored scan result",
 			zap.String("digest", digest),
 			zap.String("arch", arch))
