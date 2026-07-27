@@ -29,11 +29,6 @@ const (
 	// tight loop from re-enqueuing the same digests thousands of times.
 	ExternalImageEnqueueInterval = 5 * time.Second
 
-	// DefaultMaxImagesPerCycle is the default limit for how many images are
-	// processed in each scheduler cycle. Overridden by the MaxImagesPerCycle
-	// param at runtime.
-	DefaultMaxImagesPerCycle = 25
-
 	// MetricsReportInterval is how often scan backlog and running scan gauges are sent
 	MetricsReportInterval = 1 * time.Minute
 )
@@ -94,9 +89,6 @@ func StartScheduler(ctx context.Context, cache *ScanCapacityCache) error {
 	}()
 
 	maxImagesPerCycle := param.GetParam(ctx).MaxImagesPerCycle
-	if maxImagesPerCycle <= 0 {
-		maxImagesPerCycle = DefaultMaxImagesPerCycle
-	}
 
 	for {
 		noImages, err := processExternalImageScans(ctx, maxImagesPerCycle)
@@ -123,9 +115,6 @@ func StartScheduler(ctx context.Context, cache *ScanCapacityCache) error {
 
 func processPeriodicScans(ctx context.Context) error {
 	maxImagesPerCycle := param.GetParam(ctx).MaxImagesPerCycle
-	if maxImagesPerCycle <= 0 {
-		maxImagesPerCycle = DefaultMaxImagesPerCycle
-	}
 
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
