@@ -6,9 +6,9 @@ import (
 	"fmt"
 
 	"github.com/google/go-github/v61/github"
+	"github.com/securebuildhq/securebuild/pkg/gitspec"
 	image "github.com/securebuildhq/securebuild/pkg/image"
 	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
-	"github.com/securebuildhq/securebuild/pkg/gitspec"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"

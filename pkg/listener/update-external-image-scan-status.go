@@ -124,11 +124,22 @@ func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm 
 	}
 	cache.SetBuilderScans(vm.ID, activeScans)
 
+	// Process scan dirs concurrently with a bounded worker pool. The
+	// SSHRunner shares a single SSH connection, and each processScanDir
+	// call creates multiple SSH sessions (ReadFile, cleanup, etc.). Too
+	// many concurrent goroutines exceed the SSH server's MaxSessions
+	// limit (default 10 on Ubuntu), causing "ssh: rejected: connect
+	// failed (open failed)" errors that mark completed scans as failed
+	// and prevent scan dir cleanup.
+	const maxConcurrentScanDirs = 5
+	sem := make(chan struct{}, maxConcurrentScanDirs)
 	var scanWG sync.WaitGroup
 	for _, sd := range scanDirs {
 		scanWG.Add(1)
 		go func(sd scan.ScanDirStatus) {
 			defer scanWG.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			processScanDir(ctx, cache, vm, runner, sd)
 		}(sd)
 	}
@@ -165,7 +176,22 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 			}
 
 			if exitCode == 0 {
-				if handled := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch); handled {
+				err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch)
+				if err != nil {
+					if isSSHError(err) {
+						logger.Warn("transient SSH error reading grype result, will retry next cycle",
+							zap.String("digest", digest),
+							zap.String("arch", arch),
+							zap.Error(err))
+						allDone = false
+					} else {
+						logger.Warn("failed to handle successful scan",
+							zap.String("digest", digest),
+							zap.String("arch", arch),
+							zap.Error(err))
+						recordScanFailure(ctx, digest, arch, err, false, 0, 0)
+					}
+				} else {
 					successArchs = append(successArchs, arch)
 				}
 			} else {
@@ -213,40 +239,31 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 }
 
 // handleSuccessfulScan reads the grype JSON result and stores it in the DB.
-// Returns true if the result was stored successfully.
-func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string) bool {
+// Returns nil on success. On failure, returns an error:
+//   - SSH errors (transient): the caller should retry on the next poll cycle
+//     without marking the scan as failed or cleaning up the scan dir.
+//   - All other errors (permanent): the caller should call recordScanFailure
+//     and clean up the scan dir.
+func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string) error {
 	grypeJSONPath := filepath.Join(workDir, arch, "grype-scan.json")
 	grypeJSON, err := runner.ReadFile(grypeJSONPath)
 	if err != nil {
-		logger.Warn("failed to read grype JSON result, marking as failed",
-			zap.String("digest", digest),
-			zap.String("arch", arch),
-			zap.Error(err))
-		recordScanFailure(ctx, digest, arch,
-			externalimage.NewScanFailureError(externalimage.ErrParseScanResult,
-				fmt.Sprintf("grype JSON result missing or unreadable: %s", err.Error())),
-			false, 0, 0)
-		return false
+		return err
 	}
 
 	if strings.TrimSpace(grypeJSON) == "" {
-		logger.Warn("grype JSON result is empty, marking as failed",
-			zap.String("digest", digest),
-			zap.String("arch", arch))
-		recordScanFailure(ctx, digest, arch,
-			externalimage.NewScanFailureError(externalimage.ErrParseScanResult,
-				"grype JSON result is empty"),
-			false, 0, 0)
-		return false
+		return externalimage.NewScanFailureError(externalimage.ErrParseScanResult,
+			"grype JSON result is empty")
 	}
 
-	stored := storeBuilderScanResult(ctx, digest, arch, grypeJSON)
-	if stored {
-		logger.Info("stored scan result",
-			zap.String("digest", digest),
-			zap.String("arch", arch))
+	if err := storeBuilderScanResult(ctx, digest, arch, grypeJSON); err != nil {
+		return err
 	}
-	return stored
+
+	logger.Info("stored scan result",
+		zap.String("digest", digest),
+		zap.String("arch", arch))
+	return nil
 }
 
 // handleFailedScan reads the grype stderr and records the scan failure.
@@ -398,4 +415,19 @@ func reenqueueScan(ctx context.Context, digest string) {
 
 	logger.Info("re-enqueued external image scan",
 		zap.String("digest", digest))
+}
+
+// isSSHError returns true if the error is caused by an SSH connection or
+// session failure (e.g., MaxSessions exceeded, connection dropped). These
+// are transient: the grype output is on the builder, we just can't read it
+// right now. The poller will retry on the next cycle with a fresh SSH
+// connection.
+func isSSHError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "ssh:") ||
+		strings.Contains(msg, "SSH") ||
+		strings.Contains(msg, "handshake failed") ||
+		strings.Contains(msg, "connect failed") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "EOF")
 }

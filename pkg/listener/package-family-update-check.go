@@ -46,10 +46,10 @@ import (
 )
 
 type PackageFamilyUpdateCheckPayload struct {
-	PackageFamilyID    string `json:"packageFamilyId"`
-	Tag                string `json:"tag,omitempty"`
-	Force              bool   `json:"force,omitempty"`
-	SkipImageCreation  bool   `json:"skip_image_creation,omitempty"`
+	PackageFamilyID   string `json:"packageFamilyId"`
+	Tag               string `json:"tag,omitempty"`
+	Force             bool   `json:"force,omitempty"`
+	SkipImageCreation bool   `json:"skip_image_creation,omitempty"`
 }
 
 type GitHubVersionResult struct {
@@ -1085,10 +1085,10 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 	}
 
 	type linkedImage struct {
-		ImageID       string
-		GitRemote     string
-		ApkoFilePath  sql.NullString
-		TagTemplate   sql.NullString
+		ImageID      string
+		GitRemote    string
+		ApkoFilePath sql.NullString
+		TagTemplate  sql.NullString
 	}
 
 	var linkedImages []linkedImage
@@ -1263,6 +1263,7 @@ func createLinkedImageAPKO(ctx context.Context, imageID, gitRemote, apkoFilePath
 
 	return apkoID, nil
 }
+
 // pinCorePackageInApkoYAML finds the core package in the APKO YAML and pins it to the
 // specified version using the ~version syntax. Uses the same package detection logic
 // as IsPackageCoreForAPKO (matching by family name, package name, and provides).

@@ -29,11 +29,11 @@ type ImageAPKO struct {
 }
 
 type ImageAPKOVersion struct {
-	ID          string
-	ImageApkoID string
-	APKOYAML    string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	ImageApkoID  string
+	APKOYAML     string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 	GitRemote    string
 	ApkoFilePath string
 	GitCommitSHA string
