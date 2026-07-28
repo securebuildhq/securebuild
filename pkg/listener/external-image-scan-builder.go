@@ -15,6 +15,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/scan"
+	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"go.uber.org/zap"
 )
 
@@ -170,6 +171,9 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 //     grype processes are killed before returning, preventing orphaned
 //     processes that would race with a retry on a different builder.
 func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, digest string, sbomByArch map[string]string, archsToScan []string) error {
+	span, ctx := telemetry.StartSpan(ctx, "listener.dispatch_scan_to_builder")
+	defer span.Finish()
+
 	builderVM, err := scan.SelectBuilderForScan(ctx, cache)
 	if err != nil {
 		return fmt.Errorf("failed to select builder for scan: %w", err)

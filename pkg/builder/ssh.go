@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,11 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
+
+// ErrSSH is a sentinel error marking SSH connection or session failures
+// (dial, NewSession). Callers can distinguish transient SSH outages from
+// permanent errors with errors.Is(err, builder.ErrSSH).
+var ErrSSH = errors.New("ssh error")
 
 func GetSSHSession(ctx context.Context, id string) (*types.SSHSession, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
@@ -43,7 +49,7 @@ func GetSSHSession(ctx context.Context, id string) (*types.SSHSession, error) {
 func CreateRemoteTextFile(client *ssh.Client, path string, content string) error {
 	sess, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create ssh session for %s: %w", path, err)
+		return fmt.Errorf("failed to create ssh session for %s: %w: %w", path, ErrSSH, err)
 	}
 	stdin, err := sess.StdinPipe()
 	if err != nil {
@@ -67,7 +73,7 @@ func CreateRemoteTextFile(client *ssh.Client, path string, content string) error
 func CreateRemoteBinaryFile(client *ssh.Client, path string, data []byte) error {
 	sess, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create ssh session for %s: %w", path, err)
+		return fmt.Errorf("failed to create ssh session for %s: %w: %w", path, ErrSSH, err)
 	}
 	stdin, err := sess.StdinPipe()
 	if err != nil {
@@ -90,7 +96,7 @@ func CreateRemoteBinaryFile(client *ssh.Client, path string, data []byte) error 
 func CopyFileFromRemote(client *ssh.Client, remotePath string, localPath string) error {
 	sess, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create ssh session: %w", err)
+		return fmt.Errorf("failed to create ssh session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
@@ -203,7 +209,7 @@ func ListRemoteFiles(client *ssh.Client, path string) ([]string, error) {
 	logger.Debug("listing remote files", zap.String("path", path))
 	sess, err := client.NewSession()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create ssh session: %w", err)
+		return nil, fmt.Errorf("failed to create ssh session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
@@ -279,7 +285,7 @@ func RunCommand(ctx context.Context, client *ssh.Client, vmID string, command st
 			// DebugVMStatus is defined in pool.go but in the same package
 			DebugVMStatus(ctx, vmID)
 		}
-		return fmt.Errorf("failed to create ssh session: %w", err)
+		return fmt.Errorf("failed to create ssh session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
@@ -482,7 +488,7 @@ func GetRemoteFileChecksum(client *ssh.Client, remotePath string) (string, error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		sess, err := client.NewSession()
 		if err != nil {
-			lastErr = fmt.Errorf("attempt %d failed to create ssh session: %w", attempt+1, err)
+			lastErr = fmt.Errorf("attempt %d failed to create ssh session: %w: %w", attempt+1, ErrSSH, err)
 
 			if attempt < maxRetries-1 {
 				// Calculate exponential backoff delay: 2s, 4s, 8s
@@ -786,7 +792,7 @@ func CopyFileFromRemoteVerified(client *ssh.Client, remotePath string, localPath
 func AnalyzeAPKStructure(client *ssh.Client, remotePath string) error {
 	sess, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create ssh session: %w", err)
+		return fmt.Errorf("failed to create ssh session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
@@ -811,7 +817,7 @@ func AnalyzeAPKStructure(client *ssh.Client, remotePath string) error {
 func CheckMelangeOutput(client *ssh.Client, arch string) error {
 	sess, err := client.NewSession()
 	if err != nil {
-		return fmt.Errorf("failed to create ssh session: %w", err)
+		return fmt.Errorf("failed to create ssh session: %w: %w", ErrSSH, err)
 	}
 	defer sess.Close()
 
