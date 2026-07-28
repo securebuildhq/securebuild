@@ -83,6 +83,10 @@ func pollScanStatus(ctx context.Context, cache *scan.ScanCapacityCache) error {
 // processBuilderScans checks all scan directories on a single builder,
 // collects results for completed scans, and cleans up finished scan dirs.
 func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm buildertypes.BuilderVM) {
+	span, ctx := telemetry.StartSpan(ctx, "listener.process_builder_scans")
+	defer span.Finish()
+	span.SetTag("machine_id", vm.ID)
+
 	baseDir, err := scan.ResolveScanBaseDir(ctx, vm)
 	if err != nil {
 		logger.Warn("failed to resolve scan base dir for builder, skipping",
@@ -246,6 +250,11 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 //   - All other errors (permanent): the caller should call recordScanFailure
 //     and clean up the scan dir.
 func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string) error {
+	span, ctx := telemetry.StartSpan(ctx, "listener.handle_successful_scan")
+	defer span.Finish()
+	span.SetTag("digest", digest)
+	span.SetTag("arch", arch)
+
 	grypeJSONPath := filepath.Join(workDir, arch, "grype-scan.json")
 	grypeJSON, err := runner.ReadFile(grypeJSONPath)
 	if err != nil {
@@ -270,6 +279,12 @@ func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workD
 // handleFailedScan reads the grype stderr and records the scan failure.
 // Grype failures are non-retryable (same SBOM gives same result).
 func handleFailedScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string, exitCode int) {
+	span, ctx := telemetry.StartSpan(ctx, "listener.handle_failed_scan")
+	defer span.Finish()
+	span.SetTag("digest", digest)
+	span.SetTag("arch", arch)
+	span.SetTag("exit_code", exitCode)
+
 	stderrPath := filepath.Join(workDir, arch, "output", "grype.stderr")
 	stderr := ""
 	if content, err := runner.ReadFileTail(stderrPath, 10240); err == nil {
@@ -356,6 +371,10 @@ func writeExitCode(ctx context.Context, runner buildbackend.Runner, workDir, arc
 
 // cleanupScanDir removes the scan work directory from the builder.
 func cleanupScanDir(ctx context.Context, runner buildbackend.Runner, workDir string) {
+	span, _ := telemetry.StartSpan(ctx, "listener.cleanup_scan_dir")
+	defer span.Finish()
+	span.SetTag("work_dir", workDir)
+
 	cmd := fmt.Sprintf("rm -rf %q", workDir)
 	if _, err := runner.RunCommand(ctx, cmd); err != nil {
 		logger.Warn("failed to clean up scan dir on builder",

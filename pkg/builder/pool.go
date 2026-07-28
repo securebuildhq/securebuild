@@ -782,7 +782,17 @@ func InstallBuildEnv(ctx context.Context, vmID string) error {
 	// Install Docker
 	{
 		if err := installDocker(ctx, vm); err != nil {
-			return fmt.Errorf("failed to install docker on VM %s: %w", vmID, err)
+			return fmt.Errorf("failed to install docker on VM %s: %w", vm.ID, err)
+		}
+	}
+
+	// Configure SSH MaxSessions for CMX VMs to allow many concurrent
+	// poller sessions for scan result collection.
+	{
+		if err := configureSSHMaxSessions(ctx, vm); err != nil {
+			logger.Warn("failed to configure SSH MaxSessions, proceeding with default",
+				zap.String("vmID", vmID),
+				zap.Error(err))
 		}
 	}
 
@@ -1449,6 +1459,55 @@ sudo docker --version
 	if err != nil {
 		return fmt.Errorf("failed to install docker on VM %s: %w", vm.ID, err)
 	}
+
+	return nil
+}
+
+// configureSSHMaxSessions raises MaxSessions on CMX builder VMs so the
+// scan poller can open many concurrent SSH sessions (for reading grype
+// results, cleaning up scan dirs, etc.) without hitting the default
+// limit of 10. Local and static VMs are skipped.
+func configureSSHMaxSessions(ctx context.Context, vm types.BuilderVM) error {
+	if vm.Type == "local" {
+		return nil
+	}
+
+	client, err := GetSSHClient(ctx, vm)
+	if err != nil {
+		return fmt.Errorf("failed to get ssh client for VM %s: %w", vm.ID, err)
+	}
+	defer client.Close()
+
+	cmd := `sudo sed -i 's/^#\?MaxSessions.*/MaxSessions 500/' /etc/ssh/sshd_config && sudo systemctl restart sshd`
+
+	stdoutCh := make(chan string)
+	stderrCh := make(chan string)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for line := range stdoutCh {
+			logger.Debug("configure MaxSessions stdout", zap.String("vmID", vm.ID), zap.String("output", line))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for line := range stderrCh {
+			logger.Debug("configure MaxSessions stderr", zap.String("vmID", vm.ID), zap.String("output", line))
+		}
+	}()
+
+	err = RunCommand(ctx, client.Client, vm.ID, cmd, stdoutCh, stderrCh)
+	wg.Wait()
+
+	if err != nil {
+		return fmt.Errorf("failed to configure MaxSessions on VM %s: %w", vm.ID, err)
+	}
+
+	logger.Info("configured MaxSessions on builder VM",
+		zap.String("vmID", vm.ID),
+		zap.String("type", vm.Type),
+		zap.Int("maxSessions", 500))
 
 	return nil
 }
