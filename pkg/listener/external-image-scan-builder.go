@@ -173,7 +173,6 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, digest string, sbomByArch map[string]string, archsToScan []string) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.dispatch_scan_to_builder")
 	defer span.Finish()
-	span.SetTag("digest", digest)
 
 	builderVM, err := scan.SelectBuilderForScan(ctx, cache)
 	if err != nil {

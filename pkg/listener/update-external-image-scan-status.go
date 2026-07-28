@@ -1,10 +1,13 @@
 package listener
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	"github.com/securebuildhq/securebuild/pkg/buildbackend"
+	"github.com/securebuildhq/securebuild/pkg/builder"
 	buildertypes "github.com/securebuildhq/securebuild/pkg/builder/types"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	"github.com/securebuildhq/securebuild/pkg/listener/types"
@@ -82,10 +86,16 @@ func pollScanStatus(ctx context.Context, cache *scan.ScanCapacityCache) error {
 
 // processBuilderScans checks all scan directories on a single builder,
 // collects results for completed scans, and cleans up finished scan dirs.
+//
+// Completed scans are batched: a single tar is created on the VM containing
+// all grype-scan.json and grype.stderr files, transferred in one SSH session,
+// and processed locally. This avoids opening dozens of individual SSH
+// sessions (one per file) that exhaust the SSH server's MaxSessions limit.
+// Scan dirs that are still in-progress or have timed-out archs are handled
+// individually since they require interactive SSH commands (kill, write).
 func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm buildertypes.BuilderVM) {
 	span, ctx := telemetry.StartSpan(ctx, "listener.process_builder_scans")
 	defer span.Finish()
-	span.SetTag("machine_id", vm.ID)
 
 	baseDir, err := scan.ResolveScanBaseDir(ctx, vm)
 	if err != nil {
@@ -129,26 +139,265 @@ func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm 
 	}
 	cache.SetBuilderScans(vm.ID, activeScans)
 
-	// Process scan dirs concurrently with a bounded worker pool. The
-	// SSHRunner shares a single SSH connection, and each processScanDir
-	// call creates multiple SSH sessions (ReadFile, cleanup, etc.). Too
-	// many concurrent goroutines exceed the SSH server's MaxSessions
-	// limit (default 10 on Ubuntu), causing "ssh: rejected: connect
-	// failed (open failed)" errors that mark completed scans as failed
-	// and prevent scan dir cleanup.
-	const maxConcurrentScanDirs = 5
-	sem := make(chan struct{}, maxConcurrentScanDirs)
-	var scanWG sync.WaitGroup
+	// Partition scan dirs into completed (batch via tar) and in-progress
+	// (handle individually for timeout/kill).
+	var completedDirs []scan.ScanDirStatus
+	var inProgressDirs []scan.ScanDirStatus
 	for _, sd := range scanDirs {
-		scanWG.Add(1)
-		go func(sd scan.ScanDirStatus) {
-			defer scanWG.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			processScanDir(ctx, cache, vm, runner, sd)
-		}(sd)
+		if sd.AllArchsDone && len(sd.ArchStatuses) > 0 {
+			completedDirs = append(completedDirs, sd)
+		} else {
+			inProgressDirs = append(inProgressDirs, sd)
+		}
 	}
-	scanWG.Wait()
+
+	// Handle in-progress scans individually (timeout detection, kill).
+	for _, sd := range inProgressDirs {
+		processScanDir(ctx, cache, vm, runner, sd)
+	}
+
+	// Batch-collect completed scans via a single tar transfer.
+	if len(completedDirs) > 0 {
+		processCompletedScansBatch(ctx, cache, vm, runner, baseDir, completedDirs)
+	}
+}
+
+// processCompletedScansBatch transfers all completed scan results from the
+// builder in a single tar archive, processes them locally, and cleans up
+// all completed scan dirs with a single rm -rf command. This replaces the
+// per-scan-dir SSH ReadFile + cleanup approach that opened dozens of SSH
+// sessions.
+func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCache, vm buildertypes.BuilderVM, runner buildbackend.Runner, baseDir string, completedDirs []scan.ScanDirStatus) {
+	span, ctx := telemetry.StartSpan(ctx, "listener.process_completed_scans_batch")
+	defer span.Finish()
+
+	// Build a list of relative paths to include in the tar. For each
+	// completed scan dir, include grype-scan.json and grype.stderr for
+	// every arch that has an exit_code file (i.e., grype finished).
+	type archResult struct {
+		digest    string
+		arch      string
+		exitCode  int
+		grypePath string
+		stderrRel string
+	}
+	var results []archResult
+	var tarRelPaths []string
+
+	for _, sd := range completedDirs {
+		if sd.Metadata.Digest == "" {
+			continue
+		}
+		relDir, err := filepath.Rel(baseDir, sd.WorkDir)
+		if err != nil {
+			continue
+		}
+		for arch, status := range sd.ArchStatuses {
+			if !status.Done {
+				continue
+			}
+			exitCode, parseErr := strconv.Atoi(strings.TrimSpace(status.ExitCode))
+			if parseErr != nil {
+				exitCode = 1
+			}
+			grypeRel := filepath.Join(relDir, arch, "grype-scan.json")
+			stderrRel := filepath.Join(relDir, arch, "output", "grype.stderr")
+			tarRelPaths = append(tarRelPaths, grypeRel, stderrRel)
+			results = append(results, archResult{
+				digest:    sd.Metadata.Digest,
+				arch:      arch,
+				exitCode:  exitCode,
+				grypePath: grypeRel,
+				stderrRel: stderrRel,
+			})
+		}
+	}
+
+	if len(tarRelPaths) == 0 {
+		return
+	}
+
+	// Create tar on the VM containing all result files. Use --null -T -
+	// with a null-delimited file list to handle paths with colons (digests).
+	localDir, err := os.MkdirTemp("", "scan-results-*")
+	if err != nil {
+		logger.Warn("failed to create temp dir for scan results, falling back to per-dir processing",
+			zap.String("machineID", vm.ID),
+			zap.Error(err))
+		for _, sd := range completedDirs {
+			processScanDir(ctx, cache, vm, runner, sd)
+		}
+		return
+	}
+	defer os.RemoveAll(localDir)
+
+	if err := tarScanResultsFromBuilder(ctx, runner, baseDir, localDir, tarRelPaths); err != nil {
+		if errors.Is(err, builder.ErrSSH) {
+			logger.Warn("transient SSH error during batch tar transfer, will retry next cycle",
+				zap.String("machineID", vm.ID),
+				zap.Error(err))
+			return
+		}
+		logger.Warn("failed to batch transfer scan results, falling back to per-dir processing",
+			zap.String("machineID", vm.ID),
+			zap.Error(err))
+		for _, sd := range completedDirs {
+			processScanDir(ctx, cache, vm, runner, sd)
+		}
+		return
+	}
+
+	// Process results locally from the extracted tar.
+	now := time.Now().UTC()
+	var dirsToCleanup []string
+	successByDigest := make(map[string][]string)
+
+	for _, r := range results {
+		grypeJSON := ""
+		grypeLocalPath := filepath.Join(localDir, r.grypePath)
+		if data, err := os.ReadFile(grypeLocalPath); err == nil {
+			grypeJSON = string(data)
+		}
+
+		if r.exitCode == 0 {
+			if strings.TrimSpace(grypeJSON) == "" {
+				recordScanFailure(ctx, r.digest, r.arch,
+					externalimage.NewScanFailureError(externalimage.ErrParseScanResult,
+						"grype JSON result is empty"),
+					false, 0, 0)
+				logger.Warn("grype JSON result is empty",
+					zap.String("digest", r.digest),
+					zap.String("arch", r.arch))
+			} else if err := storeBuilderScanResult(ctx, r.digest, r.arch, grypeJSON); err != nil {
+				logger.Warn("failed to store scan result",
+					zap.String("digest", r.digest),
+					zap.String("arch", r.arch),
+					zap.Error(err))
+				recordScanFailure(ctx, r.digest, r.arch, err, false, 0, 0)
+			} else {
+				logger.Info("stored scan result",
+					zap.String("digest", r.digest),
+					zap.String("arch", r.arch))
+				successByDigest[r.digest] = append(successByDigest[r.digest], r.arch)
+			}
+		} else {
+			stderr := ""
+			stderrLocalPath := filepath.Join(localDir, r.stderrRel)
+			if data, err := os.ReadFile(stderrLocalPath); err == nil {
+				stderr = strings.TrimRight(string(data), "\n\r")
+			}
+			msg := fmt.Sprintf("grype exited with code %d", r.exitCode)
+			if stderr != "" {
+				msg = fmt.Sprintf("grype exited with code %d: %s", r.exitCode, stderr)
+			}
+			recordScanFailure(ctx, r.digest, r.arch,
+				externalimage.NewScanFailureError(externalimage.ErrScanExecutionFailed, msg),
+				false, 0, 0)
+			logger.Warn("scan failed",
+				zap.String("digest", r.digest),
+				zap.String("arch", r.arch),
+				zap.Int("exitCode", r.exitCode))
+		}
+	}
+
+	// Update last_security_scanned and collect dirs for batch cleanup.
+	for _, sd := range completedDirs {
+		if sd.Metadata.Digest == "" {
+			continue
+		}
+		scannedArchs := make([]string, 0, len(sd.ArchStatuses))
+		for arch := range sd.ArchStatuses {
+			scannedArchs = append(scannedArchs, arch)
+		}
+		if err := scan.UpdateLastSecurityScanned(ctx, sd.Metadata.Digest, scannedArchs, now); err != nil {
+			logger.Warn("failed to update last_security_scanned_at",
+				zap.String("digest", sd.Metadata.Digest),
+				zap.Error(err))
+		}
+		cache.RemoveScan(vm.ID, sd.Metadata.Digest)
+		dirsToCleanup = append(dirsToCleanup, sd.WorkDir)
+
+		logger.Info("completed scan collection for digest",
+			zap.String("digest", sd.Metadata.Digest),
+			zap.Int("archs", len(sd.ArchStatuses)),
+			zap.Int("succeeded", len(successByDigest[sd.Metadata.Digest])),
+			zap.String("machineID", vm.ID))
+	}
+
+	// Batch cleanup: single rm -rf for all completed scan dirs.
+	if len(dirsToCleanup) > 0 {
+		cleanupScanDirsBatch(ctx, runner, dirsToCleanup)
+	}
+}
+
+// tarScanResultsFromBuilder creates a tar.gz on the VM containing the given
+// relative paths (relative to baseDir), transfers it locally, and extracts
+// it into localDir.
+func tarScanResultsFromBuilder(ctx context.Context, runner buildbackend.Runner, baseDir, localDir string, relPaths []string) error {
+	// Write the file list to a temp file on the VM, then tar from it.
+	// Using --null -T - with null-delimited input handles paths with
+	// colons (digests like sha256:abc...) safely.
+	listContent := strings.Join(relPaths, "\x00") + "\x00"
+
+	remoteListPath := fmt.Sprintf("/tmp/scan-tar-list-%d.txt", time.Now().UnixNano())
+	remoteTarPath := fmt.Sprintf("/tmp/scan-tar-%d.tar.gz", time.Now().UnixNano())
+
+	if err := runner.WriteFile(remoteListPath, listContent); err != nil {
+		return fmt.Errorf("failed to write file list to VM: %w", err)
+	}
+
+	tarCmd := fmt.Sprintf("cd %q && tar -czf %q --null -T %q && rm -f %q",
+		baseDir, remoteTarPath, remoteListPath, remoteListPath)
+	if _, err := runner.RunCommand(ctx, tarCmd); err != nil {
+		_, _ = runner.RunCommand(ctx, fmt.Sprintf("rm -f %q %q", remoteListPath, remoteTarPath))
+		return fmt.Errorf("failed to create tar on VM: %w", err)
+	}
+
+	// Copy tar to local temp file and extract.
+	tmpFile, err := os.CreateTemp("", "scan-tar-*.tar.gz")
+	if err != nil {
+		_, _ = runner.RunCommand(ctx, fmt.Sprintf("rm -f %q", remoteTarPath))
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	if err := runner.CopyToLocal(remoteTarPath, tmpPath); err != nil {
+		_, _ = runner.RunCommand(ctx, fmt.Sprintf("rm -f %q", remoteTarPath))
+		return fmt.Errorf("failed to copy tar from VM: %w", err)
+	}
+
+	// Clean up remote tar.
+	_, _ = runner.RunCommand(ctx, fmt.Sprintf("rm -f %q", remoteTarPath))
+
+	// Extract locally.
+	extractCmd := exec.CommandContext(ctx, "tar", "-xzf", tmpPath, "-C", localDir)
+	var stderr bytes.Buffer
+	extractCmd.Stderr = &stderr
+	if err := extractCmd.Run(); err != nil {
+		return fmt.Errorf("failed to extract tar: %w (stderr: %s)", err, stderr.String())
+	}
+
+	return nil
+}
+
+// cleanupScanDirsBatch removes multiple scan directories in a single SSH
+// command.
+func cleanupScanDirsBatch(ctx context.Context, runner buildbackend.Runner, workDirs []string) {
+	span, _ := telemetry.StartSpan(ctx, "listener.cleanup_scan_dirs_batch")
+	defer span.Finish()
+
+	quoted := make([]string, len(workDirs))
+	for i, d := range workDirs {
+		quoted[i] = fmt.Sprintf("%q", d)
+	}
+	cmd := "rm -rf " + strings.Join(quoted, " ")
+	if _, err := runner.RunCommand(ctx, cmd); err != nil {
+		logger.Warn("failed to batch clean up scan dirs on builder",
+			zap.Strings("workDirs", workDirs),
+			zap.Error(err))
+	}
 }
 
 // processScanDir processes a single scan directory on a builder.
@@ -180,22 +429,22 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 				exitCode = 1
 			}
 
-		if exitCode == 0 {
-			err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch)
-			if err != nil {
-				if errors.Is(err, buildbackend.ErrSSH) {
-					logger.Warn("transient SSH error reading grype result, will retry next cycle",
-						zap.String("digest", digest),
-						zap.String("arch", arch),
-						zap.Error(err))
-					allDone = false
-				} else {
-					logger.Warn("failed to handle successful scan",
-						zap.String("digest", digest),
-						zap.String("arch", arch),
-						zap.Error(err))
-					recordScanFailure(ctx, digest, arch, err, false, 0, 0)
-				}
+			if exitCode == 0 {
+				err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch)
+				if err != nil {
+					if errors.Is(err, builder.ErrSSH) {
+						logger.Warn("transient SSH error reading grype result, will retry next cycle",
+							zap.String("digest", digest),
+							zap.String("arch", arch),
+							zap.Error(err))
+						allDone = false
+					} else {
+						logger.Warn("failed to handle successful scan",
+							zap.String("digest", digest),
+							zap.String("arch", arch),
+							zap.Error(err))
+						recordScanFailure(ctx, digest, arch, err, false, 0, 0)
+					}
 				} else {
 					successArchs = append(successArchs, arch)
 				}
@@ -252,8 +501,6 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.handle_successful_scan")
 	defer span.Finish()
-	span.SetTag("digest", digest)
-	span.SetTag("arch", arch)
 
 	grypeJSONPath := filepath.Join(workDir, arch, "grype-scan.json")
 	grypeJSON, err := runner.ReadFile(grypeJSONPath)
@@ -281,9 +528,6 @@ func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workD
 func handleFailedScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string, exitCode int) {
 	span, ctx := telemetry.StartSpan(ctx, "listener.handle_failed_scan")
 	defer span.Finish()
-	span.SetTag("digest", digest)
-	span.SetTag("arch", arch)
-	span.SetTag("exit_code", exitCode)
 
 	stderrPath := filepath.Join(workDir, arch, "output", "grype.stderr")
 	stderr := ""
@@ -373,7 +617,6 @@ func writeExitCode(ctx context.Context, runner buildbackend.Runner, workDir, arc
 func cleanupScanDir(ctx context.Context, runner buildbackend.Runner, workDir string) {
 	span, _ := telemetry.StartSpan(ctx, "listener.cleanup_scan_dir")
 	defer span.Finish()
-	span.SetTag("work_dir", workDir)
 
 	cmd := fmt.Sprintf("rm -rf %q", workDir)
 	if _, err := runner.RunCommand(ctx, cmd); err != nil {
