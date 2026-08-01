@@ -69,6 +69,18 @@ func ListPackagesForAPKO(ctx context.Context, apkoYAML string) ([]types.APKPacka
 		parsed := apkopackage.ResolvePackageNameVersionPin(pkg)
 		if parsed.Version != "" {
 			pinnedVersions[parsed.Name] = parsed.Version
+
+			// Add both the package name and provides name to the map so that
+			// apko show-packages output (which uses the actual package name) can
+			// be matched regardless of whether the YAML references the package by
+			// its provides name or its actual name.
+			names, err := getPackageAndProvidesNames(ctx, parsed.Name, parsed.Version)
+			if err != nil {
+				return nil, err
+			}
+			for _, name := range names {
+				pinnedVersions[name] = parsed.Version
+			}
 		}
 	}
 
@@ -148,6 +160,41 @@ func ListPackagesForAPKO(ctx context.Context, apkoYAML string) ([]types.APKPacka
 	}
 
 	return packages, nil
+}
+
+func getPackageAndProvidesNames(ctx context.Context, name, version string) ([]string, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	rows, err := conn.Query(ctx, `
+		SELECT DISTINCT pvp.package_name, pvp.provides_name
+		FROM package_version pv
+		JOIN package_version_provides pvp ON pv.id = pvp.package_version_id
+		WHERE (pvp.package_name = $1 OR pvp.provides_name = $1) AND pv.version = $2
+	`, name, version)
+	if err != nil {
+		return nil, fmt.Errorf("query package_version_provides: %w", err)
+	}
+	defer rows.Close()
+
+	names := make(map[string]struct{})
+	for rows.Next() {
+		var packageName, providesName string
+		if err := rows.Scan(&packageName, &providesName); err != nil {
+			return nil, fmt.Errorf("scan package_version_provides: %w", err)
+		}
+		names[packageName] = struct{}{}
+		names[providesName] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate package_version_provides: %w", err)
+	}
+
+	result := make([]string, 0, len(names))
+	for n := range names {
+		result = append(result, n)
+	}
+	return result, nil
 }
 
 func parseVersionWithoutRelease(version string) (string, string, error) {
