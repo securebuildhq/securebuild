@@ -1,11 +1,16 @@
 package worker_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"io"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/securebuildhq/securebuild/integration/testutil"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	"github.com/securebuildhq/securebuild/pkg/listener"
@@ -47,12 +52,9 @@ func TestExternalImageScanStatusTransitions(t *testing.T) {
 	err = testutil.ApplySchemaHero(ctx, testDB.ConnStr, seedDataDir, true)
 	require.NoError(t, err)
 
-	// Initialize context with database connection
-	overrides := map[string]string{
-		"DB_URI": testDB.ConnStr,
-	}
-	ctx, err = param.Init(param.InitSourceEnvironment, overrides)
-	require.NoError(t, err)
+	// Initialize context with database + MinIO object storage
+	ctx, minioStorage := setupMinIOOverrides(ctx, t, testDB.ConnStr)
+	defer testutil.TeardownMinIO(ctx, t, minioStorage)
 
 	err = persistence.InitPostgres(ctx)
 	require.NoError(t, err)
@@ -167,12 +169,9 @@ func TestExternalImageScanFailure(t *testing.T) {
 	err = testutil.ApplySchemaHero(ctx, testDB.ConnStr, schemaDir, false)
 	require.NoError(t, err)
 
-	// Initialize context
-	overrides := map[string]string{
-		"DB_URI": testDB.ConnStr,
-	}
-	ctx, err = param.Init(param.InitSourceEnvironment, overrides)
-	require.NoError(t, err)
+	// Initialize context with database + MinIO object storage
+	ctx, minioStorage := setupMinIOOverrides(ctx, t, testDB.ConnStr)
+	defer testutil.TeardownMinIO(ctx, t, minioStorage)
 
 	err = persistence.InitPostgres(ctx)
 	require.NoError(t, err)
@@ -271,12 +270,9 @@ func TestExternalImageSBOMStatusTransitions(t *testing.T) {
 	err = testutil.ApplySchemaHero(ctx, testDB.ConnStr, seedDataDir, true)
 	require.NoError(t, err)
 
-	// Initialize context
-	overrides := map[string]string{
-		"DB_URI": testDB.ConnStr,
-	}
-	ctx, err = param.Init(param.InitSourceEnvironment, overrides)
-	require.NoError(t, err)
+	// Initialize context with database + MinIO object storage
+	ctx, minioStorage := setupMinIOOverrides(ctx, t, testDB.ConnStr)
+	defer testutil.TeardownMinIO(ctx, t, minioStorage)
 
 	err = persistence.InitPostgres(ctx)
 	require.NoError(t, err)
@@ -376,12 +372,9 @@ func TestExternalImageMultiArchWorkflow(t *testing.T) {
 	err = testutil.ApplySchemaHero(ctx, testDB.ConnStr, seedDataDir, true)
 	require.NoError(t, err)
 
-	// Initialize context
-	overrides := map[string]string{
-		"DB_URI": testDB.ConnStr,
-	}
-	ctx, err = param.Init(param.InitSourceEnvironment, overrides)
-	require.NoError(t, err)
+	// Initialize context with database + MinIO object storage
+	ctx, minioStorage := setupMinIOOverrides(ctx, t, testDB.ConnStr)
+	defer testutil.TeardownMinIO(ctx, t, minioStorage)
 
 	err = persistence.InitPostgres(ctx)
 	require.NoError(t, err)
@@ -468,6 +461,129 @@ func TestExternalImageMultiArchWorkflow(t *testing.T) {
 		sbomStatuses = getSBOMStatuses(t, ctx, testDigest)
 		require.Len(t, sbomStatuses, 1)
 		assert.Equal(t, "succeeded", sbomStatuses[0].Status)
+	})
+}
+
+// TestExternalImageScanBlobUpload verifies that scan results are uploaded
+// to object storage (MinIO) as gzip-compressed blobs when
+// R2_IMAGE_SCANS_BUCKET_NAME is configured.
+func TestExternalImageScanBlobUpload(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	ctx := context.Background()
+
+	// Setup test database
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+
+	schemaDir := filepath.Join(projectRoot, "db", "schema", "tables")
+	err = testutil.ApplySchemaHero(ctx, testDB.ConnStr, schemaDir, false)
+	require.NoError(t, err)
+
+	seedDataDir := filepath.Join(projectRoot, "integration", "worker", "external_image", "testdata", "seed-data")
+	err = testutil.ApplySchemaHero(ctx, testDB.ConnStr, seedDataDir, true)
+	require.NoError(t, err)
+
+	// Initialize context with database + MinIO object storage
+	ctx, minioStorage := setupMinIOOverrides(ctx, t, testDB.ConnStr)
+	defer testutil.TeardownMinIO(ctx, t, minioStorage)
+
+	err = persistence.InitPostgres(ctx)
+	require.NoError(t, err)
+	defer persistence.ClosePool(ctx)
+
+	testDigest := "sha256:test-blob-upload-digest-12345678901234567890123456"
+
+	mockFetchSBOM := func(ctx context.Context, registry string, imageName string, digest string) ([]sbom.SBOMResult, error) {
+		return []sbom.SBOMResult{
+			{
+				Architecture:   "linux/amd64",
+				SBOM:           `{"artifacts":[],"source":{"type":"image","target":{"imageIndex":0}}}`,
+				Source:         "syft",
+				ImageSizeBytes: 1024000,
+				ImageDigest:    "sha256:mockdigest-x86-64",
+			},
+		}, nil
+	}
+
+	rawScanResult := `{"matches":[],"descriptor":{"name":"grype","version":"0.95.0"}}`
+	mockScanExternalImage := func(ctx context.Context, digest string) (map[string]string, error) {
+		return map[string]string{
+			"x86_64": rawScanResult,
+		}, nil
+	}
+
+	t.Run("Scan results uploaded to object storage as gzip blobs", func(t *testing.T) {
+		// Add image and process SBOM
+		err := externalimage.AddExternalImage(ctx, "docker.io", "library/nginx", "latest", testDigest, "", "")
+		require.NoError(t, err)
+
+		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest)
+		require.NoError(t, err)
+
+		payload := listenertypes.ExternalImageSbomPayload{Digest: testDigest}
+		ctx = setupMocks(ctx, mockFetchSBOM, mockScanExternalImage)
+
+		err = listener.HandleExternalImageSbom(ctx, payload)
+		require.NoError(t, err)
+
+		// Run scan (uses mock scan function)
+		err = listener.RunScanForDigest(ctx, testDigest)
+		require.NoError(t, err)
+
+		// Verify scan succeeded in DB
+		scanStatuses := getScanStatuses(t, ctx, testDigest)
+		require.Len(t, scanStatuses, 1)
+		assert.Equal(t, "succeeded", scanStatuses[0].Status)
+
+		// Verify raw_result.json.gz exists in object storage
+		rawResultKey := "test-blob-upload-digest-12345678901234567890123456/x86_64/raw_result.json.gz"
+		getOutput, err := minioStorage.S3Client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String("image-scans"),
+			Key:    aws.String(rawResultKey),
+		})
+		require.NoError(t, err, "raw_result.json.gz should exist in object storage")
+		defer getOutput.Body.Close()
+
+		bodyBytes, err := io.ReadAll(getOutput.Body)
+		require.NoError(t, err)
+
+		// Verify the object is gzip-compressed and contains the original scan result
+		gzReader, err := gzip.NewReader(bytes.NewReader(bodyBytes))
+		require.NoError(t, err, "object should be valid gzip data")
+		defer gzReader.Close()
+
+		decompressed, err := io.ReadAll(gzReader)
+		require.NoError(t, err)
+
+		assert.Equal(t, rawScanResult, string(decompressed),
+			"decompressed raw_result should match the original scan result")
+
+		// Verify parsed_results_details.json.gz exists in object storage
+		parsedDetailsKey := "test-blob-upload-digest-12345678901234567890123456/x86_64/parsed_results_details.json.gz"
+		getOutput2, err := minioStorage.S3Client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String("image-scans"),
+			Key:    aws.String(parsedDetailsKey),
+		})
+		require.NoError(t, err, "parsed_results_details.json.gz should exist in object storage")
+		defer getOutput2.Body.Close()
+
+		bodyBytes2, err := io.ReadAll(getOutput2.Body)
+		require.NoError(t, err)
+
+		gzReader2, err := gzip.NewReader(bytes.NewReader(bodyBytes2))
+		require.NoError(t, err, "parsed_results_details should be valid gzip data")
+		defer gzReader2.Close()
+
+		decompressed2, err := io.ReadAll(gzReader2)
+		require.NoError(t, err)
+		assert.NotEmpty(t, string(decompressed2), "parsed_results_details should not be empty")
 	})
 }
 
@@ -567,6 +683,35 @@ func getSBOMStatuses(t *testing.T, ctx context.Context, digest string) []sbomSta
 	}
 
 	return statuses
+}
+
+// setupMinIOOverrides returns param overrides for MinIO-based R2 config,
+// including a dedicated image-scans bucket. The caller is responsible for
+// deferring testutil.TeardownMinIO.
+func setupMinIOOverrides(ctx context.Context, t *testing.T, dbConnStr string) (context.Context, *testutil.MinIOStorage) {
+	t.Helper()
+
+	minioStorage := testutil.SetupMinIO(ctx, t)
+
+	imageScansBucket := "image-scans"
+	_, err := minioStorage.S3Client.CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(imageScansBucket),
+	})
+	require.NoError(t, err)
+
+	overrides := map[string]string{
+		"DB_URI":                     dbConnStr,
+		"R2_IMAGE_SCANS_BUCKET_NAME": imageScansBucket,
+		"R2_ACCESS_KEY":              minioStorage.AccessKey,
+		"R2_SECRET_KEY":              minioStorage.SecretKey,
+		"R2_ENDPOINT":                minioStorage.Endpoint,
+		"R2_USE_DYNAMIC_FOLDER":      "false",
+		"R2_USE_PATH_STYLE":          "true",
+	}
+	ctx, err = param.Init(param.InitSourceEnvironment, overrides)
+	require.NoError(t, err)
+
+	return ctx, minioStorage
 }
 
 // Mock helpers
