@@ -69,11 +69,12 @@ type Param struct {
 	OIDCGCPAttestorAccount string `yaml:"oidc_gcp_attestor_account"`
 	OIDCGCPAttestorKeyJSON string `yaml:"oidc_gcp_attestor_key_json"`
 
-	R2BucketName     string `yaml:"r2_bucket_name"`
-	R2FeedBucketName string `yaml:"r2_feed_bucket_name"`
-	R2AccessKey      string `yaml:"r2_access_key"`
-	R2SecretKey      string `yaml:"r2_secret_key"`
-	R2Endpoint       string `yaml:"r2_endpoint"`
+	R2BucketName           string `yaml:"r2_bucket_name"`
+	R2FeedBucketName       string `yaml:"r2_feed_bucket_name"`
+	R2ImageScansBucketName string `yaml:"r2_image_scans_bucket_name"`
+	R2AccessKey            string `yaml:"r2_access_key"`
+	R2SecretKey            string `yaml:"r2_secret_key"`
+	R2Endpoint             string `yaml:"r2_endpoint"`
 	// R2Region is the SigV4 signing region for S3-compatible APIs. Cloudflare R2 uses "auto" (default when empty). AWS S3 requires the bucket region (e.g. us-east-1).
 	R2Region           string `yaml:"r2_region"`
 	R2UseDynamicFolder bool   `yaml:"r2_use_dynamic_folder"`

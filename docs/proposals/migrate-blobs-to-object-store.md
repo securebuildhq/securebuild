@@ -27,9 +27,9 @@ Move these three columns to S3-compatible object storage (Cloudflare R2 via exis
 Both tables have a composite primary key `(digest, arch)`. The object key is derived deterministically from these columns — no pointer column is needed in the database:
 
 ```
-external-image-scan/{digest}/{arch}/raw_result.json
-external-image-scan/{digest}/{arch}/parsed_results_details.json
-external-image-sbom/{digest}/{arch}/sbom.json
+external-image-scan/{digest}/{arch}/raw_result.json.gz
+external-image-scan/{digest}/{arch}/parsed_results_details.json.gz
+external-image-sbom/{digest}/{arch}/sbom.json.gz
 ```
 
 Given any row's `(digest, arch)`, the object key can be computed without any DB read. This eliminates:
@@ -68,21 +68,31 @@ Phase 4: Stop writing to DB columns + drop them
 ### Object key format
 
 ```
-{digest}/{arch}/raw_result.json
-{digest}/{arch}/parsed_results_details.json
-{digest}/{arch}/sbom.json
+{digest}/{arch}/raw_result.json.gz
+{digest}/{arch}/parsed_results_details.json.gz
+{digest}/{arch}/sbom.json.gz
 ```
 
-The `sha256:` algorithm prefix is stripped from the digest, so `sha256:ab3f...` becomes `ab3f.../x86_64/raw_result.json`. The digest is a random hex hash, so it naturally distributes objects evenly across S3/R2 partitions without any artificial shard prefix.
+The `sha256:` algorithm prefix is stripped from the digest, so `sha256:ab3f...` becomes `ab3f.../x86_64/raw_result.json.gz`. The digest is a random hex hash, so it naturally distributes objects evenly across S3/R2 partitions without any artificial shard prefix.
 
 Example keys:
 ```
-ab3f9e.../x86_64/raw_result.json
-ab3f9e.../x86_64/parsed_results_details.json
-c19d2a.../aarch64/sbom.json
+ab3f9e.../x86_64/raw_result.json.gz
+ab3f9e.../x86_64/parsed_results_details.json.gz
+c19d2a.../aarch64/sbom.json.gz
 ```
 
 No schema changes are needed. The keys are computed from the existing primary key columns.
+
+### Gzip compression
+
+All blob objects are gzip-compressed on upload and decompressed on download. This reduces storage and bandwidth costs by ~80-90% for JSON data (grype output, parsed vulnerability details, SBOM JSON are highly compressible text).
+
+- **Upload**: data is gzip-compressed in memory, then uploaded via `R2Client.PutObject` (same pattern as the existing Alpine secdb feed publisher).
+- **Download**: the compressed bytes are fetched via `R2Client.GetObjectData` and decompressed in memory.
+- The `.gz` suffix in object keys makes the compression obvious to anyone inspecting the bucket.
+
+The compression/decompression is handled entirely within `pkg/externalimage/blobstore.go` — callers always work with plain strings and are unaware of the compression.
 
 ### Bucket configuration
 
@@ -102,8 +112,11 @@ A thin layer over `pkg/storage.R2Client` that handles upload/download of the thr
 package externalimage
 
 import (
+    "bytes"
+    "compress/gzip"
     "context"
     "fmt"
+    "io"
     "strings"
 
     "github.com/securebuildhq/securebuild/pkg/param"
@@ -137,39 +150,78 @@ func newBlobStore(ctx context.Context) (*blobStore, error) {
 // --- Key generation (deterministic from primary key) ---
 
 func rawResultKey(digest, arch string) string {
-    return fmt.Sprintf("%s/%s/raw_result.json", stripDigestAlgo(digest), arch)
+    return fmt.Sprintf("%s/%s/raw_result.json.gz", stripDigestAlgo(digest), arch)
 }
 
 func parsedResultsDetailsKey(digest, arch string) string {
-    return fmt.Sprintf("%s/%s/parsed_results_details.json", stripDigestAlgo(digest), arch)
+    return fmt.Sprintf("%s/%s/parsed_results_details.json.gz", stripDigestAlgo(digest), arch)
 }
 
 func sbomKey(digest, arch string) string {
-    return fmt.Sprintf("%s/%s/sbom.json", stripDigestAlgo(digest), arch)
+    return fmt.Sprintf("%s/%s/sbom.json.gz", stripDigestAlgo(digest), arch)
 }
 
-// --- Upload ---
+// gzipData compresses a string using gzip and returns the compressed bytes.
+func gzipData(data string) ([]byte, error) {
+    var buf bytes.Buffer
+    gz := gzip.NewWriter(&buf)
+    if _, err := gz.Write([]byte(data)); err != nil {
+        return nil, fmt.Errorf("failed to gzip data: %w", err)
+    }
+    if err := gz.Close(); err != nil {
+        return nil, fmt.Errorf("failed to close gzip writer: %w", err)
+    }
+    return buf.Bytes(), nil
+}
+
+// gunzipData decompresses gzip-compressed bytes and returns the original string.
+func gunzipData(data []byte) (string, error) {
+    gz, err := gzip.NewReader(bytes.NewReader(data))
+    if err != nil {
+        return "", fmt.Errorf("failed to create gzip reader: %w", err)
+    }
+    defer gz.Close()
+    decompressed, err := io.ReadAll(gz)
+    if err != nil {
+        return "", fmt.Errorf("failed to decompress gzip data: %w", err)
+    }
+    return string(decompressed), nil
+}
+
+// --- Upload (gzip-compressed) ---
 
 func (s *blobStore) putRawResult(ctx context.Context, digest, arch, data string) error {
-    return s.client.PutObject(ctx, rawResultKey(digest, arch), strings.NewReader(data))
+    compressed, err := gzipData(data)
+    if err != nil {
+        return err
+    }
+    return s.client.PutObject(ctx, rawResultKey(digest, arch), bytes.NewReader(compressed))
 }
 
 func (s *blobStore) putParsedResultsDetails(ctx context.Context, digest, arch, data string) error {
-    return s.client.PutObject(ctx, parsedResultsDetailsKey(digest, arch), strings.NewReader(data))
+    compressed, err := gzipData(data)
+    if err != nil {
+        return err
+    }
+    return s.client.PutObject(ctx, parsedResultsDetailsKey(digest, arch), bytes.NewReader(compressed))
 }
 
 func (s *blobStore) putSBOM(ctx context.Context, digest, arch, data string) error {
-    return s.client.PutObject(ctx, sbomKey(digest, arch), strings.NewReader(data))
+    compressed, err := gzipData(data)
+    if err != nil {
+        return err
+    }
+    return s.client.PutObject(ctx, sbomKey(digest, arch), bytes.NewReader(compressed))
 }
 
-// --- Download ---
+// --- Download (gzip-decompressed) ---
 
 func (s *blobStore) getRawResult(ctx context.Context, digest, arch string) (string, error) {
     data, err := s.client.GetObjectData(ctx, rawResultKey(digest, arch))
     if err != nil {
         return "", err
     }
-    return string(data), nil
+    return gunzipData(data)
 }
 
 func (s *blobStore) getParsedResultsDetails(ctx context.Context, digest, arch string) (string, error) {
@@ -177,7 +229,7 @@ func (s *blobStore) getParsedResultsDetails(ctx context.Context, digest, arch st
     if err != nil {
         return "", err
     }
-    return string(data), nil
+    return gunzipData(data)
 }
 
 func (s *blobStore) getSBOM(ctx context.Context, digest, arch string) (string, error) {
@@ -185,7 +237,7 @@ func (s *blobStore) getSBOM(ctx context.Context, digest, arch string) (string, e
     if err != nil {
         return "", err
     }
-    return string(data), nil
+    return gunzipData(data)
 }
 ```
 
@@ -601,7 +653,7 @@ With ~1 MB per row and ~410K rows, loading all rows into memory would require ~4
 
 ### Idempotency
 
-- Object keys are deterministic (`{digest}/{arch}/raw_result.json`). S3 `PutObject` overwrites if the key exists — safe to re-run.
+- Object keys are deterministic (`{digest}/{arch}/raw_result.json.gz`). S3 `PutObject` overwrites if the key exists — safe to re-run.
 - `SkipExisting: true` does a HEAD/GET check before uploading — avoids re-uploading on restart, saving bandwidth and time.
 - No DB writes during migration — no partial state to clean up.
 
@@ -886,22 +938,22 @@ After Phase 4 (stop writing + columns dropped), rollback is not possible without
 
 ## Implementation Checklist
 
-- [ ] **Phase 1** (no schema changes needed)
-  - [ ] Add `R2ImageScansBucketName` param to `pkg/param/param.go`
+- [x] **Phase 1** (no schema changes needed)
+  - [x] Add `R2ImageScansBucketName` param to `pkg/param/param.go`
   - [ ] Create the new R2 bucket (manual or via infra config)
-  - [ ] Create `pkg/externalimage/blobstore.go`
-  - [ ] Modify `SetExternalImageScanStatus` for dual-write (S3 upload + unchanged DB write)
-  - [ ] Modify `SetExternalImageSBOM` for dual-write
+  - [x] Create `pkg/externalimage/blobstore.go`
+  - [x] Modify `SetExternalImageScanStatus` for dual-write (S3 upload + unchanged DB write)
+  - [x] Modify `SetExternalImageSBOM` for dual-write
   - [ ] Deploy new code (rolling update — zero downtime)
 
-- [ ] **Phase 2**
+- [ ] **Phase 2** (not started)
   - [ ] Create `pkg/externalimage/migrate_blobs.go` with public `MigrateBlobsToStorage` function
   - [ ] Build external CLI tool that calls `MigrateBlobsToStorage`
   - [ ] Run with `DryRun: true` first to estimate work
   - [ ] Run with `SkipExisting: true, BatchSize: 100`
   - [ ] Verify object count in S3 matches row count in DB
 
-- [ ] **Phase 3** (S3-only reads, still dual-write)
+- [ ] **Phase 3** (not started) (S3-only reads, still dual-write)
   - [ ] Replace Go read functions with S3-only getters (no DB fallback)
   - [ ] Add Go internal HTTP endpoints for blob reads
   - [ ] Modify `getExternalImageScan` to use Go endpoint instead of DB column
@@ -910,7 +962,7 @@ After Phase 4 (stop writing + columns dropped), rollback is not possible without
   - [ ] Modify `getBatchExternalSboms` to use Go endpoint
   - [ ] Deploy and monitor for 2 weeks — DB columns still written as safety net
 
-- [ ] **Phase 4** (stop writing to DB + drop columns)
+- [ ] **Phase 4** (not started) (stop writing to DB + drop columns)
   - [ ] Modify `SetExternalImageScanStatus` — remove `raw_result` and `parsed_results_details` from DB write (keep `parsed_results` counts)
   - [ ] Modify `SetExternalImageSBOM` — remove `sbom` from DB write
   - [ ] Remove old columns from SchemaHero YAML

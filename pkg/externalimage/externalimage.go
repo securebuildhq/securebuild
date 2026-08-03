@@ -321,6 +321,23 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 		scanStatusMessage = &params.ScanStatusMessage
 	}
 
+	// Step 1: Upload blobs to object store (mandatory — fail on error)
+	if params.Status == ScanStatusSucceeded && params.RawResult != "" {
+		store, err := newBlobStore(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create blob store: %w", err)
+		}
+		if err := store.putRawResult(ctx, params.Digest, params.Arch, params.RawResult); err != nil {
+			return fmt.Errorf("failed to upload raw_result to object store: %w", err)
+		}
+		if params.ParsedResultsDetails != "" {
+			if err := store.putParsedResultsDetails(ctx, params.Digest, params.Arch, params.ParsedResultsDetails); err != nil {
+				return fmt.Errorf("failed to upload parsed_results_details to object store: %w", err)
+			}
+		}
+	}
+
+	// Step 2: DB write — fail on error (S3 object stays, will be overwritten on retry)
 	query := `
 		INSERT INTO external_image_scan (digest, arch, parsed_results, parsed_results_details, raw_result, created_at, status, scan_status_message, updated_at, scan_completed_at, scan_attempted_at, scan_status_updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $6, $6, $6, $6)
@@ -456,6 +473,18 @@ func SetExternalImageSBOM(ctx context.Context, digest string, sbom string, sourc
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
+	// Step 1: Upload SBOM to object store (mandatory — fail on error)
+	if sbom != "" {
+		store, err := newBlobStore(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create blob store: %w", err)
+		}
+		if err := store.putSBOM(ctx, digest, arch, sbom); err != nil {
+			return fmt.Errorf("failed to upload sbom to object store: %w", err)
+		}
+	}
+
+	// Step 2: DB write — fail on error (S3 object stays, will be overwritten on retry)
 	query := `
 		insert into external_image_sbom (digest, arch, sbom, source, image_size_bytes, image_digest, created_at)
 		values ($1, $2, $3, $4, $5, $6, $7)
