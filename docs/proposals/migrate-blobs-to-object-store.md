@@ -947,7 +947,7 @@ After Phase 4 (stop writing + columns dropped), rollback is not possible without
   - [ ] Deploy new code (rolling update — zero downtime)
 
 - [ ] **Phase 2** (not started)
-  - [ ] Create `pkg/externalimage/migrate_blobs.go` with public `MigrateBlobsToStorage` function
+  - [x] Create `pkg/externalimage/migrate_blobs.go` with public `MigrateBlobsToStorage` function
   - [ ] Build external CLI tool that calls `MigrateBlobsToStorage`
   - [ ] Run with `DryRun: true` first to estimate work
   - [ ] Run with `SkipExisting: true, BatchSize: 100`
