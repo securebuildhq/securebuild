@@ -369,21 +369,15 @@ Add to `pkg/externalimage/migrate_blobs.go`:
 // MigrateBlobsConfig controls the bulk migration of large text columns
 // from PostgreSQL to object storage.
 type MigrateBlobsConfig struct {
-    BatchSize    int           // rows per batch per worker (default: 100)
-    Workers      int           // number of parallel workers (default: 5)
-    DryRun       bool          // if true, log what would be done but don't upload
-    SkipExisting bool          // if true, only select rows where is_in_object_store = false (default: true)
-    Delay        time.Duration // delay between batches per worker (default: 0)
+    BatchSize int           // rows per batch per worker (default: 100)
+    Workers   int           // number of parallel workers (default: 5)
+    Delay     time.Duration // delay between batches per worker (default: 0)
 }
 
 // MigrateBlobsResult summarizes a migration run.
 type MigrateBlobsResult struct {
-    ScansMigrated int // external_image_scan rows processed
-    ScansSkipped  int // external_image_scan rows skipped (already in object store)
-    ScansFailed   int // external_image_scan rows that failed
-    SBOMsMigrated int // external_image_sbom rows processed
-    SBOMsSkipped  int // external_image_sbom rows skipped (already in object store)
-    SBOMsFailed   int // external_image_sbom rows that failed
+    ScansMigrated int // external_image_scan rows successfully migrated
+    SBOMsMigrated int // external_image_sbom rows successfully migrated
 }
 ```
 
@@ -413,11 +407,9 @@ The external program imports the package and calls the function:
 
 ```go
 result, err := externalimage.MigrateBlobsToStorage(ctx, externalimage.MigrateBlobsConfig{
-    BatchSize:    100,
-    Workers:      10,   // parallel workers
-    SkipExisting: true,  // only select is_in_object_store = false (default)
-    DryRun:       false, // set true first to preview
-    Delay:        0,     // add delay if needed to reduce load
+    BatchSize: 100,
+    Workers:   10,   // parallel workers
+    Delay:     0,    // add delay if needed to reduce load
 })
 ```
 
@@ -692,7 +684,7 @@ Phase 4 is where dual-write stops. The DB INSERT/UPDATE no longer includes `raw_
 | S3 upload fails during write (Phase 1-4) | Scan/SBOM write fails entirely — caller retries | No partial state: nothing written to DB, no orphan S3 object (unless DB fails after S3, in which case retry overwrites same key) |
 | DB write fails after S3 upload (Phase 1-3) | S3 object exists but DB row doesn't | Retry will overwrite same S3 key and write DB row — idempotent |
 | S3 read fails during API request (Phase 3+) | Read fails — no DB fallback | S3 is now a hard dependency, same as DB. Alert on error rate. |
-| Bulk copy interrupted (Phase 2) | Partial migration — some objects in S3, some not | Idempotent — re-run with `SkipExisting: true` |
+| Bulk copy interrupted (Phase 2) | Partial migration — some objects in S3, some not | Idempotent — re-run; only `is_in_object_store = false` rows are selected |
 | Old code version running during deploy (Phase 1-3) | Writes to DB only (no S3) | Bulk migration (Phase 2) handles pre-existing rows; new code writes to both |
 | Object store outage (Phase 3+) | Reads fail (no DB fallback). Writes fail (mandatory S3). | S3 is a hard dependency. Same SLA as DB. |
 
@@ -725,8 +717,7 @@ After Phase 4 (stop writing + columns dropped), rollback is not possible without
   - [x] Create `pkg/externalimage/migrate_blobs.go` with public `MigrateBlobsToStorage` function
   - [x] Add parallel workers with `FOR UPDATE SKIP LOCKED` and `is_in_object_store` tracking
   - [ ] Build external CLI tool that calls `MigrateBlobsToStorage`
-  - [ ] Run with `DryRun: true` first to estimate work
-  - [ ] Run with `SkipExisting: true, BatchSize: 100, Workers: 10`
+  - [ ] Run with `BatchSize: 100, Workers: 10`
   - [ ] Verify object count in S3 matches row count in DB
 
 - [ ] **Phase 3** (not started) (S3-only reads, still dual-write)
