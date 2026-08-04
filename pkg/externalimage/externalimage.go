@@ -322,6 +322,7 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 	}
 
 	// Step 1: Upload blobs to object store (mandatory — fail on error)
+	blobsUploaded := false
 	if params.Status == ScanStatusSucceeded && params.RawResult != "" {
 		store, err := newBlobStore(ctx)
 		if err != nil {
@@ -335,12 +336,13 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 				return fmt.Errorf("failed to upload parsed_results_details to object store: %w", err)
 			}
 		}
+		blobsUploaded = true
 	}
 
 	// Step 2: DB write — fail on error (S3 object stays, will be overwritten on retry)
 	query := `
-		INSERT INTO external_image_scan (digest, arch, parsed_results, parsed_results_details, raw_result, created_at, status, scan_status_message, updated_at, scan_completed_at, scan_attempted_at, scan_status_updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $6, $6, $6, $6)
+		INSERT INTO external_image_scan (digest, arch, parsed_results, parsed_results_details, raw_result, created_at, status, scan_status_message, updated_at, scan_completed_at, scan_attempted_at, scan_status_updated_at, is_in_object_store)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $6, $6, $6, $6, $9)
 		ON CONFLICT (digest, arch) DO UPDATE
 		SET parsed_results = $3,
 		    parsed_results_details = $4,
@@ -349,7 +351,8 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 		    scan_status_message = $8,
 		    updated_at = $6,
 		    scan_completed_at = $6,
-		    scan_status_updated_at = $6
+		    scan_status_updated_at = $6,
+		    is_in_object_store = $9
 	`
 
 	_, err := conn.Exec(ctx, query,
@@ -361,6 +364,7 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 		now,
 		string(params.Status),
 		scanStatusMessage,
+		blobsUploaded,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to set scan status for digest %s, arch %s: %w", params.Digest, params.Arch, err)
@@ -474,6 +478,7 @@ func SetExternalImageSBOM(ctx context.Context, digest string, sbom string, sourc
 	defer conn.Release()
 
 	// Step 1: Upload SBOM to object store (mandatory — fail on error)
+	blobsUploaded := false
 	if sbom != "" {
 		store, err := newBlobStore(ctx)
 		if err != nil {
@@ -482,17 +487,18 @@ func SetExternalImageSBOM(ctx context.Context, digest string, sbom string, sourc
 		if err := store.putSBOM(ctx, digest, arch, sbom); err != nil {
 			return fmt.Errorf("failed to upload sbom to object store: %w", err)
 		}
+		blobsUploaded = true
 	}
 
 	// Step 2: DB write — fail on error (S3 object stays, will be overwritten on retry)
 	query := `
-		insert into external_image_sbom (digest, arch, sbom, source, image_size_bytes, image_digest, created_at)
-		values ($1, $2, $3, $4, $5, $6, $7)
+		insert into external_image_sbom (digest, arch, sbom, source, image_size_bytes, image_digest, created_at, is_in_object_store)
+		values ($1, $2, $3, $4, $5, $6, $7, $8)
 		on conflict (digest, arch) do update
-		set sbom = $3, source = $4, image_size_bytes = $5, image_digest = $6, created_at = $7
+		set sbom = $3, source = $4, image_size_bytes = $5, image_digest = $6, created_at = $7, is_in_object_store = $8
 	`
 
-	_, err := conn.Exec(ctx, query, digest, arch, sbom, source, imageSizeBytes, imageDigest, time.Now())
+	_, err := conn.Exec(ctx, query, digest, arch, sbom, source, imageSizeBytes, imageDigest, time.Now(), blobsUploaded)
 	if err != nil {
 		return fmt.Errorf("failed to insert/update external image SBOM for digest %s, arch %s: %w", digest, arch, err)
 	}

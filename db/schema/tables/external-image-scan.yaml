@@ -39,3 +39,8 @@ schema:
       type: timestamp with time zone
     - name: scan_status_updated_at
       type: timestamp with time zone
+    - name: is_in_object_store
+      type: boolean
+      default: "false"
+      constraints:
+        notNull: true

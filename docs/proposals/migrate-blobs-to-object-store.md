@@ -351,315 +351,85 @@ func SetExternalImageSBOM(ctx context.Context, digest string, sbom string, sourc
 
 ## Phase 2: Bulk Data Copy (Public Go Function + CLI)
 
+### Schema change: `is_in_object_store` column
+
+A boolean column `is_in_object_store` (default `false`) is added to both `external_image_scan` and `external_image_sbom`. This column tracks which rows have been copied to object storage, enabling:
+
+- **Restart-safe migration**: the migration function only selects rows where `is_in_object_store = false`, so a crashed/restarted process picks up exactly where it left off.
+- **Parallel workers**: multiple workers use `SELECT ... FOR UPDATE SKIP LOCKED` so they never process the same rows.
+- **Progress tracking**: `SELECT count(*) WHERE is_in_object_store = false` shows remaining work.
+
+New writes (Phase 1 dual-write) set `is_in_object_store = true` automatically, since the blob is uploaded to the object store before the DB row is written.
+
 ### Public Go function
 
 Add to `pkg/externalimage/migrate_blobs.go`:
 
 ```go
-package externalimage
-
-import (
-    "context"
-    "fmt"
-    "time"
-
-    "github.com/securebuildhq/securebuild/pkg/logger"
-    "github.com/securebuildhq/securebuild/pkg/persistence"
-)
-
 // MigrateBlobsConfig controls the bulk migration of large text columns
 // from PostgreSQL to object storage.
 type MigrateBlobsConfig struct {
-    BatchSize    int           // rows per batch (default: 100)
+    BatchSize    int           // rows per batch per worker (default: 100)
+    Workers      int           // number of parallel workers (default: 5)
     DryRun       bool          // if true, log what would be done but don't upload
-    SkipExisting bool          // if true, skip objects that already exist in S3 (HEAD check)
-    Delay        time.Duration // delay between batches (default: 0)
+    SkipExisting bool          // if true, only select rows where is_in_object_store = false (default: true)
+    Delay        time.Duration // delay between batches per worker (default: 0)
 }
 
 // MigrateBlobsResult summarizes a migration run.
 type MigrateBlobsResult struct {
     ScansMigrated int // external_image_scan rows processed
-    ScansSkipped  int // external_image_scan rows skipped (already in S3)
+    ScansSkipped  int // external_image_scan rows skipped (already in object store)
     ScansFailed   int // external_image_scan rows that failed
     SBOMsMigrated int // external_image_sbom rows processed
-    SBOMsSkipped  int // external_image_sbom rows skipped (already in S3)
+    SBOMsSkipped  int // external_image_sbom rows skipped (already in object store)
     SBOMsFailed   int // external_image_sbom rows that failed
 }
-
-// MigrateBlobsToStorage copies large text columns from PostgreSQL to the
-// S3-compatible object store. Object keys are derived deterministically from
-// each row's primary key (digest, arch), so no object key columns are needed
-// in the database and no DB writes are performed during migration.
-//
-// This function is designed to be called by an external CLI tool for a
-// one-time bulk migration. It is safe to run multiple times (idempotent):
-// when SkipExisting is true, a HEAD request checks if the object already
-// exists before uploading.
-//
-// The function processes rows in batches using server-side cursors to avoid
-// loading the entire ~1.25 TB into memory. Context cancellation is respected
-// between batches.
-func MigrateBlobsToStorage(ctx context.Context, cfg MigrateBlobsConfig) (*MigrateBlobsResult, error) {
-    if cfg.BatchSize <= 0 {
-        cfg.BatchSize = 100
-    }
-
-    result := &MigrateBlobsResult{}
-
-    store, err := newBlobStore(ctx)
-    if err != nil {
-        return nil, fmt.Errorf("failed to create blob store: %w", err)
-    }
-
-    // Migrate external_image_scan: raw_result + parsed_results_details
-    if err := migrateScanBlobs(ctx, store, cfg, result); err != nil {
-        return result, fmt.Errorf("scan blob migration failed: %w", err)
-    }
-
-    // Migrate external_image_sbom: sbom
-    if err := migrateSBOMBlobs(ctx, store, cfg, result); err != nil {
-        return result, fmt.Errorf("sbom blob migration failed: %w", err)
-    }
-
-    return result, nil
-}
-
-// objectExists checks if an object already exists in the object store.
-// Returns true if the object exists, false if it doesn't, or on error
-// (treat errors as "doesn't exist" to allow re-upload).
-func (s *blobStore) objectExists(ctx context.Context, key string) bool {
-    _, err := s.client.GetObject(ctx, key)
-    return err == nil
-}
-
-func migrateScanBlobs(ctx context.Context, store *blobStore, cfg MigrateBlobsConfig, result *MigrateBlobsResult) error {
-    conn := persistence.MustGetPooledPostgresSession(ctx)
-    defer conn.Release()
-
-    // Use a server-side cursor for memory-efficient iteration over ~410K rows
-    // with potentially 1 MB+ payloads each.
-    query := `
-        DECLARE scan_cursor CURSOR FOR
-        SELECT digest, arch, raw_result, parsed_results_details
-        FROM external_image_scan
-        WHERE raw_result IS NOT NULL OR parsed_results_details IS NOT NULL
-    `
-
-    if _, err := conn.Exec(ctx, query); err != nil {
-        return fmt.Errorf("failed to declare cursor: %w", err)
-    }
-    defer conn.Exec(ctx, "CLOSE scan_cursor")
-
-    batchNum := 0
-    for {
-        select {
-        case <-ctx.Done():
-            return ctx.Err()
-        default:
-        }
-
-        rows, err := conn.Query(ctx, fmt.Sprintf("FETCH %d FROM scan_cursor", cfg.BatchSize))
-        if err != nil {
-            return fmt.Errorf("failed to fetch batch: %w", err)
-        }
-
-        batchCount := 0
-        for rows.Next() {
-            batchCount++
-            var digest, arch string
-            var rawResult, parsedDetails *string
-            if err := rows.Scan(&digest, &arch, &rawResult, &parsedDetails); err != nil {
-                result.ScansFailed++
-                logger.Errorf("failed to scan row: %v", err)
-                continue
-            }
-
-            // Upload raw_result
-            if rawResult != nil && *rawResult != "" {
-                rawKey := rawResultKey(digest, arch)
-
-                if cfg.SkipExisting && store.objectExists(ctx, rawKey) {
-                    result.ScansSkipped++
-                } else if cfg.DryRun {
-                    logger.Infof("[dry-run] would upload raw_result for %s/%s (%d bytes)", digest, arch, len(*rawResult))
-                } else {
-                    if err := store.putRawResult(ctx, digest, arch, *rawResult); err != nil {
-                        result.ScansFailed++
-                        logger.Errorf("failed to upload raw_result for %s/%s: %v", digest, arch, err)
-                    } else {
-                        result.ScansMigrated++
-                    }
-                }
-            }
-
-            // Upload parsed_results_details
-            if parsedDetails != nil && *parsedDetails != "" {
-                detailsKey := parsedResultsDetailsKey(digest, arch)
-
-                if cfg.SkipExisting && store.objectExists(ctx, detailsKey) {
-                    // Already counted as skipped or migrated above; don't double-count
-                } else if cfg.DryRun {
-                    logger.Infof("[dry-run] would upload parsed_results_details for %s/%s (%d bytes)", digest, arch, len(*parsedDetails))
-                } else {
-                    if err := store.putParsedResultsDetails(ctx, digest, arch, *parsedDetails); err != nil {
-                        result.ScansFailed++
-                        logger.Errorf("failed to upload parsed_results_details for %s/%s: %v", digest, arch, err)
-                    }
-                }
-            }
-        }
-        rows.Close()
-
-        if batchCount == 0 {
-            break // no more rows
-        }
-
-        batchNum++
-        logger.Infof("scan migration: completed batch %d (migrated=%d, skipped=%d, failed=%d)",
-            batchNum, result.ScansMigrated, result.ScansSkipped, result.ScansFailed)
-
-        if cfg.Delay > 0 {
-            select {
-            case <-ctx.Done():
-                return ctx.Err()
-            case <-time.After(cfg.Delay):
-            }
-        }
-    }
-
-    return nil
-}
-
-func migrateSBOMBlobs(ctx context.Context, store *blobStore, cfg MigrateBlobsConfig, result *MigrateBlobsResult) error {
-    conn := persistence.MustGetPooledPostgresSession(ctx)
-    defer conn.Release()
-
-    query := `
-        DECLARE sbom_cursor CURSOR FOR
-        SELECT digest, arch, sbom
-        FROM external_image_sbom
-        WHERE sbom IS NOT NULL
-    `
-
-    if _, err := conn.Exec(ctx, query); err != nil {
-        return fmt.Errorf("failed to declare cursor: %w", err)
-    }
-    defer conn.Exec(ctx, "CLOSE sbom_cursor")
-
-    batchNum := 0
-    for {
-        select {
-        case <-ctx.Done():
-            return ctx.Err()
-        default:
-        }
-
-        rows, err := conn.Query(ctx, fmt.Sprintf("FETCH %d FROM sbom_cursor", cfg.BatchSize))
-        if err != nil {
-            return fmt.Errorf("failed to fetch batch: %w", err)
-        }
-
-        batchCount := 0
-        for rows.Next() {
-            batchCount++
-            var digest, arch, sbom string
-            if err := rows.Scan(&digest, &arch, &sbom); err != nil {
-                result.SBOMsFailed++
-                logger.Errorf("failed to scan row: %v", err)
-                continue
-            }
-
-            key := sbomKey(digest, arch)
-
-            if cfg.SkipExisting && store.objectExists(ctx, key) {
-                result.SBOMsSkipped++
-            } else if cfg.DryRun {
-                logger.Infof("[dry-run] would upload sbom for %s/%s (%d bytes)", digest, arch, len(sbom))
-            } else {
-                if err := store.putSBOM(ctx, digest, arch, sbom); err != nil {
-                    result.SBOMsFailed++
-                    logger.Errorf("failed to upload sbom for %s/%s: %v", digest, arch, err)
-                } else {
-                    result.SBOMsMigrated++
-                }
-            }
-        }
-        rows.Close()
-
-        if batchCount == 0 {
-            break
-        }
-
-        batchNum++
-        logger.Infof("sbom migration: completed batch %d (migrated=%d, skipped=%d, failed=%d)",
-            batchNum, result.SBOMsMigrated, result.SBOMsSkipped, result.SBOMsFailed)
-
-        if cfg.Delay > 0 {
-            select {
-            case <-ctx.Done():
-                return ctx.Err()
-            case <-time.After(cfg.Delay):
-            }
-        }
-    }
-
-    return nil
-}
 ```
+
+### How it works
+
+1. **Parallel workers**: `MigrateBlobsToStorage` spawns `cfg.Workers` goroutines. Each worker runs an independent loop that grabs a batch of rows, uploads blobs, and marks rows as migrated.
+
+2. **Row selection**: Each worker runs:
+   ```sql
+   SELECT digest, arch, raw_result, parsed_results_details
+   FROM external_image_scan
+   WHERE is_in_object_store = false
+     AND (raw_result IS NOT NULL OR parsed_results_details IS NOT NULL)
+   ORDER BY random()
+   LIMIT $1
+   FOR UPDATE SKIP LOCKED
+   ```
+   `FOR UPDATE SKIP LOCKED` ensures concurrent workers never process the same rows — no duplicate work. `ORDER BY random()` distributes work across the table to reduce contention.
+
+3. **Upload + mark**: For each row, the worker uploads blobs to the object store, then runs `UPDATE ... SET is_in_object_store = true` in the same transaction. If the process crashes, the transaction rolls back and the row stays `false` — it will be retried on the next run.
+
+4. **Two passes**: Scans are migrated first, then SBOMs. Each pass runs all workers to completion before moving to the next table.
 
 ### Usage from external CLI tool
 
 The external program imports the package and calls the function:
 
 ```go
-import (
-    "context"
-    "fmt"
-    "os"
-    "time"
-
-    "github.com/securebuildhq/securebuild/pkg/externalimage"
-    // ... other imports for config initialization (param, persistence)
-)
-
-func main() {
-    ctx := context.Background()
-
-    // Initialize config, DB pool, and param context
-    // (the external CLI handles this — see existing cmd/cli patterns)
-
-    result, err := externalimage.MigrateBlobsToStorage(ctx, externalimage.MigrateBlobsConfig{
-        BatchSize:    100,
-        SkipExisting: true,  // skip objects already in S3 (idempotent restart)
-        DryRun:       false, // set true first to preview
-        Delay:        0,     // add delay if needed to reduce load
-    })
-    if err != nil {
-        fmt.Fprintf(os.Stderr, "migration failed: %v\n", err)
-        os.Exit(1)
-    }
-
-    fmt.Printf("Migration complete:\n")
-    fmt.Printf("  Scans:  migrated=%d, skipped=%d, failed=%d\n",
-        result.ScansMigrated, result.ScansSkipped, result.ScansFailed)
-    fmt.Printf("  SBOMs:  migrated=%d, skipped=%d, failed=%d\n",
-        result.SBOMsMigrated, result.SBOMsSkipped, result.SBOMsFailed)
-}
+result, err := externalimage.MigrateBlobsToStorage(ctx, externalimage.MigrateBlobsConfig{
+    BatchSize:    100,
+    Workers:      10,   // parallel workers
+    SkipExisting: true,  // only select is_in_object_store = false (default)
+    DryRun:       false, // set true first to preview
+    Delay:        0,     // add delay if needed to reduce load
+})
 ```
 
-### Why server-side cursors
+### Restart safety
 
-With ~1 MB per row and ~410K rows, loading all rows into memory would require ~400 GB of RAM. Server-side cursors (`DECLARE` / `FETCH`) stream rows in batches, keeping memory bounded to `BatchSize` rows.
+- If the process is killed mid-batch, the transaction rolls back — locked rows are released and `is_in_object_store` stays `false`.
+- On restart, the function selects only `is_in_object_store = false` rows, so it picks up exactly where it left off.
+- Object keys are deterministic (`{digest}/{arch}/raw_result.json.gz`), so re-uploading the same key is safe (idempotent overwrite).
 
-### Idempotency
+### Performance estimate
 
-- Object keys are deterministic (`{digest}/{arch}/raw_result.json.gz`). S3 `PutObject` overwrites if the key exists — safe to re-run.
-- `SkipExisting: true` does a HEAD/GET check before uploading — avoids re-uploading on restart, saving bandwidth and time.
-- No DB writes during migration — no partial state to clean up.
-
-### No DB writes during migration
-
-Since object keys are derived from the primary key, the migration function only **reads** from the database and **writes** to the object store. There are no `UPDATE` statements, no transactions to manage, and no risk of corrupting database state. If the process is killed mid-batch, simply re-run with `SkipExisting: true`.
+With ~800K rows total and ~0.75s per row (sequential), the migration would take ~5 days with a single worker. With 10 parallel workers and `FOR UPDATE SKIP LOCKED`, the estimated time drops to **~12-15 hours**. Increasing `Workers` further reduces time proportionally, limited by R2 API rate limits and database connection pool size.
 
 ---
 
@@ -864,7 +634,7 @@ func SetExternalImageSBOM(ctx context.Context, digest string, sbom string, sourc
 
 ### Schema changes
 
-Remove the old columns from SchemaHero YAML:
+Remove the old columns and the `is_in_object_store` tracking column from SchemaHero YAML:
 
 **`db/schema/tables/external-image-scan.yaml`** — remove:
 ```yaml
@@ -874,12 +644,16 @@ Remove the old columns from SchemaHero YAML:
       type: text
     - name: raw_result
       type: text
+    - name: is_in_object_store
+      type: boolean
 ```
 
 **`db/schema/tables/external-image-sbom.yaml`** — remove:
 ```yaml
     - name: sbom
       type: text
+    - name: is_in_object_store
+      type: boolean
 ```
 
 SchemaHero generates `ALTER TABLE ... DROP COLUMN` DDL. This reclaims TOAST space immediately.
@@ -938,19 +712,21 @@ After Phase 4 (stop writing + columns dropped), rollback is not possible without
 
 ## Implementation Checklist
 
-- [x] **Phase 1** (no schema changes needed)
+- [x] **Phase 1** (schema change: is_in_object_store column added)
   - [x] Add `R2ImageScansBucketName` param to `pkg/param/param.go`
   - [ ] Create the new R2 bucket (manual or via infra config)
   - [x] Create `pkg/externalimage/blobstore.go`
-  - [x] Modify `SetExternalImageScanStatus` for dual-write (S3 upload + unchanged DB write)
+  - [x] Modify `SetExternalImageScanStatus` for dual-write (S3 upload + DB write with is_in_object_store=true)
   - [x] Modify `SetExternalImageSBOM` for dual-write
+  - [x] Add `is_in_object_store` column to SchemaHero YAML for both tables
   - [ ] Deploy new code (rolling update — zero downtime)
 
 - [ ] **Phase 2** (not started)
   - [x] Create `pkg/externalimage/migrate_blobs.go` with public `MigrateBlobsToStorage` function
+  - [x] Add parallel workers with `FOR UPDATE SKIP LOCKED` and `is_in_object_store` tracking
   - [ ] Build external CLI tool that calls `MigrateBlobsToStorage`
   - [ ] Run with `DryRun: true` first to estimate work
-  - [ ] Run with `SkipExisting: true, BatchSize: 100`
+  - [ ] Run with `SkipExisting: true, BatchSize: 100, Workers: 10`
   - [ ] Verify object count in S3 matches row count in DB
 
 - [ ] **Phase 3** (not started) (S3-only reads, still dual-write)
