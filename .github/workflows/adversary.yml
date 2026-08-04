@@ -1,0 +1,39 @@
+name: Adversary review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run adversaries
+        id: review
+        uses: adversarylabs/actions/run@v1
+        with:
+          adversaries: |
+            go/security
+            security/secrets
+          path: .
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          auth-mode: token
+          token: ${{ secrets.ADVERSARY_SERVICE_ACCOUNT_TOKEN }}
+          # Optional model-backed packages:
+          model-provider: fireworks
+          model: glm-5p2
+          model-api-key: ${{ secrets.FIREWORKS_API_KEY }}
+          format: json
+
+      - name: Report outcome
+        if: always()
+        run: |
+          echo "outcome=${{ steps.review.outputs.outcome }}"
+          echo "findings=${{ steps.review.outputs.findings-count }}"
