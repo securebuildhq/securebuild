@@ -33,3 +33,8 @@ schema:
       type: timestamp with time zone
     - name: image_digest
       type: text
+    - name: is_in_object_store
+      type: boolean
+      default: "false"
+      constraints:
+        notNull: true
