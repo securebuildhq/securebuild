@@ -2045,25 +2045,21 @@ func resolveWorkDirForAssignment(ctx context.Context, vm types.BuilderVM, taskTy
 			dirName = fmt.Sprintf("task-%s-%s", taskType, taskID)
 		}
 		return filepath.Join(os.TempDir(), "securebuild", dirName), nil
-	case "cmx":
-		home, err := GetRemoteHome(ctx, vm)
-		if err != nil {
-			return "", err
-		}
-		return home, nil
-	case "static":
+	case "cmx", "static", "":
+		// Use a dedicated subdirectory under $HOME so melange's workspace
+		// population (which copies the entire CWD) doesn't sweep up unrelated
+		// $HOME contents like scans/, .ssh/, .cache/, or the builder binary.
 		home, err := GetRemoteHome(ctx, vm)
 		if err != nil {
 			return "", err
 		}
 		return home + "/builds/" + taskID + "-" + architecture, nil
 	default:
-		// Backward compat: treat as cmx
 		home, err := GetRemoteHome(ctx, vm)
 		if err != nil {
 			return "", err
 		}
-		return home, nil
+		return home + "/builds/" + taskID + "-" + architecture, nil
 	}
 }
 

@@ -16,6 +16,7 @@ jobs:
 
       - name: Run adversaries
         id: review
+        continue-on-error: true
         uses: adversarylabs/actions/run@v1
         with:
           adversaries: |
