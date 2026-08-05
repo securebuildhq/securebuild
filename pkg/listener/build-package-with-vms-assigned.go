@@ -220,14 +220,15 @@ func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVe
 			return fmt.Errorf("failed to get vm context: %w", err)
 		}
 		// On-demand VMs are provisioned without a work dir (the VM isn't
-		// SSH-reachable at provision time). Resolve it to the remote $HOME now
-		// that the VM is running, and persist it to the assignment so the build
-		// status checker and cleanup can find it.
+		// SSH-reachable at provision time). Resolve it to a dedicated
+		// subdirectory under $HOME now that the VM is running, and persist it
+		// to the assignment so the build status checker and cleanup can find it.
 		if x86WorkDir == "" {
-			x86WorkDir, err = builder.GetRemoteHome(ctx, x86VM)
+			home, err := builder.GetRemoteHome(ctx, x86VM)
 			if err != nil {
 				return fmt.Errorf("failed to resolve x86_64 work dir: %w", err)
 			}
+			x86WorkDir = fmt.Sprintf("%s/builds/%s-%s", home, executionID, "x86_64")
 			if err := builder.AssignVMToTask(ctx, x86VMID, "build_package", executionID, x86WorkDir); err != nil {
 				return fmt.Errorf("failed to persist x86_64 work dir: %w", err)
 			}
@@ -241,10 +242,11 @@ func startBuildPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVe
 			return fmt.Errorf("failed to get vm context: %w", err)
 		}
 		if armWorkDir == "" {
-			armWorkDir, err = builder.GetRemoteHome(ctx, armVM)
+			home, err := builder.GetRemoteHome(ctx, armVM)
 			if err != nil {
 				return fmt.Errorf("failed to resolve aarch64 work dir: %w", err)
 			}
+			armWorkDir = fmt.Sprintf("%s/builds/%s-%s", home, executionID, "aarch64")
 			if err := builder.AssignVMToTask(ctx, armVMID, "build_package", executionID, armWorkDir); err != nil {
 				return fmt.Errorf("failed to persist aarch64 work dir: %w", err)
 			}
@@ -399,9 +401,12 @@ func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pk
 		}
 	}
 
-	// Builder binary path: CMX runs in HOME where builder is already installed; others copy into work dir.
-	builderBin := filepath.Join(workDir, "builder")
-	if vm.Type != "cmx" {
+	// Builder binary path: CMX has the builder pre-installed in $HOME by
+	// InstallBuildEnv; other backends copy it into the work dir.
+	var builderBin string
+	if vm.Type == "cmx" {
+		builderBin = "$HOME/builder"
+	} else {
 		// Copy the builder binary into the work dir so the build command can run it.
 		// Local runner (Mac/Linux host): use binary for current runtime. Remote (static): use Linux for VM arch.
 		var builderData []byte
@@ -419,16 +424,21 @@ func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pk
 		if len(builderData) == 0 {
 			return fmt.Errorf("embedded builder binary is empty")
 		}
+		builderBin = filepath.Join(workDir, "builder")
 		if err := runner.WriteBinaryFile(builderBin, builderData); err != nil {
 			return fmt.Errorf("failed to copy builder binary to work dir: %w", err)
 		}
 		if _, err := runner.RunCommand(ctx, fmt.Sprintf("chmod +x %s", builderBin)); err != nil {
 			return fmt.Errorf("failed to make builder binary executable: %w", err)
 		}
+	}
 
-		if err := runner.RunSetup(ctx, workDir, builderBin, arch); err != nil {
-			return fmt.Errorf("failed to run runner setup: %w", err)
-		}
+	// RunSetup copies build-<arch>.env and melange signing keys into the work
+	// dir. For CMX these live in $HOME (from InstallBuildEnv) and must be
+	// copied to the per-build subdirectory; for local/static they come from
+	// the embedded FS / $HOME.
+	if err := runner.RunSetup(ctx, workDir, builderBin, arch); err != nil {
+		return fmt.Errorf("failed to run runner setup: %w", err)
 	}
 
 	// 4. Run builder build
@@ -526,7 +536,6 @@ func startBuildPackageForArch(ctx context.Context, vm buildertypes.BuilderVM, pk
 			}
 		}
 
-		builderBin := filepath.Join(workDir, "builder")
 		builderLog := filepath.Join(workDir, fmt.Sprintf("builder_output_%s.log", arch))
 		workDirEscaped := strings.ReplaceAll(workDir, "'", "'\\''")
 		r2Region := param.GetParam(ctx).R2Region
@@ -563,7 +572,6 @@ echo "Builder output will be written to %s";
 			useRoot, r2DirectoryFlag, arch, builderLog, arch, builderLog)
 	} else {
 		// Standard mode: no debug logging
-		builderBin := filepath.Join(workDir, "builder")
 		builderLog := filepath.Join(workDir, fmt.Sprintf("builder_output_%s.log", arch))
 		workDirEscaped := strings.ReplaceAll(workDir, "'", "'\\''")
 		r2Region := param.GetParam(ctx).R2Region
