@@ -30,6 +30,12 @@ const (
 	MetricExternalImageScanCapacityTotal = "securebuild.external_image.scan.capacity.total"
 	MetricExternalImageScanCapacityUsed  = "securebuild.external_image.scan.capacity.used"
 
+	MetricExternalImageSbomBacklog  = "securebuild.external_image.sbom.backlog"
+	MetricExternalImageSbomDownloadsRunning = "securebuild.external_image.sbom.downloads_running"
+
+	MetricExternalImageSbomDownloadCapacityTotal = "securebuild.external_image.sbom_download.capacity.total"
+	MetricExternalImageSbomDownloadCapacityUsed  = "securebuild.external_image.sbom_download.capacity.used"
+
 	TagChannelExternalImageSBOM = "channel:external_image_sbom"
 	TagChannelExternalImageScan = "channel:external_image_scan"
 

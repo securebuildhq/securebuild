@@ -270,7 +270,7 @@ func (c *ScanCapacityCache) ReleaseScanSlot(machineID string) {
 func (c *ScanCapacityCache) ReportCapacityMetrics(ctx context.Context) {
 	maxScansPerBuilder := param.GetParam(ctx).MaxScansPerBuilder
 
-	builders, err := getRunningBuildersForScan(ctx)
+	builders, err := GetRunningBuildersForScan(ctx)
 	if err != nil {
 		logger.Warn("failed to query running builders for capacity metrics",
 			zap.Error(err))
@@ -336,7 +336,7 @@ func (c *ScanCapacityCache) DumpToFile() error {
 func InitScanCapacityCache(ctx context.Context) (*ScanCapacityCache, error) {
 	cache := NewScanCapacityCache()
 
-	builders, err := getRunningBuildersForScan(ctx)
+	builders, err := GetRunningBuildersForScan(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query running builders for scan cache init: %w", err)
 	}
@@ -344,7 +344,7 @@ func InitScanCapacityCache(ctx context.Context) (*ScanCapacityCache, error) {
 	var wg sync.WaitGroup
 	for _, b := range builders {
 		wg.Add(1)
-		go func(b builderForScan) {
+		go func(b BuilderForScan) {
 			defer wg.Done()
 			scans, err := ListScanDirsOnBuilder(ctx, b.BuilderVM)
 			if err != nil {
@@ -378,8 +378,8 @@ func InitScanCapacityCache(ctx context.Context) (*ScanCapacityCache, error) {
 	return cache, nil
 }
 
-// builderForScan is a running builder with its build assignment status.
-type builderForScan struct {
+// BuilderForScan is a running builder with its build assignment status.
+type BuilderForScan struct {
 	buildertypes.BuilderVM
 	HasBuildAssignment bool
 }
@@ -404,7 +404,7 @@ func SelectBuilderForScan(ctx context.Context, cache *ScanCapacityCache) (builde
 
 	maxScansPerBuilder := param.GetParam(ctx).MaxScansPerBuilder
 
-	builders, err := getRunningBuildersForScan(ctx)
+	builders, err := GetRunningBuildersForScan(ctx)
 	if err != nil {
 		return buildertypes.BuilderVM{}, fmt.Errorf("failed to query running builders for scan: %w", err)
 	}
@@ -421,7 +421,7 @@ func SelectBuilderForScan(ctx context.Context, cache *ScanCapacityCache) (builde
 // GetRunningBuilders returns all running builder VMs from the machine pool,
 // ordered by idle-first (no build assignments first).
 func GetRunningBuilders(ctx context.Context) ([]buildertypes.BuilderVM, error) {
-	builders, err := getRunningBuildersForScan(ctx)
+	builders, err := GetRunningBuildersForScan(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -432,9 +432,9 @@ func GetRunningBuilders(ctx context.Context) ([]buildertypes.BuilderVM, error) {
 	return result, nil
 }
 
-// getRunningBuildersForScan queries all running builders, ordered by idle-first
+// GetRunningBuildersForScan queries all running builders, ordered by idle-first
 // (no build assignments first), then by oldest builder first.
-func getRunningBuildersForScan(ctx context.Context) ([]builderForScan, error) {
+func GetRunningBuildersForScan(ctx context.Context) ([]BuilderForScan, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -461,9 +461,9 @@ func getRunningBuildersForScan(ctx context.Context) ([]builderForScan, error) {
 	}
 	defer rows.Close()
 
-	var result []builderForScan
+	var result []BuilderForScan
 	for rows.Next() {
-		var b builderForScan
+		var b BuilderForScan
 		var ipAddress sql.NullString
 		var port sql.NullInt64
 		var architecture sql.NullString
