@@ -92,6 +92,12 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4318}
       OTEL_SERVICE_NAME: securebuild-api
       OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=development}
+      # R2 object store credentials for reading scan/SBOM blobs (Phase 3)
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY:-}
+      R2_SECRET_KEY: ${R2_SECRET_KEY:-}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_IMAGE_SCANS_BUCKET_NAME: ${R2_IMAGE_SCANS_BUCKET_NAME:-}
+      R2_USE_DYNAMIC_FOLDER: ${R2_USE_DYNAMIC_FOLDER:-true}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

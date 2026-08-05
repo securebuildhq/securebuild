@@ -720,13 +720,15 @@ After Phase 4 (stop writing + columns dropped), rollback is not possible without
   - [ ] Run with `BatchSize: 100, Workers: 10`
   - [ ] Verify object count in S3 matches row count in DB
 
-- [ ] **Phase 3** (not started) (S3-only reads, still dual-write)
-  - [ ] Replace Go read functions with S3-only getters (no DB fallback)
-  - [ ] Add Go internal HTTP endpoints for blob reads
-  - [ ] Modify `getExternalImageScan` to use Go endpoint instead of DB column
-  - [ ] Modify `getBatchExternalImageScans` to use Go endpoint
-  - [ ] Modify `getExternalImageSBOM` / `getExternalImageSbom` to use Go endpoint
-  - [ ] Modify `getBatchExternalSboms` to use Go endpoint
+- [x] **Phase 3** (S3-only reads, still dual-write)
+  - [x] Add public Go getter functions (`GetExternalImageScanRawResult`, `GetExternalImageScanParsedResultsDetails`, `GetExternalImageSBOMContent`)
+  - [x] Update Go `GetExternalImageSBOM` / `GetExternalImageSBOMs` to read SBOM from object store
+  - [x] Create TypeScript R2 blob reader (`securebuild-api/lib/externalimage/blobstore.ts`)
+  - [x] Add R2 params to TypeScript param module (`securebuild-api/lib/data/param.ts`)
+  - [x] Modify `getExternalImageScan` to fetch scan result from object store instead of DB column
+  - [x] Modify `getBatchExternalImageScans` to fetch scan results from object store
+  - [x] Modify `getExternalImageSBOM` / `getExternalImageSbom` to fetch SBOM from object store
+  - [x] Modify `getBatchExternalSboms` to fetch SBOMs from object store
   - [ ] Deploy and monitor for 2 weeks — DB columns still written as safety net
 
 - [ ] **Phase 4** (not started) (stop writing to DB + drop columns)
