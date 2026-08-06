@@ -101,6 +101,19 @@ type VersionUpdate struct {
 	OnlyNeedsAPKOs   bool   // True if the package version exists but just needs image APKOs generated
 }
 
+type githubClientOverrideKey struct{}
+
+func WithGithubClientOverride(ctx context.Context, client *github.Client) context.Context {
+	return context.WithValue(ctx, githubClientOverrideKey{}, client)
+}
+
+func getGithubClientOverride(ctx context.Context) *github.Client {
+	if client, ok := ctx.Value(githubClientOverrideKey{}).(*github.Client); ok {
+		return client
+	}
+	return nil
+}
+
 func handlePackageFamilyUpdateCheck(ctx context.Context, payload string) error {
 	logger.Debug("handlePackageFamilyUpdateCheck called", zap.String("payload", payload))
 
@@ -171,7 +184,9 @@ func performPackageFamilyUpdateCheck(ctx context.Context, p *PackageFamilyUpdate
 	// pull specs from git, and create package versions with git link metadata.
 	if packageFamily.GitRemote.Valid && packageFamily.GitRemote.String != "" {
 		var githubClient *github.Client
-		if githubToken := param.GetParam(ctx).UpdaterGithubAPIToken; githubToken != "" {
+		if override := getGithubClientOverride(ctx); override != nil {
+			githubClient = override
+		} else if githubToken := param.GetParam(ctx).UpdaterGithubAPIToken; githubToken != "" {
 			ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
 			tc := oauth2.NewClient(ctx, ts)
 			githubClient = github.NewClient(tc)
@@ -781,9 +796,9 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 
 		// Link package to family
 		_, err = tx.Exec(ctx, `
-			INSERT INTO package_family_package (package_family_id, package_id, created_at)
-			VALUES ($1, $2, $3)
-		`, pf.ID, newPackageID, now)
+			INSERT INTO package_family_package (package_family_id, package_id, version_major, version_minor, is_template, created_at)
+			VALUES ($1, $2, $3, $4, false, $5)
+		`, pf.ID, newPackageID, version.Major(), version.Minor(), now)
 		if err != nil {
 			return nil, fmt.Errorf("insert package_family_package: %w", err)
 		}

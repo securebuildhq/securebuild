@@ -1,0 +1,61 @@
+database: securebuild
+name: package_version
+requires:
+  - package-git-linked-1.0
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "pkgv-git-linked-1.0.0-test"
+        - column: package_id
+          value:
+            str: "pkg-git-linked-1.0-test"
+        - column: version
+          value:
+            str: "1.0.0"
+        - column: melange_yaml
+          value:
+            str: |
+              package:
+                name: test-git-linked-1.0
+                version: "1.0.0"
+                epoch: 0
+                description: "Test git-linked package"
+                copyright:
+                  - license: MIT
+
+              environment:
+                contents:
+                  packages:
+                    - busybox
+
+              pipeline:
+                - runs: echo "Building test package"
+        - column: apk_release
+          value:
+            str: "0"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: use_root
+          value:
+            str: "false"
+        - column: bootstrap_enabled
+          value:
+            str: "false"
+        - column: has_securebuild_edits
+          value:
+            str: "false"
+        - column: git_remote
+          value:
+            str: "https://github.com/test-org/test-repo.git"
+        - column: melange_file_path
+          value:
+            str: "securebuild/package/melange.yaml"
+        - column: git_tag
+          value:
+            str: "v1.0.0"
+        - column: git_commit_sha
+          value:
+            str: "abc123initialcommit00000000000000000abc"

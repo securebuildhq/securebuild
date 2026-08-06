@@ -1,0 +1,26 @@
+database: securebuild
+name: package_family_package
+requires:
+  - package-family-git-linked
+  - package-git-linked-1.0
+seedData:
+  rows:
+    - columns:
+        - column: package_family_id
+          value:
+            str: "pf-git-linked-test"
+        - column: package_id
+          value:
+            str: "pkg-git-linked-1.0-test"
+        - column: version_major
+          value:
+            str: "1"
+        - column: version_minor
+          value:
+            str: "0"
+        - column: is_template
+          value:
+            str: "false"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"

@@ -1,0 +1,47 @@
+database: securebuild
+name: package_family
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "pf-git-linked-test"
+        - column: name
+          value:
+            str: "test-git-linked"
+        - column: monitoring_enabled
+          value:
+            str: "true"
+        - column: check_frequency_minutes
+          value:
+            str: "60"
+        - column: version_pattern
+          value:
+            str: "^(\\d+)\\.(\\d+)(?:\\.(\\d+))?$"
+        - column: package_name_template
+          value:
+            str: "{name}-{major}.{minor}"
+        - column: dry_run_mode
+          value:
+            str: "false"
+        - column: check_for_updates_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: consecutive_errors
+          value:
+            str: "0"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: git_remote
+          value:
+            str: "https://github.com/test-org/test-repo.git"
+        - column: melange_file_path
+          value:
+            str: "securebuild/package/melange.yaml"
+        - column: initial_tag
+          value:
+            str: "v1.0.0"
