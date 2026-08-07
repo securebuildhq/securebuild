@@ -4,6 +4,7 @@ import { getParam } from '../data/param';
 import { traceFunction } from '../observability/tracing';
 import { parseUTCTimestamp } from '../utils/timestamp';
 import { enqueueWork } from '../utils/queue';
+import { getRawResult, getParsedResultsDetails, getSBOM } from './blobstore';
 
 
 export async function upsertExternalImage(registry: string, imageName: string, imageTag: string, digest: string, username: string | null, password: string | null, teamId: string): Promise<TrackedExternalImage> {
@@ -273,15 +274,25 @@ export const getExternalImageSBOM = traceFunction('lib.externalimage.getExternal
   try {
     const db = getDB(await getParam("DB_URI"))
 
-    const query = `select sbom, source from external_image_sbom where digest = $1`
+    // Query metadata only — sbom content is fetched from object store
+    const query = `select arch, source, is_in_object_store from external_image_sbom where digest = $1`
     const result = await db.query(query, [digest])
 
     if (result.rows.length === 0) {
       return null
     }
 
+    let sbom: string | null = null
+    if (result.rows[0].is_in_object_store) {
+      try {
+        sbom = await getSBOM(digest, result.rows[0].arch)
+      } catch (err) {
+        throw new Error(`getExternalImageSBOM: failed to fetch sbom blob for digest=${digest} arch=${result.rows[0].arch}: ${err}`)
+      }
+    }
+
     return {
-      sbom: result.rows[0].sbom,
+      sbom: sbom || '',
       source: result.rows[0].source,
     }
   } catch (err) {
@@ -396,21 +407,12 @@ export const getExternalImageScan = traceFunction('lib.externalimage.getExternal
   try {
     const db = getDB(await getParam("DB_URI"))
 
-    let query: string
-    if (format === 'raw') {
-      query = `select escan.raw_result as scan_result, escan.created_at as scan_created_at, esbom.created_at as sbom_created_at, esbom.image_size_bytes as image_size_bytes,
-        escan.status, escan.scan_status_message, escan.scan_status_updated_at, escan.scan_attempted_at, escan.scan_completed_at, escan.updated_at, esbom.image_digest
-        from external_image_scan escan
-        left join external_image_sbom esbom on escan.digest = esbom.digest and escan.arch = esbom.arch
-        where escan.digest = $1 and escan.arch = $2`
-    } else {
-      // Use parsed_results_details (full structure with descriptor, fixed_counts, vulnerability_details)
-      query = `select escan.parsed_results_details as scan_result, escan.created_at as scan_created_at, esbom.created_at as sbom_created_at, esbom.image_size_bytes as image_size_bytes,
-        escan.status, escan.scan_status_message, escan.scan_status_updated_at, escan.scan_attempted_at, escan.scan_completed_at, escan.updated_at, esbom.image_digest
-        from external_image_scan escan
-        left join external_image_sbom esbom on escan.digest = esbom.digest and escan.arch = esbom.arch
-        where escan.digest = $1 and escan.arch = $2`
-    }
+    // Query metadata only — blob content is fetched from object store
+    const query = `select escan.is_in_object_store, escan.created_at as scan_created_at, esbom.created_at as sbom_created_at, esbom.image_size_bytes as image_size_bytes,
+      escan.status, escan.scan_status_message, escan.scan_status_updated_at, escan.scan_attempted_at, escan.scan_completed_at, escan.updated_at, esbom.image_digest
+      from external_image_scan escan
+      left join external_image_sbom esbom on escan.digest = esbom.digest and escan.arch = esbom.arch
+      where escan.digest = $1 and escan.arch = $2`
 
     const result = await db.query(query, [digest, arch])
 
@@ -419,8 +421,21 @@ export const getExternalImageScan = traceFunction('lib.externalimage.getExternal
     }
 
     const row = result.rows[0]
+
+    // Fetch scan result from object store (only when blobs have been uploaded)
+    let scanResult: string | null = null
+    if (row.is_in_object_store) {
+      try {
+        scanResult = format === 'raw'
+          ? await getRawResult(digest, arch)
+          : await getParsedResultsDetails(digest, arch)
+      } catch (err) {
+        throw new Error(`getExternalImageScan: failed to fetch ${format} blob for digest=${digest} arch=${arch}: ${err}`)
+      }
+    }
+
     return {
-      scanResult: row.scan_result,
+      scanResult,
       scanCreatedAt: row.scan_created_at,
       digestFirstSeenAt: row.sbom_created_at ?? null,
       imageSizeBytes: row.image_size_bytes != null ? parseInt(String(row.image_size_bytes), 10) : 0,
@@ -450,14 +465,23 @@ export const getExternalImageSbom = traceFunction('lib.externalimage.getExternal
   try {
     const db = getDB(await getParam("DB_URI"))
 
-    const query = `select sbom from external_image_sbom where digest = $1`
+    // Query metadata only — sbom content is fetched from object store
+    const query = `select arch, is_in_object_store from external_image_sbom where digest = $1`
     const result = await db.query(query, [digest])
 
     if (result.rows.length === 0) {
       return null
     }
 
-    return result.rows[0].sbom
+    if (!result.rows[0].is_in_object_store) {
+      return null
+    }
+
+    try {
+      return await getSBOM(digest, result.rows[0].arch)
+    } catch (err) {
+      throw new Error(`getExternalImageSbom: failed to fetch sbom blob for digest=${digest} arch=${result.rows[0].arch}: ${err}`)
+    }
   } catch (err) {
     console.error(`getExternalImageSbom error:`, err)
     throw err;
@@ -824,10 +848,6 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
       return new Map()
     }
 
-    // Select the appropriate result column based on format
-    // parsed format uses parsed_results_details (full structure with descriptor, fixed_counts, vulnerability_details)
-    const resultColumn = format === 'raw' ? 'escan.raw_result' : 'escan.parsed_results_details'
-
     // Phase 0: Determine which of the requested digests the team owns.
     // This must be checked from external_image_tag + external_image_team directly,
     // not inferred from scan query results — a digest the team owns may have no
@@ -848,13 +868,13 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
     // Build a map of "digest" -> scan result
     const resultMap = new Map<string, BatchScanResult>()
 
-    // Phase 1: Get scan results (with SBOM metadata and SBOM status) for owned digests only
+    // Phase 1: Get scan metadata (no blob column) for owned digests only
     const ownedDigestList = [...ownedDigests]
     if (ownedDigestList.length > 0) {
       const scanQuery = `
         SELECT
           escan.digest,
-          ${resultColumn} as scan_result,
+          escan.is_in_object_store,
           escan.created_at as scan_created_at,
           escan.scan_completed_at as scan_completed_at,
           esbom.created_at as digest_first_seen_at,
@@ -878,11 +898,21 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
 
       const scanResult = await db.query(scanQuery, [arch, ownedDigestList])
 
-      // Process scan results
+      // Process scan results — fetch blob content from object store (only when blobs have been uploaded)
       for (const row of scanResult.rows) {
+        let scanResultBlob: string | null = null
+        if (row.is_in_object_store) {
+          try {
+            scanResultBlob = format === 'raw'
+              ? await getRawResult(row.digest, arch)
+              : await getParsedResultsDetails(row.digest, arch)
+          } catch (err) {
+            throw new Error(`getBatchExternalImageScans: failed to fetch ${format} blob for digest=${row.digest} arch=${arch}: ${err}`)
+          }
+        }
         resultMap.set(row.digest, {
           digest: row.digest,
-          scanResult: row.scan_result,
+          scanResult: scanResultBlob,
           scanCreatedAt: row.scan_created_at,
           scanCompletedAt: row.scan_completed_at,
           digestFirstSeenAt: row.digest_first_seen_at,
@@ -993,17 +1023,17 @@ export const getBatchExternalSboms = traceFunction('lib.externalimage.getBatchEx
     }
 
     // Single query that:
-    // 1. Queries external_image_sbom for SBOM data
+    // 1. Queries external_image_sbom for SBOM metadata (no blob column)
     // 2. Filters by architecture and digest array
     // 3. Validates team access via external_image_team join
-    // 4. Returns SBOM data and metadata for all requested digests in one query
+    // 4. Returns metadata for all requested digests in one query
 
     const query = `
       SELECT
         esbom.digest,
         esbom.arch,
-        esbom.sbom,
         esbom.source,
+        esbom.is_in_object_store,
         esbom.created_at as sbom_created_at,
         esbom.image_size_bytes
       FROM external_image_sbom esbom
@@ -1021,14 +1051,22 @@ export const getBatchExternalSboms = traceFunction('lib.externalimage.getBatchEx
 
     const result = await db.query(query, [teamId, arch, digests])
 
-    // Build a map of "digest" -> SBOM result
+    // Build a map of "digest" -> SBOM result, fetching blob content from object store
     const resultMap = new Map<string, BatchSbomResult>()
 
     for (const row of result.rows) {
+      let sbomContent: string | null = null
+      if (row.is_in_object_store) {
+        try {
+          sbomContent = await getSBOM(row.digest, row.arch)
+        } catch (err) {
+          throw new Error(`getBatchExternalSboms: failed to fetch sbom blob for digest=${row.digest} arch=${row.arch}: ${err}`)
+        }
+      }
       resultMap.set(row.digest, {
         digest: row.digest,
         arch: row.arch,
-        sbom: row.sbom,
+        sbom: sbomContent,
         source: row.source,
         sbomCreatedAt: row.sbom_created_at,
         imageSizeBytes: parseInt(row.image_size_bytes || '0'),

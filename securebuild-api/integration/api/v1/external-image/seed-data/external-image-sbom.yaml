@@ -11,9 +11,6 @@ seedData:
         - column: arch
           value:
             str: "x86_64"
-        - column: sbom
-          value:
-            str: '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","name":"test-image","dataLicense":"CC0-1.0","documentNamespace":"https://securebuild.io/test/image","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: SecureBuild test"]},"packages":[{"SPDXID":"SPDXRef-package-test","name":"test-pkg","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION"}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-package-test"}]}'
         - column: created_at
           value:
             str: "2024-01-01T00:00:00Z"
@@ -23,6 +20,9 @@ seedData:
         - column: image_size_bytes
           value:
             str: "1024000"
+        - column: is_in_object_store
+          value:
+            str: "true"
     - columns:
         - column: digest
           value:
@@ -30,9 +30,6 @@ seedData:
         - column: arch
           value:
             str: "aarch64"
-        - column: sbom
-          value:
-            str: '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","name":"test-image","dataLicense":"CC0-1.0","documentNamespace":"https://securebuild.io/test/image","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: SecureBuild test"]},"packages":[{"SPDXID":"SPDXRef-package-test","name":"test-pkg","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION"}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-package-test"}]}'
         - column: created_at
           value:
             str: "2024-01-01T00:00:00Z"
@@ -42,6 +39,9 @@ seedData:
         - column: image_size_bytes
           value:
             str: "1024000"
+        - column: is_in_object_store
+          value:
+            str: "true"
     # Queued scan SBOM
     - columns:
         - column: digest
@@ -50,9 +50,6 @@ seedData:
         - column: arch
           value:
             str: "x86_64"
-        - column: sbom
-          value:
-            str: '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","name":"test-image","dataLicense":"CC0-1.0","documentNamespace":"https://securebuild.io/test/image","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: SecureBuild test"]},"packages":[{"SPDXID":"SPDXRef-package-test","name":"test-pkg","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION"}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-package-test"}]}'
         - column: created_at
           value:
             str: "2024-01-01T00:00:00Z"
@@ -62,6 +59,9 @@ seedData:
         - column: image_size_bytes
           value:
             int: 1024000
+        - column: is_in_object_store
+          value:
+            str: "true"
     # Running scan SBOM
     - columns:
         - column: digest
@@ -70,9 +70,6 @@ seedData:
         - column: arch
           value:
             str: "x86_64"
-        - column: sbom
-          value:
-            str: '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","name":"test-image","dataLicense":"CC0-1.0","documentNamespace":"https://securebuild.io/test/image","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: SecureBuild test"]},"packages":[{"SPDXID":"SPDXRef-package-test","name":"test-pkg","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION"}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-package-test"}]}'
         - column: created_at
           value:
             str: "2024-01-01T00:00:00Z"
@@ -82,6 +79,9 @@ seedData:
         - column: image_size_bytes
           value:
             int: 1024000
+        - column: is_in_object_store
+          value:
+            str: "true"
     # Failed scan SBOM
     - columns:
         - column: digest
@@ -90,9 +90,6 @@ seedData:
         - column: arch
           value:
             str: "x86_64"
-        - column: sbom
-          value:
-            str: '{"SPDXID":"SPDXRef-DOCUMENT","spdxVersion":"SPDX-2.3","name":"test-image","dataLicense":"CC0-1.0","documentNamespace":"https://securebuild.io/test/image","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Tool: SecureBuild test"]},"packages":[{"SPDXID":"SPDXRef-package-test","name":"test-pkg","downloadLocation":"NOASSERTION","filesAnalyzed":false,"licenseConcluded":"NOASSERTION"}],"relationships":[{"spdxElementId":"SPDXRef-DOCUMENT","relationshipType":"DESCRIBES","relatedSpdxElement":"SPDXRef-package-test"}]}'
         - column: created_at
           value:
             str: "2024-01-01T00:00:00Z"
@@ -102,5 +99,8 @@ seedData:
         - column: image_size_bytes
           value:
             int: 1024000
+        - column: is_in_object_store
+          value:
+            str: "true"
     # NOTE: No SBOM entries for pending_sbom and generating_sbom test cases
     # These statuses represent states BEFORE SBOM generation completes
