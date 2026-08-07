@@ -24,6 +24,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/pipeline"
 	"github.com/securebuildhq/securebuild/pkg/scan"
+	"github.com/securebuildhq/securebuild/pkg/sbom"
 	"github.com/securebuildhq/securebuild/pkg/security"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"github.com/securebuildhq/securebuild/pkg/updater"
@@ -147,10 +148,28 @@ func runWorker(ctx context.Context) error {
 	// Add scan cache to context for the external_image_scan handler
 	ctx = listener.WithScanCapacityCache(ctx, scanCache)
 
+	// Initialize SBOM download capacity cache from builder filesystems
+	// (synchronous — must complete before listeners start so the
+	// external_image_sbom handler has a populated cache for builder selection).
+	sbomDownloadCache, err := sbom.InitSbomDownloadCapacityCache(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize SBOM download capacity cache: %w", err)
+	}
+
+	// Add SBOM download cache to context for the external_image_sbom handler
+	ctx = listener.WithSbomDownloadCapacityCache(ctx, sbomDownloadCache)
+
 	// Start scan status poller (collects results from builders every 10s)
 	go func() {
 		if err := listener.StartExternalImageScanStatusChecker(ctx, scanCache); err != nil {
 			logger.Error(fmt.Errorf("failed to start external image scan status checker: %w", err))
+		}
+	}()
+
+	// Start SBOM download status poller (collects results from builders every 10s)
+	go func() {
+		if err := listener.StartExternalImageSbomDownloadStatusChecker(ctx, sbomDownloadCache); err != nil {
+			logger.Error(fmt.Errorf("failed to start external image SBOM download status checker: %w", err))
 		}
 	}()
 
@@ -222,6 +241,11 @@ func runWorker(ctx context.Context) error {
 		if err := scan.StartScheduler(ctx, scanCache); err != nil {
 			logger.Error(fmt.Errorf("failed to start catalog scanner scheduler: %w", err))
 		}
+	}()
+
+	// Start the SBOM download metrics reporter (independent timer from scan scheduler)
+	go func() {
+		sbom.StartMetricsReporter(ctx, sbomDownloadCache)
 	}()
 
 	// Start the vulnerability database updater (vunnel + grype-db)

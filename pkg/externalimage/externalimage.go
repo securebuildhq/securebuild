@@ -234,6 +234,7 @@ func SetSBOMStatusSucceeded(ctx context.Context, digest string) error {
 	query := `
 		UPDATE external_image_sbom_status
 		SET status = $1,
+		    status_message = NULL,
 		    updated_at = $2,
 		    status_updated_at = $2
 		WHERE digest = $3

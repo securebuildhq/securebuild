@@ -244,27 +244,30 @@ func StartScanCatalogImageListener(ctx context.Context, l *Listener) {
 }
 
 func StartExternalImageSbomListener(ctx context.Context, l *Listener) {
-	l.AddHandler(ctx, "external_image_sbom", 1, time.Minute*1, func(ctx context.Context, notification *pgconn.Notification) error {
+	// Worker count mirrors the scan listener: PoolSize * 2 (both architectures)
+	// * MaxSbomDownloadsPerBuilder. Since the handler dispatches to builders and
+	// returns immediately (syft runs async via nohup), the worker count can be
+	// high — it just needs to be high enough to drain the queue faster than the
+	// scheduler enqueues.
+	maxWorkers := param.GetParam(ctx).PoolSize * 2 * param.GetParam(ctx).MaxSbomDownloadsPerBuilder
+	if maxWorkers < 1 {
+		maxWorkers = 1
+	}
+	l.AddHandler(ctx, "external_image_sbom", maxWorkers, time.Minute*5, func(ctx context.Context, notification *pgconn.Notification) error {
 		return telemetry.WithSpan(ctx, "listener.external_image_sbom", func(ctx context.Context) error {
-			// Unmarshal the payload prior to calling HandleExternalImageSbom
-			// so we can add logging context to any failures.
 			p := types.ExternalImageSbomPayload{}
 			if err := json.Unmarshal([]byte(notification.Payload), &p); err != nil {
 				return fmt.Errorf("failed to unmarshal external image sbom payload: %w", err)
 			}
-
 			if err := HandleExternalImageSbom(ctx, p); err != nil {
-				// Always log digest and retryable status
 				fields := []zap.Field{
 					zap.String("digest", p.Digest),
 					zap.Bool("retryable", !IsNonRetryableError(err)),
 				}
-				// If the error is retryable, add attempt and max attempts
 				if !IsNonRetryableError(err) {
 					attempt, maxAttempts := GetAttemptInfo(ctx)
 					fields = append(fields, zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
 				}
-
 				logger.Error(fmt.Errorf("failed to handle external image sbom notification: %w", err), fields...)
 				return fmt.Errorf("failed to handle external image sbom notification: %w", err)
 			}

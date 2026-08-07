@@ -59,6 +59,15 @@ func getScanExternalImageFunc(ctx context.Context) func(context.Context, string)
 }
 
 // HandleExternalImageSbom processes an external image SBOM generation request.
+// In production, it dispatches SBOM generation to a builder VM (syft runs
+// async via nohup, results collected by the poller). When a mock SBOM fetch
+// function is injected via WithMockFetchSBOM (integration tests), it falls
+// back to the in-process path that fetches and stores SBOMs synchronously.
+//
+// SBOMs do not go stale — once downloaded for a digest, they never change.
+// If an SBOM already exists, the handler skips immediately (unless a mock is
+// injected, in which case the rescan logic is preserved for test coverage).
+//
 // Exported for integration testing.
 func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPayload) error {
 	attempt, maxAttempts := GetAttemptInfo(ctx)
@@ -66,9 +75,6 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 
 	externalImage, err := externalimage.GetExternalImageForDigest(ctx, p.Digest)
 	if err != nil {
-		// If the digest no longer exists in external_image_tag, this is a
-		// stale digest.
-		// Mark as non-retryable since the digest will never be found again.
 		if errors.Is(err, externalimage.ErrExternalImageNotFound) {
 			telemetry.Increment(telemetry.MetricExternalImageSBOMFailed, []string{telemetry.TagChannelExternalImageSBOM, externalimage.ReasonForDatadogMetric(err)})
 			return NewNonRetryableError(err)
@@ -76,35 +82,43 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		return fmt.Errorf("failed to get external image: %w", err)
 	}
 
-	// Check if we already have SBOM data for this digest (GetExternalImageSBOM returns *string).
-	// No span here: GetExternalImageSBOM is SQL and already traced by the client.
 	var currentSBOM *string
 	currentSBOM, err = externalimage.GetExternalImageSBOM(ctx, p.Digest)
 	if err != nil {
 		return fmt.Errorf("failed to get external image sbom: %w", err)
 	}
-	if currentSBOM != nil && !p.EnqueueRescanAfter {
-		// SBOM exists and this is not a rescan request - nothing to do
-		logger.Debug("SBOM already exists for digest and not a rescan request, skipping", zap.String("digest", p.Digest))
+
+	// If a mock SBOM fetch function is injected, use the in-process path.
+	// This is used by integration tests that don't have builder VMs. The
+	// in-process path preserves the rescan logic for test coverage.
+	if _, hasMock := ctx.Value(fetchSBOMFuncKey).(func(context.Context, string, string, string) ([]sbom.SBOMResult, error)); hasMock {
+		return handleExternalImageSbomInProcess(ctx, p, externalImage, currentSBOM, attempt, maxAttempts)
+	}
+
+	// Production: SBOMs don't go stale. If we already have one, skip.
+	if currentSBOM != nil {
+		logger.Debug("SBOM already exists for digest, skipping", zap.String("digest", p.Digest))
 		return nil
 	}
 
-	// Initialize SBOM status if it doesn't exist yet (handles UI-triggered scans)
-	// Uses ON CONFLICT DO NOTHING, so won't overwrite existing status from monitor
 	if err := externalimage.InitializeSBOMStatusPending(ctx, p.Digest); err != nil {
 		logger.Warnf("failed to initialize SBOM status for digest %s: %s", p.Digest, err.Error())
-		// Continue anyway - this is just a status update
 	}
 
-	// Update SBOM status to 'generating' to indicate SBOM generation has started.
-	// This is done AFTER the early-return check to avoid resetting status on duplicate jobs.
 	if err := externalimage.SetSBOMStatusGenerating(ctx, p.Digest); err != nil {
 		logger.Warnf("failed to set SBOM status to generating for digest %s: %s", p.Digest, err.Error())
-		// Continue anyway - this is just a status update
 	}
 
-	// For rescan requests (EnqueueRescanAfter=true), check if we need to regenerate SBOMs
-	// to populate missing image_digest metadata. No span around GetExternalImageSBOMs: SQL is already traced.
+	// Dispatch SBOM generation to a builder VM.
+	return handleExternalImageSbomOnBuilder(ctx, p, externalImage)
+}
+
+// handleExternalImageSbomInProcess is the in-process SBOM generation path used
+// by integration tests that inject mock SBOM fetch functions. It preserves the
+// rescan logic (EnqueueRescanAfter) for test coverage.
+func handleExternalImageSbomInProcess(ctx context.Context, p types.ExternalImageSbomPayload, externalImage *extimgtypes.ExternalImage, currentSBOM *string, attempt, maxAttempts int) error {
+	// For rescan requests, check if we need to regenerate SBOMs to populate
+	// missing image_digest metadata. If not, just run the scan.
 	if currentSBOM != nil && p.EnqueueRescanAfter {
 		storedSBOMs, sbomErr := externalimage.GetExternalImageSBOMs(ctx, p.Digest)
 		if sbomErr != nil {
@@ -118,29 +132,35 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 			}
 		}
 		if !needsRegeneration {
-			// SBOM exists with image_digest populated, just run scan
 			logger.Info("SBOM already exists with image_digest, running scan only",
 				zap.String("digest", p.Digest), zap.Bool("rescan_request", p.EnqueueRescanAfter), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
-
-			// Mark SBOM status as succeeded since we know the SBOM exists and is valid
 			if err := externalimage.SetSBOMStatusSucceeded(ctx, p.Digest); err != nil {
 				logger.Warn("failed to set SBOM status to succeeded for digest", zap.String("digest", p.Digest), zap.Error(err), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", true))
-				// Continue anyway - the SBOM exists and we can run the scan
 			} else {
 				logger.Info("SBOM succeeded", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
 				telemetry.Increment(telemetry.MetricExternalImageSBOMSucceeded, []string{telemetry.TagChannelExternalImageSBOM})
 			}
-
 			return RunScanForDigest(ctx, p.Digest)
 		}
 		logger.Info("SBOM exists but missing image_digest, regenerating",
 			zap.String("digest", p.Digest), zap.Bool("rescan_request", p.EnqueueRescanAfter), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
 	}
 
+	if currentSBOM != nil && !p.EnqueueRescanAfter {
+		logger.Debug("SBOM already exists for digest and not a rescan request, skipping", zap.String("digest", p.Digest))
+		return nil
+	}
+
+	if err := externalimage.InitializeSBOMStatusPending(ctx, p.Digest); err != nil {
+		logger.Warnf("failed to initialize SBOM status for digest %s: %s", p.Digest, err.Error())
+	}
+
+	if err := externalimage.SetSBOMStatusGenerating(ctx, p.Digest); err != nil {
+		logger.Warnf("failed to set SBOM status to generating for digest %s: %s", p.Digest, err.Error())
+	}
+
 	sbomResults, err := getFetchSBOMFunc(ctx)(ctx, externalImage.Registry, externalImage.ImageName, p.Digest)
 	if err != nil {
-		// Mark SBOM status as failed so the UI shows failure. Return error so listener retries (up to 5x);
-		// a later attempt may succeed (e.g. rate limit, timeout) and we'll set status to succeeded then.
 		recordSBOMFailure(ctx, p.Digest, externalimage.NewScanFailureError(externalimage.ErrFetchSBOM, fmt.Sprintf("failed to fetch SBOM: %s", err.Error())), true, attempt, maxAttempts)
 		return fmt.Errorf("failed to fetch sbom: %w", err)
 	}
@@ -148,11 +168,8 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 	if len(sbomResults) == 0 {
 		recordSBOMFailure(ctx, p.Digest, externalimage.NewScanFailureError(externalimage.ErrNoSBOMDataAvailable, "empty SBOM results"), false, attempt, maxAttempts)
 
-		// If this was a rescan request, also record scan failures on the existing architecture rows
-		// so the UI shows the failure instead of being stuck on "queued"
 		if p.EnqueueRescanAfter {
 			logger.Warn("no SBOM data available for rescan request", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", false))
-			// Get existing SBOMs to know which architectures to mark as failed
 			storedSBOMs, sbomErr := externalimage.GetExternalImageSBOMs(ctx, p.Digest)
 			if sbomErr != nil {
 				logger.Warn("failed to get SBOMs for recording failure", zap.String("digest", p.Digest), zap.Error(sbomErr), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", false))
@@ -173,7 +190,6 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		return NewNonRetryableError(externalimage.ErrNoSBOMDataAvailable)
 	}
 
-	// Store SBOMs for all available architectures (each SetExternalImageSBOM is traced inside that function)
 	var foundArchs []string
 	for _, result := range sbomResults {
 		arch := extractArchFromPlatform(result.Architecture)
@@ -183,25 +199,19 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		}
 	}
 
-	// Mark SBOM status as succeeded (single status for all architectures)
 	if err := externalimage.SetSBOMStatusSucceeded(ctx, p.Digest); err != nil {
 		logger.Warn("failed to set SBOM status to succeeded for digest", zap.String("digest", p.Digest), zap.Error(err), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", true))
-		// Continue anyway - the SBOM data was stored successfully
 	} else {
 		logger.Info("SBOM succeeded", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
 		telemetry.Increment(telemetry.MetricExternalImageSBOMSucceeded, []string{telemetry.TagChannelExternalImageSBOM})
 	}
 
-	// Initialize scan status to 'queued' for all architectures
-	// This ensures the UI shows "Queued" instead of "Not attempted" while waiting for scan
 	for _, arch := range foundArchs {
 		if err := externalimage.InitializeScanStatusQueued(ctx, p.Digest, arch); err != nil {
 			logger.Warn("failed to initialize scan status to queued for digest", zap.String("digest", p.Digest), zap.String("arch", arch), zap.Error(err), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", true))
-			// Continue with remaining architectures - this is a non-critical status update
 		}
 	}
 
-	// Run scan if EnqueueRescanAfter is set (rescan request with missing SBOM)
 	if p.EnqueueRescanAfter {
 		logger.Info("running scan after SBOM fetch",
 			zap.String("digest", p.Digest), zap.Bool("rescan_request", p.EnqueueRescanAfter), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))

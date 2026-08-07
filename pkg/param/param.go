@@ -133,6 +133,12 @@ type Param struct {
 	// so this can be higher than max_parallel_builds. Default: 3.
 	MaxScansPerBuilder int `yaml:"max_scans_per_builder"`
 
+	// MaxSbomDownloadsPerBuilder is the maximum number of concurrent SBOM
+	// downloads per builder VM. SBOM generation pulls full container images from
+	// remote registries via syft, so it is network/CPU heavy and should be lower
+	// than MaxScansPerBuilder. Default: 1.
+	MaxSbomDownloadsPerBuilder int `yaml:"max_sbom_downloads_per_builder"`
+
 	// MaxImagesPerCycle limits how many images are enqueued per scheduler cycle.
 	// Higher values increase dispatch throughput at the cost of more queue
 	// messages per cycle. Default: 25.
@@ -307,6 +313,10 @@ func Init(source InitSource, overrides map[string]string) (context.Context, erro
 
 	if p.MaxScansPerBuilder <= 0 {
 		p.MaxScansPerBuilder = 3
+	}
+
+	if p.MaxSbomDownloadsPerBuilder <= 0 {
+		p.MaxSbomDownloadsPerBuilder = 1
 	}
 
 	if p.MaxImagesPerCycle <= 0 {
