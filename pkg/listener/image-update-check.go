@@ -53,7 +53,9 @@ func handleImageUpdateCheck(ctx context.Context, payload string) error {
 	}
 
 	var githubClient *github.Client
-	if githubToken := param.GetParam(ctx).UpdaterGithubAPIToken; githubToken != "" {
+	if override := getGithubClientOverride(ctx); override != nil {
+		githubClient = override
+	} else if githubToken := param.GetParam(ctx).UpdaterGithubAPIToken; githubToken != "" {
 		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
 		tc := oauth2.NewClient(ctx, ts)
 		githubClient = github.NewClient(tc)
@@ -317,7 +319,7 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 			  AND p.parent_id IS NULL
 			ORDER BY pv.apk_release DESC
 			LIMIT 1
-		`, packageName, tag).Scan(&pkgID, &pkgName, &pkgVersion)
+		`, packageName, v.String()).Scan(&pkgID, &pkgName, &pkgVersion)
 
 		if err != nil {
 			if err == pgx.ErrNoRows {
@@ -361,7 +363,7 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 		return apkoYAML, "", "", fmt.Errorf("no matching package found for tag %s in families with git_remote %s", tag, gitRemote)
 	}
 
-	pinnedYAML, err := pinCorePackageInApkoYAML(apkoYAML, possibleNames, pinnedVersion)
+	pinnedYAML, err := pinCorePackageInApkoYAML(apkoYAML, possibleNames, pinnedVersion, true)
 	if err != nil {
 		return apkoYAML, packageID, pinnedVersion, fmt.Errorf("failed to pin core package: %w", err)
 	}

@@ -1,0 +1,30 @@
+database: securebuild
+name: image
+requires: []
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "img-git-linked-test"
+        - column: name
+          value:
+            str: "test-git-linked-image"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: is_public
+          value:
+            str: "false"
+        - column: git_remote
+          value:
+            str: "https://github.com/test-org/test-repo.git"
+        - column: apko_file_path
+          value:
+            str: "securebuild/image/apko-test.yaml"
+        - column: image_tag_template
+          value:
+            str: "v{major}.{minor}.{patch}"

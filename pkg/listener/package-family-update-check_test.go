@@ -377,3 +377,210 @@ test:
 		})
 	}
 }
+
+func TestPinCorePackageInApkoYAML(t *testing.T) {
+	tests := []struct {
+		name          string
+		inputYAML     string
+		possibleNames map[string]struct{}
+		version       string
+		expectedYAML  string
+		expectError   bool
+	}{
+		{
+			name: "pins only in packages section",
+			inputYAML: `contents:
+  packages:
+    - kotsadm
+    - kubectl
+    - busybox
+
+accounts:
+  groups:
+    - groupname: kotsadm
+      gid: 1001
+  users:
+    - username: kotsadm
+      uid: 1001
+      gid: 1001
+  run-as: kotsadm
+
+paths:
+  - path: /kotsadm
+    type: symlink
+    source: /usr/local/bin/kotsadm
+
+entrypoint:
+  command: /kotsadm
+`,
+			possibleNames: map[string]struct{}{"kotsadm": {}},
+			version:     "1.131.1",
+			expectedYAML: `contents:
+  packages:
+    - kotsadm~1.131.1
+    - kubectl
+    - busybox
+accounts:
+  groups:
+    - groupname: kotsadm
+      gid: 1001
+  users:
+    - username: kotsadm
+      uid: 1001
+      gid: 1001
+  run-as: kotsadm
+paths:
+  - path: /kotsadm
+    type: symlink
+    source: /usr/local/bin/kotsadm
+entrypoint:
+  command: /kotsadm
+`,
+		},
+		{
+			name: "does not pin substring package names",
+			inputYAML: `contents:
+  packages:
+    - kotsadm
+    - kotsadm-migrations
+    - kotsadm-cli
+`,
+			possibleNames: map[string]struct{}{"kotsadm": {}},
+			version:       "1.131.1",
+			expectedYAML: `contents:
+  packages:
+    - kotsadm~1.131.1
+    - kotsadm-migrations
+    - kotsadm-cli
+`,
+		},
+		{
+			name: "preserves comments and formatting in packages section",
+			inputYAML: `contents:
+  packages:
+    - kotsadm  # core package
+    - kubectl
+`,
+			possibleNames: map[string]struct{}{"kotsadm": {}},
+			version:       "1.131.1",
+			expectedYAML: `contents:
+  packages:
+    - kotsadm~1.131.1 # core package
+    - kubectl
+`,
+		},
+		{
+			name: "does not replace in comment before packages section",
+			inputYAML: `# packages: kotsadm
+contents:
+  packages:
+    - kotsadm
+`,
+			possibleNames: map[string]struct{}{"kotsadm": {}},
+			version:       "1.131.1",
+			expectedYAML: `# packages: kotsadm
+contents:
+  packages:
+    - kotsadm~1.131.1
+`,
+		},
+		{
+			name: "no matching packages",
+			inputYAML: `contents:
+  packages:
+    - kubectl
+    - busybox
+`,
+			possibleNames: map[string]struct{}{"kotsadm": {}},
+			version:       "1.131.1",
+			expectedYAML: `contents:
+  packages:
+    - kubectl
+    - busybox
+`,
+		},
+		{
+			name: "pins already-pinned package to new version",
+			inputYAML: `contents:
+  packages:
+    - kotsadm~1.130.9
+    - kubectl
+`,
+			possibleNames: map[string]struct{}{"kotsadm": {}},
+			version:       "1.131.1",
+			expectedYAML: `contents:
+  packages:
+    - kotsadm~1.131.1
+    - kubectl
+`,
+		},
+		{
+			name: "pins package with equals version",
+			inputYAML: `contents:
+  packages:
+    - kotsadm=1.130.9
+    - kubectl
+`,
+			possibleNames: map[string]struct{}{"kotsadm": {}},
+			version:       "1.131.1",
+			expectedYAML: `contents:
+  packages:
+    - kotsadm~1.131.1
+    - kubectl
+`,
+		},
+		{
+			name: "empty packages section",
+			inputYAML: `contents:
+  packages:
+
+accounts:
+  run-as: kotsadm
+`,
+			possibleNames: map[string]struct{}{"kotsadm": {}},
+			version:       "1.131.1",
+			expectedYAML: `contents:
+  packages:
+
+accounts:
+  run-as: kotsadm
+`,
+		},
+		{
+			name: "multiple packages pinned",
+			inputYAML: `contents:
+  packages:
+    - bash
+    - bash-entrypoint
+    - git
+`,
+			possibleNames: map[string]struct{}{"bash": {}, "bash-entrypoint": {}},
+			version:       "5.3",
+			expectedYAML: `contents:
+  packages:
+    - bash~5.3
+    - bash-entrypoint~5.3
+    - git
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := pinCorePackageInApkoYAML(tt.inputYAML, tt.possibleNames, tt.version, true)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+			if result != tt.expectedYAML {
+				t.Errorf("Result mismatch.\nExpected:\n%s\n\nGot:\n%s", tt.expectedYAML, result)
+			}
+		})
+	}
+}
