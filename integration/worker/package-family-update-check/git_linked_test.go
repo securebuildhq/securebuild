@@ -44,6 +44,12 @@ pipeline:
   - runs: echo "Building test package"
 `
 
+const gitLinkedApkoYAML = `contents:
+  packages:
+    - test-git-linked-1.0
+    - busybox
+`
+
 func setupGitLinkedTestEnv(t *testing.T, ctx context.Context) (context.Context, *testutil.TestDatabase, *listener.Listener) {
 	t.Helper()
 
@@ -76,6 +82,7 @@ func startGitLinkedGitHubMock(t *testing.T, tag, commitSHA string) *httptest.Ser
 	t.Helper()
 
 	melangeBase64 := base64.StdEncoding.EncodeToString([]byte(gitLinkedMelangeYAML))
+	apkoBase64 := base64.StdEncoding.EncodeToString([]byte(gitLinkedApkoYAML))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
@@ -92,12 +99,26 @@ func startGitLinkedGitHubMock(t *testing.T, tag, commitSHA string) *httptest.Ser
 			json.NewEncoder(w).Encode(ref)
 
 		case strings.Contains(path, "/contents/"):
-			content := &github.RepositoryContent{
-				Type:     github.String("file"),
-				Name:     github.String("melange.yaml"),
-				Path:     github.String("securebuild/package/melange.yaml"),
-				Content:  github.String(melangeBase64),
-				Encoding: github.String("base64"),
+			var content *github.RepositoryContent
+			if strings.Contains(path, "melange.yaml") {
+				content = &github.RepositoryContent{
+					Type:     github.String("file"),
+					Name:     github.String("melange.yaml"),
+					Path:     github.String("securebuild/package/melange.yaml"),
+					Content:  github.String(melangeBase64),
+					Encoding: github.String("base64"),
+				}
+			} else if strings.Contains(path, "apko-test.yaml") {
+				content = &github.RepositoryContent{
+					Type:     github.String("file"),
+					Name:     github.String("apko-test.yaml"),
+					Path:     github.String("securebuild/image/apko-test.yaml"),
+					Content:  github.String(apkoBase64),
+					Encoding: github.String("base64"),
+				}
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(content)
@@ -108,6 +129,11 @@ func startGitLinkedGitHubMock(t *testing.T, tag, commitSHA string) *httptest.Ser
 				Entries: []*github.TreeEntry{
 					{
 						Path: github.String("securebuild/package/melange.yaml"),
+						Type: github.String("blob"),
+						SHA:  github.String(commitSHA),
+					},
+					{
+						Path: github.String("securebuild/image/apko-test.yaml"),
 						Type: github.String("blob"),
 						SHA:  github.String(commitSHA),
 					},
@@ -314,4 +340,95 @@ func TestGitLinkedUpdateCheckExistingPackagePatchRelease(t *testing.T) {
 	err = testDB.Pool.QueryRow(ctx, "SELECT last_error FROM package_family WHERE id = $1", gitLinkedFamilyID).Scan(&lastError)
 	require.NoError(t, err)
 	assert.Nil(t, lastError, "package_family last_error should be cleared on success")
+}
+
+func TestGitLinkedImageUpdateCheckWithVPrefix(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	ctx, testDB, l := setupGitLinkedTestEnv(t, ctx)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+	defer persistence.ClosePool(ctx)
+
+	// Seed the image data
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+
+	imageSeedDir := filepath.Join(projectRoot, "integration", "worker", "package-family-update-check", "testdata", "git-linked-seed-data")
+	err = testutil.ApplySchemaHero(ctx, testDB.ConnStr, imageSeedDir, true)
+	require.NoError(t, err)
+
+	tag := "v1.0.0"
+	commitSHA := "abc123initialcommit00000000000000000abc"
+
+	githubServer := startGitLinkedGitHubMock(t, tag, commitSHA)
+	githubClient := newMockGitHubClient(githubServer)
+
+	listenerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	listenerCtx = listener.WithGithubClientOverride(listenerCtx, githubClient)
+
+	// Start the image update check listener
+	listener.StartImageUpdateCheckListener(listenerCtx, l)
+
+	go l.Start(listenerCtx)
+	defer l.Stop(listenerCtx)
+
+	time.Sleep(1 * time.Second)
+
+	// Trigger image update check with v-prefixed tag
+	payload := listener.ImageUpdateCheckPayload{
+		ImageID: "img-git-linked-test",
+		Tag:     tag,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	err = persistence.EnqueueWork(ctx, "image_update_check", payloadBytes)
+	require.NoError(t, err)
+
+	// Wait for the handler to process (may retry once if VM assignment fails,
+	// but the image_apko records are created on the first attempt)
+	time.Sleep(5 * time.Second)
+
+	// Verify image_apko was created with the correct git_tag
+	var apkoID, apkoGitTag string
+	err = testDB.Pool.QueryRow(ctx, `
+		SELECT id, git_tag
+		FROM image_apko
+		WHERE image_id = $1
+	`, "img-git-linked-test").Scan(&apkoID, &apkoGitTag)
+	require.NoError(t, err, "image_apko should have been created")
+	assert.Equal(t, tag, apkoGitTag, "git_tag should preserve the v prefix")
+
+	// Verify image_apko_version has the package pinned correctly
+	var apkoYAML string
+	err = testDB.Pool.QueryRow(ctx, `
+		SELECT apko_yaml
+		FROM image_apko_version
+		WHERE image_apko_id = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, apkoID).Scan(&apkoYAML)
+	require.NoError(t, err, "image_apko_version should have been created")
+
+	// The core bug: without the fix, the package would remain unpinned
+	// because pinCorePackageForImage queries pv.version = 'v1.0.0' which
+	// does not match the normalized '1.0.0' stored in the DB.
+	assert.Contains(t, apkoYAML, "test-git-linked-1.0~1.0.0",
+		"APKO YAML should have the core package pinned to the normalized version")
+
+	// Verify the image_package link was created
+	var pinnedVersion string
+	err = testDB.Pool.QueryRow(ctx, `
+		SELECT pinned_version
+		FROM image_package
+		WHERE apko_id = $1
+	`, apkoID).Scan(&pinnedVersion)
+	require.NoError(t, err, "image_package link should have been created")
+	assert.Equal(t, "1.0.0", pinnedVersion, "pinned_version should be the normalized version")
 }

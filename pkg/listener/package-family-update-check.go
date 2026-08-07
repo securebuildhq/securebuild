@@ -469,8 +469,8 @@ func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Clien
 	// Determine which tags are new or re-tagged
 	var updateResults []*UpdateResult
 	for _, v := range filteredTags {
-		versionStr := v.Original()
-		tagStr := versionStr
+		versionStr := v.String()
+		tagStr := v.Original()
 
 		// Skip if version already exists and tag hasn't been re-assigned
 		if existingVersionSet[versionStr] {
@@ -1190,7 +1190,7 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 		}
 
 		// Pin the core package to the correct version in the APKO YAML
-		pinnedApkoYAML, err := pinCorePackageInApkoYAML(apkoSpec.Content, possibleNames, versionStr)
+		pinnedApkoYAML, err := pinCorePackageInApkoYAML(apkoSpec.Content, possibleNames, versionStr, true)
 		if err != nil {
 			logger.Warn("failed to pin core package in APKO YAML, using as-is",
 				zap.String("image_id", img.ImageID),
@@ -1282,35 +1282,121 @@ func createLinkedImageAPKO(ctx context.Context, imageID, gitRemote, apkoFilePath
 // pinCorePackageInApkoYAML finds the core package in the APKO YAML and pins it to the
 // specified version using the ~version syntax. Uses the same package detection logic
 // as IsPackageCoreForAPKO (matching by family name, package name, and provides).
-func pinCorePackageInApkoYAML(apkoYAML string, possibleNames map[string]struct{}, version string) (string, error) {
+//
+// For linked images/packages (linked=true), the YAML is parsed into yaml.Node, the
+// packages are found using the proper ImageConfiguration type, and replaced directly
+// in the yaml.Node tree. This preserves formatting and comments while avoiding any
+// risk of replacing package names that appear in non-package sections.
+//
+// For non-linked images/packages (linked=false), the original string replacement
+// approach is used as a fallback.
+func pinCorePackageInApkoYAML(apkoYAML string, possibleNames map[string]struct{}, version string, linked bool) (string, error) {
 	var imageConfig apkotypes.ImageConfiguration
 	if err := yaml.Unmarshal([]byte(apkoYAML), &imageConfig); err != nil {
 		return "", fmt.Errorf("failed to parse APKO YAML: %w", err)
 	}
 
-	// Build a map of replacements
+	// Build a map of replacements keyed by the exact original package string
 	replacements := make(map[string]string)
-
 	for _, pkg := range imageConfig.Contents.Packages {
 		parsed := apkopackage.ResolvePackageNameVersionPin(pkg)
 		if parsed.Name == "" {
 			continue
 		}
-
 		if _, exists := possibleNames[parsed.Name]; exists {
-			// Pin this package to the correct version
 			newPkg := fmt.Sprintf("%s~%s", parsed.Name, version)
 			replacements[pkg] = newPkg
 		}
 	}
 
-	// Apply replacements to the YAML string, preserving formatting
+	if len(replacements) == 0 {
+		return apkoYAML, nil
+	}
+
+	if linked {
+		return pinCorePackageInApkoYAMLLinked(apkoYAML, replacements)
+	}
+
+	// Fallback for non-linked images: use string replacement on the original YAML text
 	result := apkoYAML
 	for oldPkg, newPkg := range replacements {
 		result = strings.ReplaceAll(result, oldPkg, newPkg)
 	}
-
 	return result, nil
+}
+
+// pinCorePackageInApkoYAMLLinked uses yaml.Node to preserve formatting while replacing
+// only packages in the contents.packages section. This avoids any risk of replacing
+// package names that appear in other sections (accounts, paths, entrypoint, etc.).
+//
+// NOTE: We intentionally do NOT modify an apkotypes.ImageConfiguration struct and
+// marshal it back to YAML. The apko ImageConfiguration types lack `omitempty` yaml tags
+// on many nested fields (e.g., entrypoint.services, paths[].uid, paths[].permissions).
+// yaml.Marshal on the struct would produce phantom zero-value fields like `permissions: 0`
+// and `services: {}` that are not present in the original YAML and could be semantically
+// different for APKO. yaml.Node round-trips the exact original structure while only
+// mutating the specific package scalars we need to change.
+func pinCorePackageInApkoYAMLLinked(apkoYAML string, replacements map[string]string) (string, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(apkoYAML), &root); err != nil {
+		return "", fmt.Errorf("failed to parse YAML nodes: %w", err)
+	}
+
+	if err := modifyPackagesInYAMLNode(&root, replacements); err != nil {
+		return "", err
+	}
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&root); err != nil {
+		return "", fmt.Errorf("failed to encode YAML: %w", err)
+	}
+	enc.Close()
+
+	return buf.String(), nil
+}
+
+func modifyPackagesInYAMLNode(node *yaml.Node, replacements map[string]string) error {
+	switch node.Kind {
+	case yaml.DocumentNode:
+		for _, child := range node.Content {
+			if err := modifyPackagesInYAMLNode(child, replacements); err != nil {
+				return err
+			}
+		}
+	case yaml.MappingNode:
+		for i := 0; i < len(node.Content); i += 2 {
+			key := node.Content[i]
+			val := node.Content[i+1]
+			if key.Value == "contents" && val.Kind == yaml.MappingNode {
+				for j := 0; j < len(val.Content); j += 2 {
+					contentsKey := val.Content[j]
+					contentsVal := val.Content[j+1]
+					if contentsKey.Value == "packages" && contentsVal.Kind == yaml.SequenceNode {
+						for _, pkgNode := range contentsVal.Content {
+							if pkgNode.Kind == yaml.ScalarNode {
+								if newPkg, ok := replacements[pkgNode.Value]; ok {
+									pkgNode.Value = newPkg
+								}
+							}
+						}
+						return nil
+					}
+				}
+			}
+			if err := modifyPackagesInYAMLNode(val, replacements); err != nil {
+				return err
+			}
+		}
+	case yaml.SequenceNode:
+		for _, child := range node.Content {
+			if err := modifyPackagesInYAMLNode(child, replacements); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // Routes to either processMinorVersionUpdate or processPatchVersionUpdate based on version change type
