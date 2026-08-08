@@ -563,10 +563,14 @@ func ListExternalImagesNeedDigestCheck(ctx context.Context) ([]*types.ExternalIm
 
 	now := time.Now()
 	query := `
-		select digest, registry, image_name, array_agg(image_tag), max(created_at) as max_created_at
-		from external_image_tag
-		where next_check_digest_at < $1
-		group by digest, registry, image_name
+		select eit.team_id, et.digest, et.registry, et.image_name, array_agg(et.image_tag), max(et.created_at) as max_created_at
+		from external_image_tag et
+		join external_image_team eit
+		  on eit.registry = et.registry
+		 and eit.image_name = et.image_name
+		 and eit.image_tag = et.image_tag
+		where et.next_check_digest_at < $1
+		group by eit.team_id, et.digest, et.registry, et.image_name
 		order by max_created_at desc
 	`
 
@@ -579,16 +583,17 @@ func ListExternalImagesNeedDigestCheck(ctx context.Context) ([]*types.ExternalIm
 	var externalImages []*types.ExternalImage
 
 	for rows.Next() {
-		var digest, registry, imageName string
+		var teamID, digest, registry, imageName string
 		var tags []string
 		var createdAt time.Time
 
-		err := rows.Scan(&digest, &registry, &imageName, &tags, &createdAt)
+		err := rows.Scan(&teamID, &digest, &registry, &imageName, &tags, &createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan external image row for digest check: %w", err)
 		}
 
 		externalImages = append(externalImages, &types.ExternalImage{
+			TeamID:    teamID,
 			Digest:    digest,
 			Registry:  registry,
 			ImageName: imageName,
@@ -658,15 +663,17 @@ func UpdateExternalImageTagNextCheckDigestAt(ctx context.Context, registry strin
 	return nil
 }
 
-func GetExternalImageCredentials(ctx context.Context, registry string, imageName string) (string, string, error) {
+func GetExternalImageCredentials(ctx context.Context, teamID string, registry string, imageName string) (string, string, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
 	query := `
-		select username, password from external_image_credential where registry = $1 and image_name = $2
+		select username, password
+		from external_image_credential
+		where registry = $1 and image_name = $2 and team_id = $3
 	`
 
-	row := conn.QueryRow(ctx, query, registry, imageName)
+	row := conn.QueryRow(ctx, query, registry, imageName, teamID)
 
 	var username sql.NullString
 	var password sql.NullString
@@ -675,7 +682,7 @@ func GetExternalImageCredentials(ctx context.Context, registry string, imageName
 		if err == pgx.ErrNoRows {
 			return "", "", nil
 		}
-		return "", "", fmt.Errorf("failed to scan external image credentials for %s/%s: %w", registry, imageName, err)
+		return "", "", fmt.Errorf("failed to scan external image credentials for team %s and image %s/%s: %w", teamID, registry, imageName, err)
 	}
 
 	if !username.Valid || !password.Valid {

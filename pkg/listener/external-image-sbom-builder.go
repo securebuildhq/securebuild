@@ -2,6 +2,7 @@ package listener
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	extimgtypes "github.com/securebuildhq/securebuild/pkg/externalimage/types"
 	"github.com/securebuildhq/securebuild/pkg/listener/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
+	registrypkg "github.com/securebuildhq/securebuild/pkg/registry"
 	"github.com/securebuildhq/securebuild/pkg/sbom"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"go.uber.org/zap"
@@ -51,7 +53,7 @@ func handleExternalImageSbomOnBuilder(ctx context.Context, p types.ExternalImage
 		return fmt.Errorf("SBOM download capacity cache is not ready")
 	}
 
-	dispatchErr := dispatchSbomDownloadToBuilder(ctx, cache, p.Digest, externalImage.Registry, externalImage.ImageName)
+	dispatchErr := dispatchSbomDownloadToBuilder(ctx, cache, p.TeamID, p.Digest, externalImage.Registry, externalImage.ImageName)
 	if dispatchErr != nil {
 		if errors.Is(dispatchErr, sbom.ErrNoBuilderAvailableForSbomDownload) {
 			// Revert status so the scheduler can re-enqueue on the next cycle.
@@ -77,7 +79,7 @@ func handleExternalImageSbomOnBuilder(ctx context.Context, p types.ExternalImage
 // dispatchSbomDownloadToBuilder handles builder selection, file copy, and syft
 // launch. It reserves a capacity slot atomically and releases it if any step
 // fails before the download is fully launched.
-func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownloadCapacityCache, digest, registry, imageName string) error {
+func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownloadCapacityCache, teamID, digest, registry, imageName string) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.dispatch_sbom_download_to_builder")
 	defer span.Finish()
 
@@ -104,7 +106,13 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 	}
 	defer runner.Close()
 
+	dockerConfig, err := buildSbomDockerConfig(ctx, teamID, registry, imageName)
+	if err != nil {
+		return fmt.Errorf("failed to configure registry authentication: %w", err)
+	}
+
 	metadata := sbom.SbomDownloadMetadata{
+		TeamID:    teamID,
 		Digest:    digest,
 		Registry:  registry,
 		ImageName: imageName,
@@ -112,7 +120,7 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 	}
 
 	// Phase 1: Prepare all files (dirs, download.json, per-arch dirs).
-	if err := prepareSbomDownloadFiles(ctx, runner, workDir, metadata); err != nil {
+	if err := prepareSbomDownloadFiles(ctx, runner, workDir, metadata, dockerConfig); err != nil {
 		cleanupSbomDownloadDir(ctx, runner, workDir)
 		return fmt.Errorf("failed to prepare SBOM download files on builder %s: %w", builderVM.ID, err)
 	}
@@ -121,7 +129,7 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 	// have already been launched, kill those processes and clean up.
 	launchedPlatforms := make([]string, 0, len(sbomDownloadPlatforms))
 	for _, platform := range sbomDownloadPlatforms {
-		syftCmd := buildSyftLaunchCommand(workDir, platform, registry, imageName, digest)
+		syftCmd := buildSyftLaunchCommand(workDir, platform, registry, imageName, digest, dockerConfig != "")
 		if _, err := runner.RunCommand(ctx, syftCmd); err != nil {
 			logger.Warn("failed to launch syft, cleaning up already-launched processes",
 				zap.String("digest", digest),
@@ -146,6 +154,7 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 	// reflects it immediately.
 	slotReserved = false
 	cache.AddDownload(builderVM.ID, sbom.SbomDownloadDirInfo{
+		TeamID:    teamID,
 		Digest:    digest,
 		WorkDir:   workDir,
 		CreatedAt: metadata.CreatedAt,
@@ -162,7 +171,7 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 // prepareSbomDownloadFiles creates the download work directory, writes
 // download.json, and creates per-arch output directories. If this function
 // returns an error, no syft processes have been started.
-func prepareSbomDownloadFiles(ctx context.Context, runner buildbackend.Runner, workDir string, metadata sbom.SbomDownloadMetadata) error {
+func prepareSbomDownloadFiles(ctx context.Context, runner buildbackend.Runner, workDir string, metadata sbom.SbomDownloadMetadata, dockerConfig string) error {
 	if err := runner.MkdirAll(workDir); err != nil {
 		return fmt.Errorf("failed to create SBOM download work dir %s: %w", workDir, err)
 	}
@@ -175,6 +184,23 @@ func prepareSbomDownloadFiles(ctx context.Context, runner buildbackend.Runner, w
 	downloadJSONPath := filepath.Join(workDir, "download.json")
 	if err := runner.WriteFile(downloadJSONPath, string(metadataJSON)); err != nil {
 		return fmt.Errorf("failed to write download.json: %w", err)
+	}
+
+	if dockerConfig != "" {
+		dockerConfigDir := filepath.Join(workDir, "docker-config")
+		if err := runner.MkdirAll(dockerConfigDir); err != nil {
+			return fmt.Errorf("failed to create Docker config dir: %w", err)
+		}
+		if _, err := runner.RunCommand(ctx, fmt.Sprintf("chmod 700 %q", dockerConfigDir)); err != nil {
+			return fmt.Errorf("failed to secure Docker config dir: %w", err)
+		}
+		dockerConfigPath := filepath.Join(dockerConfigDir, "config.json")
+		if err := runner.WriteFile(dockerConfigPath, dockerConfig); err != nil {
+			return fmt.Errorf("failed to write Docker config: %w", err)
+		}
+		if _, err := runner.RunCommand(ctx, fmt.Sprintf("chmod 600 %q", dockerConfigPath)); err != nil {
+			return fmt.Errorf("failed to secure Docker config: %w", err)
+		}
 	}
 
 	for _, platform := range sbomDownloadPlatforms {
@@ -196,17 +222,77 @@ func prepareSbomDownloadFiles(ctx context.Context, runner buildbackend.Runner, w
 //   - output/exit_code (syft exit code: 0=success)
 //   - output/syft.stderr (syft stderr)
 //   - output/syft.pid (actual syft process PID)
-func buildSyftLaunchCommand(workDir, platform, registry, imageName, digest string) string {
+func buildSyftLaunchCommand(workDir, platform, registry, imageName, digest string, authenticated bool) string {
 	archDir := filepath.Join(workDir, platformToArchDir(platform))
 	imageRef := registry + "/" + imageName + "@" + digest
+	dockerConfigEnv := ""
+	if authenticated {
+		dockerConfigEnv = fmt.Sprintf("  export DOCKER_CONFIG=%q\n", filepath.Join(workDir, "docker-config"))
+	}
 	return fmt.Sprintf(`nohup bash -c '
   cd %q
-  syft --platform %s -o spdx-json=./sbom.spdx.json -o syft-json=./sbom.syft.json registry:%s > output/syft.stderr 2>&1 &
+%s  syft --platform %s -o spdx-json=./sbom.spdx.json -o syft-json=./sbom.syft.json registry:%s > output/syft.stderr 2>&1 &
   syft_pid=$!
   echo $syft_pid > output/syft.pid
   wait $syft_pid
   echo $? > output/exit_code
-' > %q 2>&1 < /dev/null &`, archDir, platform, imageRef, filepath.Join(archDir, "download.log"))
+' > %q 2>&1 < /dev/null &`, archDir, dockerConfigEnv, platform, imageRef, filepath.Join(archDir, "download.log"))
+}
+
+// buildSbomDockerConfig resolves stored registry credentials and returns a
+// Docker config suitable for Syft. An empty string means anonymous access.
+func buildSbomDockerConfig(ctx context.Context, teamID, registry, imageName string) (string, error) {
+	username, password, err := externalimage.GetExternalImageCredentials(ctx, teamID, registry, imageName)
+	if err != nil {
+		return "", err
+	}
+	if username == "" || password == "" {
+		return "", nil
+	}
+
+	authenticator, err := registrypkg.GetCredentialsForEndpoint(ctx, registry, username, password)
+	if err != nil {
+		return "", fmt.Errorf("failed to get credentials for registry %s: %w", registry, err)
+	}
+	authConfig, err := authenticator.Authorization()
+	if err != nil {
+		return "", fmt.Errorf("failed to authorize registry %s: %w", registry, err)
+	}
+
+	return marshalSbomDockerConfig(registry, authConfig.Username, authConfig.Password, authConfig.RegistryToken)
+}
+
+func marshalSbomDockerConfig(registry, username, password, registryToken string) (string, error) {
+	registryAuth := map[string]string{}
+	if username != "" || password != "" {
+		registryAuth["username"] = username
+		registryAuth["password"] = password
+	} else if registryToken != "" {
+		registryAuth["auth"] = base64.StdEncoding.EncodeToString([]byte(":" + registryToken))
+	} else {
+		return "", nil
+	}
+
+	dockerConfig := map[string]any{
+		"auths": map[string]any{
+			normalizeRegistryForDockerConfig(registry): registryAuth,
+		},
+	}
+	configJSON, err := json.Marshal(dockerConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal Docker config: %w", err)
+	}
+	return string(configJSON), nil
+}
+
+func normalizeRegistryForDockerConfig(registry string) string {
+	if registry == "index.docker.io" {
+		return "https://index.docker.io/v1/"
+	}
+	if strings.HasPrefix(registry, "http://") || strings.HasPrefix(registry, "https://") {
+		return registry
+	}
+	return "https://" + registry
 }
 
 // platformToArchDir converts a platform string (linux/amd64) to a directory-safe

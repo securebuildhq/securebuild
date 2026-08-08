@@ -44,6 +44,7 @@ var ErrNoBuilderAvailableForSbomDownload = fmt.Errorf("no builder available for 
 // directory on the builder. It allows the poller to discover downloads and know
 // which DB rows to update.
 type SbomDownloadMetadata struct {
+	TeamID     string    `json:"team_id,omitempty"`
 	Digest     string    `json:"digest"`
 	Registry   string    `json:"registry"`
 	ImageName  string    `json:"image_name"`
@@ -53,6 +54,7 @@ type SbomDownloadMetadata struct {
 
 // SbomDownloadDirInfo tracks a single active SBOM download directory on a builder.
 type SbomDownloadDirInfo struct {
+	TeamID    string
 	Digest    string
 	WorkDir   string
 	CreatedAt time.Time
@@ -64,7 +66,7 @@ type SbomDownloadDirInfo struct {
 // capacity limits (MaxSbomDownloadsPerBuilder) since image pulls are heavier.
 type SbomDownloadCapacityCache struct {
 	mu     sync.RWMutex
-	counts map[string]int                  // machineID → count of active download directories
+	counts map[string]int                   // machineID → count of active download directories
 	scans  map[string][]SbomDownloadDirInfo // machineID → list of active download dirs
 	ready  bool
 }
@@ -264,9 +266,9 @@ func (c *SbomDownloadCapacityCache) ReportDownloadCapacityMetrics(ctx context.Co
 func (c *SbomDownloadCapacityCache) DumpToFile() error {
 	c.mu.RLock()
 	snapshot := struct {
-		Timestamp time.Time                     `json:"timestamp"`
-		Ready     bool                          `json:"ready"`
-		Counts    map[string]int                `json:"counts"`
+		Timestamp time.Time                        `json:"timestamp"`
+		Ready     bool                             `json:"ready"`
+		Counts    map[string]int                   `json:"counts"`
 		Downloads map[string][]SbomDownloadDirInfo `json:"downloads"`
 	}{
 		Timestamp: time.Now().UTC(),
@@ -328,6 +330,7 @@ func InitSbomDownloadCapacityCache(ctx context.Context) (*SbomDownloadCapacityCa
 					continue
 				}
 				activeDownloads = append(activeDownloads, SbomDownloadDirInfo{
+					TeamID:    d.Metadata.TeamID,
 					Digest:    d.Metadata.Digest,
 					WorkDir:   d.WorkDir,
 					CreatedAt: d.Metadata.CreatedAt,
@@ -407,10 +410,10 @@ type SbomDownloadDirStatus struct {
 
 // ArchSbomDownloadStatus represents the status of a single architecture's SBOM download.
 type ArchSbomDownloadStatus struct {
-	Done      bool
-	ExitCode  string
-	SbomJSON  string
-	Stderr    string
+	Done     bool
+	ExitCode string
+	SbomJSON string
+	Stderr   string
 }
 
 // ListSbomDownloadDirsOnBuilder connects to a builder and discovers all SBOM

@@ -16,7 +16,9 @@ func generateSBOM(ctx context.Context, imageInfo *ImageInfo, outputDir string) (
 	fmt.Printf("  Generating SBOM for %s/%s@%s\n", imageInfo.Registry, imageInfo.Repository, imageInfo.Digest)
 
 	// Use the existing SBOM functionality from pkg/sbom
-	sboms, err := sbom.FetchSBOM(ctx, imageInfo.Registry, imageInfo.Repository, imageInfo.Digest)
+	// autoimg does not operate on behalf of a SecureBuild team, so it only uses
+	// anonymous registry access here.
+	sboms, err := sbom.FetchSBOM(ctx, "", imageInfo.Registry, imageInfo.Repository, imageInfo.Digest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch SBOM: %w", err)
 	}

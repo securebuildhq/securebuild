@@ -43,7 +43,7 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 	}
 
 	for _, externalImage := range externalImages {
-		username, password, err := GetExternalImageCredentials(ctx, externalImage.Registry, externalImage.ImageName)
+		username, password, err := GetExternalImageCredentials(ctx, externalImage.TeamID, externalImage.Registry, externalImage.ImageName)
 		if err != nil {
 			logger.Info("failed to get credentials", zap.String("registry", externalImage.Registry), zap.String("image_name", externalImage.ImageName), zap.Error(err))
 			// Update next_check_digest_at for all tags of this image to delay retry by 24 hours
@@ -81,6 +81,7 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 				// queue the initial work for SBOM
 				p := listenertypes.ExternalImageSbomPayload{
 					Digest: currentDigest,
+					TeamID: externalImage.TeamID,
 				}
 
 				payload, err := json.Marshal(p)
