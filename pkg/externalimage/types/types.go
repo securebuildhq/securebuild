@@ -3,6 +3,7 @@ package types
 import "time"
 
 type ExternalImage struct {
+	TeamID    string
 	Digest    string
 	Registry  string
 	ImageName string

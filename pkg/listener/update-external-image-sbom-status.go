@@ -121,6 +121,7 @@ func processBuilderSbomDownloads(ctx context.Context, cache *sbom.SbomDownloadCa
 	for _, dd := range downloadDirs {
 		if dd.Metadata.Digest != "" && !dd.AllArchsDone {
 			activeDownloads = append(activeDownloads, sbom.SbomDownloadDirInfo{
+				TeamID:    dd.Metadata.TeamID,
 				Digest:    dd.Metadata.Digest,
 				WorkDir:   dd.WorkDir,
 				CreatedAt: dd.Metadata.CreatedAt,
@@ -159,12 +160,12 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 	defer span.Finish()
 
 	type archResult struct {
-		digest     string
-		platform   string
-		exitCode   int
-		spdxRel    string
-		syftRel    string
-		stderrRel  string
+		digest    string
+		platform  string
+		exitCode  int
+		spdxRel   string
+		syftRel   string
+		stderrRel string
 	}
 	var results []archResult
 	var tarRelPaths []string
@@ -625,15 +626,15 @@ func handleMissingBuilderForSbomDownload(ctx context.Context, cache *sbom.SbomDo
 				zap.String("digest", d.Digest),
 				zap.Error(err))
 		}
-		reenqueueSbomDownload(ctx, d.Digest)
+		reenqueueSbomDownload(ctx, d.TeamID, d.Digest)
 	}
 
 	cache.RemoveBuilder(machineID)
 }
 
 // reenqueueSbomDownload enqueues a new external_image_sbom work item for a digest.
-func reenqueueSbomDownload(ctx context.Context, digest string) {
-	payloadBytes, err := json.Marshal(listenertypes.ExternalImageSbomPayload{Digest: digest})
+func reenqueueSbomDownload(ctx context.Context, teamID, digest string) {
+	payloadBytes, err := json.Marshal(listenertypes.ExternalImageSbomPayload{Digest: digest, TeamID: teamID})
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to marshal re-enqueue SBOM payload: %w", err))
 		return

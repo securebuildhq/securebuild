@@ -72,12 +72,6 @@ func DecryptExternalRegistryPassword(ctx context.Context, password string) (stri
 		return "", fmt.Errorf("external registry encryption secret is not set")
 	}
 
-	// base64 decode the secret if it is base64 encoded
-	decodedSecret, err := base64.StdEncoding.DecodeString(secret)
-	if err == nil {
-		secret = string(decodedSecret)
-	}
-
 	// Base64 decode the input
 	combined, err := base64.StdEncoding.DecodeString(password)
 	if err != nil {

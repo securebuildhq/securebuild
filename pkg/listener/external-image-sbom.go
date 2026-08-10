@@ -42,11 +42,13 @@ func WithMockScanExternalImage(ctx context.Context, mock func(context.Context, s
 
 // getFetchSBOMFunc returns the SBOM fetch function from the context if injected,
 // otherwise falls back to the real implementation.
-func getFetchSBOMFunc(ctx context.Context) func(context.Context, string, string, string) ([]sbom.SBOMResult, error) {
+func getFetchSBOMFunc(ctx context.Context, teamID string) func(context.Context, string, string, string) ([]sbom.SBOMResult, error) {
 	if f, ok := ctx.Value(fetchSBOMFuncKey).(func(context.Context, string, string, string) ([]sbom.SBOMResult, error)); ok {
 		return f
 	}
-	return sbom.FetchSBOM
+	return func(ctx context.Context, registry, imageName, digest string) ([]sbom.SBOMResult, error) {
+		return sbom.FetchSBOM(ctx, teamID, registry, imageName, digest)
+	}
 }
 
 // getScanExternalImageFunc returns the scan function from the context if injected,
@@ -159,7 +161,7 @@ func handleExternalImageSbomInProcess(ctx context.Context, p types.ExternalImage
 		logger.Warnf("failed to set SBOM status to generating for digest %s: %s", p.Digest, err.Error())
 	}
 
-	sbomResults, err := getFetchSBOMFunc(ctx)(ctx, externalImage.Registry, externalImage.ImageName, p.Digest)
+	sbomResults, err := getFetchSBOMFunc(ctx, p.TeamID)(ctx, externalImage.Registry, externalImage.ImageName, p.Digest)
 	if err != nil {
 		recordSBOMFailure(ctx, p.Digest, externalimage.NewScanFailureError(externalimage.ErrFetchSBOM, fmt.Sprintf("failed to fetch SBOM: %s", err.Error())), true, attempt, maxAttempts)
 		return fmt.Errorf("failed to fetch sbom: %w", err)

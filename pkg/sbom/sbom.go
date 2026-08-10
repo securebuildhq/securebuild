@@ -39,7 +39,7 @@ type SBOMResult struct {
 	ImageDigest    string `json:"image_digest"` // per-architecture manifest digest
 }
 
-func FetchSBOM(ctx context.Context, registry string, imageName string, digest string) (results []SBOMResult, err error) {
+func FetchSBOM(ctx context.Context, teamID string, registry string, imageName string, digest string) (results []SBOMResult, err error) {
 	span, ctx := telemetry.StartSpan(ctx, "sbom.FetchSBOM")
 	defer func() {
 		if err != nil {
@@ -54,7 +54,7 @@ func FetchSBOM(ctx context.Context, registry string, imageName string, digest st
 	auth := authn.Anonymous
 	isAnonDockerHub := false
 
-	username, password, err := externalimage.GetExternalImageCredentials(ctx, registry, imageName)
+	username, password, err := externalimage.GetExternalImageCredentials(ctx, teamID, registry, imageName)
 	if err != nil {
 		logger.Warn("failed to get external image credentials, continuing with anonymous auth", zap.Error(err))
 	} else if username != "" && password != "" {

@@ -56,6 +56,7 @@ export async function POST(request: NextRequest) {
     if (!shouldSkipSBOM) {
       await enqueueWork('external_image_sbom', {
         digest: digest,
+        team_id: teamId,
       })
     }
 
