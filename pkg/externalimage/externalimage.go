@@ -351,7 +351,7 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 		    updated_at = $4,
 		    scan_completed_at = $4,
 		    scan_status_updated_at = $4,
-		    is_in_object_store = $7
+		    is_in_object_store = external_image_scan.is_in_object_store OR EXCLUDED.is_in_object_store
 	`
 
 	_, err := conn.Exec(ctx, query,
