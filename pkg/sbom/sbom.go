@@ -56,8 +56,9 @@ func FetchSBOM(ctx context.Context, teamID string, registry string, imageName st
 
 	username, password, err := externalimage.GetExternalImageCredentials(ctx, teamID, registry, imageName)
 	if err != nil {
-		logger.Warn("failed to get external image credentials, continuing with anonymous auth", zap.Error(err))
-	} else if username != "" && password != "" {
+		return nil, fmt.Errorf("failed to get external image credentials: %w", err)
+	}
+	if username != "" && password != "" {
 		logger.Info("using external image credentials")
 		// Use registry package to get credentials - this handles ECR token exchange
 		auth, err = registrypkg.GetCredentialsForEndpoint(ctx, registry, username, password)

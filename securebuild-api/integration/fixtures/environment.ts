@@ -22,7 +22,7 @@ export const SEEDED_EXISTING_DIGEST = 'sha256:abc123def4567890123456789012345678
 export const SEED_TEAM_ID = 'test-team-alpha';
 
 // Encryption secret for storing registry pull credentials.
-const TEST_ENCRYPTION_SECRET = 'test-encryption-secret-32bytes!!';
+const TEST_ENCRYPTION_SECRET = Buffer.from('test-encryption-secret-32bytes!!').toString('base64');
 
 export interface TestEnvironment {
   client: HttpClient;
