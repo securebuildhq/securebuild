@@ -440,38 +440,7 @@ The write path from Phase 1 is unchanged. New writes still go to both S3 and DB.
 
 ### Read path changes (Go)
 
-Replace the Phase 1 fallback readers with S3-only getters. No DB fallback:
-
-```go
-// GetExternalImageScanRawResult returns the raw scan result from object storage.
-func GetExternalImageScanRawResult(ctx context.Context, digest, arch string) (string, error) {
-    store, err := newBlobStore(ctx)
-    if err != nil {
-        return "", fmt.Errorf("failed to create blob store: %w", err)
-    }
-    return store.getRawResult(ctx, digest, arch)
-}
-
-// GetExternalImageScanParsedResultsDetails returns parsed vulnerability details from object storage.
-func GetExternalImageScanParsedResultsDetails(ctx context.Context, digest, arch string) (string, error) {
-    store, err := newBlobStore(ctx)
-    if err != nil {
-        return "", fmt.Errorf("failed to create blob store: %w", err)
-    }
-    return store.getParsedResultsDetails(ctx, digest, arch)
-}
-
-// GetExternalImageSBOMContent returns the SBOM JSON from object storage.
-func GetExternalImageSBOMContent(ctx context.Context, digest, arch string) (string, error) {
-    store, err := newBlobStore(ctx)
-    if err != nil {
-        return "", fmt.Errorf("failed to create blob store: %w", err)
-    }
-    return store.getSBOM(ctx, digest, arch)
-}
-```
-
-No fallback, no DB column reads. If S3 is unavailable, the read fails — same as any other infrastructure dependency.
+`GetExternalImageSBOM` and `GetExternalImageSBOMs` fetch SBOM content from object storage. Standalone raw-result, parsed-details, and SBOM-content getters were removed because they had no callers; the TypeScript API reads those objects through its own blob-store module.
 
 ### API (TypeScript) read path changes
 
@@ -626,26 +595,20 @@ func SetExternalImageSBOM(ctx context.Context, digest string, sbom string, sourc
 
 ### Schema changes
 
-Remove the old columns and the `is_in_object_store` tracking column from SchemaHero YAML:
+Remove the old blob columns from SchemaHero YAML. Keep `is_in_object_store` for now so rows with missing objects can be identified and rescanned:
 
 **`db/schema/tables/external-image-scan.yaml`** — remove:
 ```yaml
-    - name: parsed_results
-      type: text
     - name: parsed_results_details
       type: text
     - name: raw_result
       type: text
-    - name: is_in_object_store
-      type: boolean
 ```
 
 **`db/schema/tables/external-image-sbom.yaml`** — remove:
 ```yaml
     - name: sbom
       type: text
-    - name: is_in_object_store
-      type: boolean
 ```
 
 SchemaHero generates `ALTER TABLE ... DROP COLUMN` DDL. This reclaims TOAST space immediately.
@@ -673,7 +636,7 @@ The ~1.25 TB of blobs now lives in R2/S3 at a fraction of the cost.
 
 ## Write Path: Dual-Write Stop Condition
 
-Phase 4 is where dual-write stops. The DB INSERT/UPDATE no longer includes `raw_result`, `parsed_results_details`, or `sbom` columns. Only `parsed_results` (the 66-byte counts JSON) remains in the DB for efficient count queries.
+Phase 4 is where dual-write stops. The DB INSERT/UPDATE no longer includes `raw_result`, `parsed_results_details`, or `sbom` columns. `parsed_results` (the 66-byte counts JSON) remains for efficient count queries, and `is_in_object_store` remains so missing objects can be identified and rescanned.
 
 ---
 
@@ -721,7 +684,7 @@ After Phase 4 (stop writing + columns dropped), rollback is not possible without
   - [ ] Verify object count in S3 matches row count in DB
 
 - [x] **Phase 3** (S3-only reads, still dual-write)
-  - [x] Add public Go getter functions (`GetExternalImageScanRawResult`, `GetExternalImageScanParsedResultsDetails`, `GetExternalImageSBOMContent`)
+  - [x] Remove unused standalone Go blob getter functions
   - [x] Update Go `GetExternalImageSBOM` / `GetExternalImageSBOMs` to read SBOM from object store
   - [x] Create TypeScript R2 blob reader (`securebuild-api/lib/externalimage/blobstore.ts`)
   - [x] Add R2 params to TypeScript param module (`securebuild-api/lib/data/param.ts`)
@@ -731,10 +694,13 @@ After Phase 4 (stop writing + columns dropped), rollback is not possible without
   - [x] Modify `getBatchExternalSboms` to fetch SBOMs from object store
   - [ ] Deploy and monitor for 2 weeks — DB columns still written as safety net
 
-- [ ] **Phase 4** (not started) (stop writing to DB + drop columns)
-  - [ ] Modify `SetExternalImageScanStatus` — remove `raw_result` and `parsed_results_details` from DB write (keep `parsed_results` counts)
-  - [ ] Modify `SetExternalImageSBOM` — remove `sbom` from DB write
-  - [ ] Remove old columns from SchemaHero YAML
+- [ ] **Phase 4** (in progress) (stop writing to DB + drop columns)
+  - [x] Add compressed SQL backup and streaming restore scripts for `sbom`, `parsed_results_details`, and `raw_result`
+  - [x] Review rows where `is_in_object_store` is `false`; retain the flag so they can be rescanned
+  - [ ] Run the backup script
+  - [x] Modify `SetExternalImageScanStatus` — remove `raw_result` and `parsed_results_details` from DB write (keep `parsed_results` counts)
+  - [x] Modify `SetExternalImageSBOM` — remove `sbom` from DB write
+  - [ ] Remove old blob columns from SchemaHero YAML; retain `is_in_object_store`
   - [ ] Apply schema change
   - [ ] Run `VACUUM FULL` on both tables
   - [ ] Deploy final code

@@ -340,28 +340,24 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 		blobsUploaded = true
 	}
 
-	// Step 2: DB write — fail on error (S3 object stays, will be overwritten on retry)
+	// Step 2: Write metadata to DB. Blob content lives only in object storage.
 	query := `
-		INSERT INTO external_image_scan (digest, arch, parsed_results, parsed_results_details, raw_result, created_at, status, scan_status_message, updated_at, scan_completed_at, scan_attempted_at, scan_status_updated_at, is_in_object_store)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $6, $6, $6, $6, $9)
+		INSERT INTO external_image_scan (digest, arch, parsed_results, created_at, status, scan_status_message, updated_at, scan_completed_at, scan_attempted_at, scan_status_updated_at, is_in_object_store)
+		VALUES ($1, $2, $3, $4, $5, $6, $4, $4, $4, $4, $7)
 		ON CONFLICT (digest, arch) DO UPDATE
 		SET parsed_results = $3,
-		    parsed_results_details = $4,
-		    raw_result = $5,
-		    status = $7,
-		    scan_status_message = $8,
-		    updated_at = $6,
-		    scan_completed_at = $6,
-		    scan_status_updated_at = $6,
-		    is_in_object_store = $9
+		    status = $5,
+		    scan_status_message = $6,
+		    updated_at = $4,
+		    scan_completed_at = $4,
+		    scan_status_updated_at = $4,
+		    is_in_object_store = $7
 	`
 
 	_, err := conn.Exec(ctx, query,
 		params.Digest,
 		params.Arch,
 		params.ParsedResults,
-		params.ParsedResultsDetails,
-		params.RawResult,
 		now,
 		string(params.Status),
 		scanStatusMessage,
@@ -374,46 +370,22 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 	return nil
 }
 
-// GetExternalImageScanRawResult returns the raw scan result from object storage.
-func GetExternalImageScanRawResult(ctx context.Context, digest, arch string) (string, error) {
-	store, err := newBlobStore(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to create blob store: %w", err)
-	}
-	return store.getRawResult(ctx, digest, arch)
-}
-
-// GetExternalImageScanParsedResultsDetails returns parsed vulnerability details from object storage.
-func GetExternalImageScanParsedResultsDetails(ctx context.Context, digest, arch string) (string, error) {
-	store, err := newBlobStore(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to create blob store: %w", err)
-	}
-	return store.getParsedResultsDetails(ctx, digest, arch)
-}
-
-// GetExternalImageSBOMContent returns the SBOM JSON from object storage.
-func GetExternalImageSBOMContent(ctx context.Context, digest, arch string) (string, error) {
-	store, err := newBlobStore(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to create blob store: %w", err)
-	}
-	return store.getSBOM(ctx, digest, arch)
-}
-
 func GetExternalImageSBOM(ctx context.Context, digest string) (*string, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
 	// Query metadata only (no sbom column) to find which arch has an SBOM
 	query := `
-		select arch
-		from external_image_sbom
-		where digest = $1
+		select esbom.arch
+		from external_image_sbom esbom
+		inner join external_image_sbom_status status on status.digest = esbom.digest
+		where esbom.digest = $1
+		  and esbom.is_in_object_store = true
+		  and status.status = $2
 		limit 1
 	`
 
-	row := conn.QueryRow(ctx, query, digest)
+	row := conn.QueryRow(ctx, query, digest, string(SBOMStatusSucceeded))
 
 	var arch string
 	err := row.Scan(&arch)
@@ -443,25 +415,23 @@ func GetExternalImageSBOMs(ctx context.Context, digest string) ([]types.External
 
 	// Query metadata only (no sbom column)
 	query := `
-		select digest, arch, source, created_at, image_digest
-		from external_image_sbom
-		where digest = $1
-		order by arch
+		select esbom.digest, esbom.arch, esbom.source, esbom.created_at, esbom.image_digest
+		from external_image_sbom esbom
+		inner join external_image_sbom_status status on status.digest = esbom.digest
+		where esbom.digest = $1
+		  and esbom.is_in_object_store = true
+		  and status.status = $2
+		order by esbom.arch
 	`
 
-	rows, err := conn.Query(ctx, query, digest)
+	rows, err := conn.Query(ctx, query, digest, string(SBOMStatusSucceeded))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query external image SBOMs for digest %s: %w", digest, err)
 	}
 	defer rows.Close()
 
-	// Fetch SBOM content from object store
-	store, err := newBlobStore(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create blob store: %w", err)
-	}
-
 	var sboms []types.ExternalImageSBOM
+	var store *blobStore
 	for rows.Next() {
 		var sbom types.ExternalImageSBOM
 		var imageDigest sql.NullString
@@ -472,6 +442,12 @@ func GetExternalImageSBOMs(ctx context.Context, digest string) ([]types.External
 		if imageDigest.Valid {
 			sbom.ImageDigest = imageDigest.String
 		}
+		if store == nil {
+			store, err = newBlobStore(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create blob store: %w", err)
+			}
+		}
 		// Fetch SBOM content from object store
 		content, err := store.getSBOM(ctx, sbom.Digest, sbom.Arch)
 		if err != nil {
@@ -479,6 +455,9 @@ func GetExternalImageSBOMs(ctx context.Context, digest string) ([]types.External
 		}
 		sbom.SBOM = content
 		sboms = append(sboms, sbom)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed while reading external image SBOM rows for digest %s: %w", digest, err)
 	}
 
 	return sboms, nil
@@ -529,7 +508,7 @@ func SetExternalImageSBOM(ctx context.Context, digest string, sbom string, sourc
 	defer conn.Release()
 
 	// Step 1: Upload SBOM to object store (mandatory — fail on error)
-	blobsUploaded := false
+	blobUploaded := false
 	if sbom != "" {
 		store, err := newBlobStore(ctx)
 		if err != nil {
@@ -538,18 +517,18 @@ func SetExternalImageSBOM(ctx context.Context, digest string, sbom string, sourc
 		if err := store.putSBOM(ctx, digest, arch, sbom); err != nil {
 			return fmt.Errorf("failed to upload sbom to object store: %w", err)
 		}
-		blobsUploaded = true
+		blobUploaded = true
 	}
 
-	// Step 2: DB write — fail on error (S3 object stays, will be overwritten on retry)
+	// Step 2: Write metadata to DB. SBOM content lives only in object storage.
 	query := `
-		insert into external_image_sbom (digest, arch, sbom, source, image_size_bytes, image_digest, created_at, is_in_object_store)
-		values ($1, $2, $3, $4, $5, $6, $7, $8)
+		insert into external_image_sbom (digest, arch, source, image_size_bytes, image_digest, created_at, is_in_object_store)
+		values ($1, $2, $3, $4, $5, $6, $7)
 		on conflict (digest, arch) do update
-		set sbom = $3, source = $4, image_size_bytes = $5, image_digest = $6, created_at = $7, is_in_object_store = $8
+		set source = $3, image_size_bytes = $4, image_digest = $5, created_at = $6, is_in_object_store = $7
 	`
 
-	_, err := conn.Exec(ctx, query, digest, arch, sbom, source, imageSizeBytes, imageDigest, time.Now(), blobsUploaded)
+	_, err := conn.Exec(ctx, query, digest, arch, source, imageSizeBytes, imageDigest, time.Now(), blobUploaded)
 	if err != nil {
 		return fmt.Errorf("failed to insert/update external image SBOM for digest %s, arch %s: %w", digest, arch, err)
 	}
