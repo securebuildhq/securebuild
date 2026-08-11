@@ -22,7 +22,7 @@ seedData:
             str: "succeeded"
         - column: scan_completed_at
           value:
-            str: "2024-01-01T00:05:00Z"
+            str: "2099-01-01T00:05:00Z"
         - column: scan_status_updated_at
           value:
             str: "2024-01-01T00:05:00Z"
@@ -48,7 +48,36 @@ seedData:
         - column: status
           value:
             str: "succeeded"
+        - column: scan_completed_at
+          value:
+            str: "2099-01-01T00:05:00Z"
         - column: scan_status_updated_at
+          value:
+            str: "2024-01-01T00:05:00Z"
+        - column: is_in_object_store
+          value:
+            str: "true"
+    # Successful but stale scan used by the on-demand scan tests
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:stale1234567890123456789012345678901234567890123456789012345"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: scan_completed_at
+          value:
+            str: "2024-01-01T00:05:00Z"
+        - column: scan_status_updated_at
+          value:
+            str: "2024-01-01T00:05:00Z"
+        - column: scan_attempted_at
           value:
             str: "2024-01-01T00:05:00Z"
         - column: is_in_object_store

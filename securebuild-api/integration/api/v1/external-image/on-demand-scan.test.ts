@@ -2,6 +2,8 @@ import * as path from 'path';
 import { Client } from 'pg';
 import { setupTestEnvironment, TestEnvironment } from '../../../fixtures/environment';
 
+const DIGEST_WITH_STALE_SCAN = 'sha256:stale1234567890123456789012345678901234567890123456789012345';
+
 /**
  * Integration tests for the on-demand scan trigger (Part 3).
  *
@@ -123,7 +125,7 @@ describe('On-demand scan trigger', () => {
   }
 
   describe('Stale image (scan >4h old)', () => {
-    const digest = () => env.existingDigest;
+    const digest = () => DIGEST_WITH_STALE_SCAN;
 
     it('GET /scan enqueues work queue message with correct digest payload', async () => {
       // The seeded scan for this digest has scan_completed_at = 2024-01-01
@@ -158,26 +160,6 @@ describe('On-demand scan trigger', () => {
 
   describe('Non-stale image (scan within 4h)', () => {
     const digest = () => env.existingDigest;
-
-    beforeAll(async () => {
-      // Update the scan row to have scan_completed_at within the last 4 hours
-      // so the next request should NOT trigger a new scan.
-      await env.dbPool.query(
-        `UPDATE external_image_scan
-         SET scan_completed_at = NOW(), status = 'succeeded'
-         WHERE digest = $1`,
-        [digest()]
-      );
-      // Also update last_security_scanned_at on the SBOM so the idempotency
-      // check in the Go listener would pass (not directly tested here, but
-      // keeps the data consistent).
-      await env.dbPool.query(
-        `UPDATE external_image_sbom
-         SET last_security_scanned_at = NOW()
-         WHERE digest = $1`,
-        [digest()]
-      );
-    });
 
     it('GET /scan does NOT enqueue a new work queue message', async () => {
       await expectNoScanNotification(async () => {
