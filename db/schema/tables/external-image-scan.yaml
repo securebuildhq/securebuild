@@ -12,10 +12,6 @@ schema:
         notNull: true
     - name: parsed_results
       type: text
-    - name: parsed_results_details
-      type: text
-    - name: raw_result
-      type: text
     - name: created_at
       type: timestamp with time zone
       constraints:
