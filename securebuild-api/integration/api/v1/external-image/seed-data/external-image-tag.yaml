@@ -48,6 +48,29 @@ seedData:
         - column: next_scan_at
           value:
             str: "2024-01-02T00:00:00Z"
+    # Stale successful scan tag
+    - columns:
+        - column: registry
+          value:
+            str: "test-registry.example.com"
+        - column: image_name
+          value:
+            str: "test-org/test-image"
+        - column: image_tag
+          value:
+            str: "stale"
+        - column: digest
+          value:
+            str: "sha256:stale1234567890123456789012345678901234567890123456789012345"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: next_check_digest_at
+          value:
+            str: "2024-01-02T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2024-01-02T00:00:00Z"
     # Queued scan tag
     - columns:
         - column: registry

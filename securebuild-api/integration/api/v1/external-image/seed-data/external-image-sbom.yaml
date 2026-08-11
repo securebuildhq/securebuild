@@ -42,6 +42,26 @@ seedData:
         - column: is_in_object_store
           value:
             str: "true"
+    # Stale successful scan SBOM
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:stale1234567890123456789012345678901234567890123456789012345"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "grype"
+        - column: image_size_bytes
+          value:
+            int: 1024000
+        - column: is_in_object_store
+          value:
+            str: "true"
     # Queued scan SBOM
     - columns:
         - column: digest
