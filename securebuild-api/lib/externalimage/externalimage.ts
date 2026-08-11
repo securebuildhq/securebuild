@@ -159,10 +159,11 @@ export async function listExternalImages(teamId: string): Promise<TrackedExterna
 
 
 export async function encryptPassword(password: string): Promise<string> {
-  const secret = process.env.EXTERNAL_REGISTRY_ENCRYPTION_SECRET;
-  if (!secret) {
+  const secretEncoded = process.env.EXTERNAL_REGISTRY_ENCRYPTION_SECRET;
+  if (!secretEncoded) {
     throw new Error("EXTERNAL_REGISTRY_ENCRYPTION_SECRET environment variable is required");
   }
+  const secret = Buffer.from(secretEncoded, 'base64').toString('utf-8');
 
   // Generate a random IV for each encryption
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -198,10 +199,11 @@ export async function encryptPassword(password: string): Promise<string> {
 }
 
 export async function decryptPassword(encryptedPassword: string): Promise<string> {
-  const secret = process.env.EXTERNAL_REGISTRY_ENCRYPTION_SECRET;
-  if (!secret) {
+  const secretEncoded = process.env.EXTERNAL_REGISTRY_ENCRYPTION_SECRET;
+  if (!secretEncoded) {
     throw new Error("EXTERNAL_REGISTRY_ENCRYPTION_SECRET environment variable is required");
   }
+  const secret = Buffer.from(secretEncoded, 'base64').toString('utf-8');
 
   // Decode the base64 combined data
   const combined = Buffer.from(encryptedPassword, 'base64');

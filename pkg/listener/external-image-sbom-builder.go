@@ -244,7 +244,7 @@ func buildSyftLaunchCommand(workDir, platform, registry, imageName, digest strin
 func buildSbomDockerConfig(ctx context.Context, teamID, registry, imageName string) (string, error) {
 	username, password, err := externalimage.GetExternalImageCredentials(ctx, teamID, registry, imageName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get external image credentials: %w", err)
 	}
 	if username == "" || password == "" {
 		return "", nil

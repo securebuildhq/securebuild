@@ -86,7 +86,26 @@ func DecryptExternalRegistryPassword(ctx context.Context, password string) (stri
 	iv := combined[:12]
 	encryptedData := combined[12:]
 
-	// Create a 32-byte key from the secret using SHA-256
+	decrypted, err := decryptExternalRegistryPasswordWithSecret(iv, encryptedData, secret)
+	if err == nil {
+		return decrypted, nil
+	}
+
+	// Credentials written by securebuild-api while it treated the injected
+	// base64 value as the secret were encrypted with this encoded form. The Go
+	// worker receives the decoded secret, so try the encoded form as a
+	// compatibility fallback.
+	encodedSecret := base64.StdEncoding.EncodeToString([]byte(secret))
+	fallbackDecrypted, fallbackErr := decryptExternalRegistryPasswordWithSecret(iv, encryptedData, encodedSecret)
+	if fallbackErr == nil {
+		return fallbackDecrypted, nil
+	}
+
+	return "", fmt.Errorf("failed to decrypt password with primary key (%v) and base64-encoded fallback: %w", err, fallbackErr)
+}
+
+func decryptExternalRegistryPasswordWithSecret(iv, encryptedData []byte, secret string) (string, error) {
+	// Create a 32-byte key from the secret using SHA-256.
 	hash := sha256.Sum256([]byte(secret))
 	key := hash[:]
 
@@ -105,7 +124,7 @@ func DecryptExternalRegistryPassword(ctx context.Context, password string) (stri
 	// Decrypt the data
 	decrypted, err := gcm.Open(nil, iv, encryptedData, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to decrypt password: %w", err)
+		return "", err
 	}
 
 	return string(decrypted), nil
