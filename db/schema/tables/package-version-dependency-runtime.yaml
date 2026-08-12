@@ -30,6 +30,8 @@ schema:
         type: text
         constraints:
           notNull: true
+      - name: dependency_spec
+        type: text
       - name: depends_on_package_version_id
         type: text
         constraints:

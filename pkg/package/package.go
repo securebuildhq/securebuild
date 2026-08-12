@@ -288,6 +288,11 @@ func FindPackageVersion(ctx context.Context, name string, version string, releas
 	return pv, nil
 }
 
+// ErrInvalidMelangeConfig identifies errors returned by Melange while parsing
+// or compiling a package configuration. Errors preparing the local compile
+// environment do not wrap this sentinel.
+var ErrInvalidMelangeConfig = errors.New("invalid Melange configuration")
+
 func CompileMelangeYAML(ctx context.Context, melangeYAML []byte) (*config.Configuration, error) {
 	// we need to create a tmp directory that has our embedded build filesystem
 	// b/c some of the pipelines reference external files
@@ -336,12 +341,12 @@ func CompileMelangeYAML(ctx context.Context, melangeYAML []byte) (*config.Config
 
 	b, err := build.New(ctx, buildOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("create build: %w", err)
+		return nil, fmt.Errorf("%w: create build: %w", ErrInvalidMelangeConfig, err)
 	}
 	defer b.Close(ctx)
 
 	if err := b.Compile(ctx); err != nil {
-		return nil, fmt.Errorf("compile: %w", err)
+		return nil, fmt.Errorf("%w: compile: %w", ErrInvalidMelangeConfig, err)
 	}
 
 	return b.Configuration, nil

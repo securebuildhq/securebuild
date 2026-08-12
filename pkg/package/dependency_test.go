@@ -193,3 +193,72 @@ func Test_selectMatchingCandidate(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectPreferredProvider(t *testing.T) {
+	candidates := []providerCandidate{
+		{
+			CapabilityName:    "go",
+			CapabilityVersion: "1.25.9-r1",
+			PackageID:         "go-1.25-id",
+			PackageName:       "go-1.25",
+			PackageVersionID:  "go-1.25-version",
+		},
+		{
+			CapabilityName:    "go",
+			CapabilityVersion: "1.26.5-r0",
+			PackageID:         "go-1.26-id",
+			PackageName:       "go-1.26",
+			PackageVersionID:  "go-1.26-version",
+		},
+	}
+
+	tests := []struct {
+		name     string
+		selector string
+		want     string
+		wantErr  bool
+	}{
+		{name: "unpinned chooses latest provider", selector: "go", want: "go-1.26"},
+		{name: "tilde pin chooses latest matching provider", selector: "go~1.25", want: "go-1.25"},
+		{name: "upper bound excludes newer provider", selector: "go<1.26", want: "go-1.25"},
+		{name: "exact pin chooses matching provider", selector: "go=1.26.5-r0", want: "go-1.26"},
+		{name: "unmatched pin returns error", selector: "go~1.24", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			selected, _, err := selectPreferredProvider(candidates, tt.selector)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, selected.PackageName)
+		})
+	}
+}
+
+func TestSelectPreferredProviderTieBreaks(t *testing.T) {
+	candidates := []providerCandidate{
+		{
+			CapabilityName:    "go",
+			CapabilityVersion: "1.26.5-r0",
+			PackageID:         "virtual-id",
+			PackageName:       "go-virtual-provider",
+			PackageVersionID:  "virtual-version",
+		},
+		{
+			CapabilityName:    "go",
+			CapabilityVersion: "1.26.5-r0",
+			PackageID:         "exact-id",
+			PackageName:       "go",
+			PackageVersionID:  "exact-version",
+			ExactName:         true,
+		},
+	}
+
+	selected, ambiguous, err := selectPreferredProvider(candidates, "go")
+	assert.NoError(t, err)
+	assert.False(t, ambiguous)
+	assert.Equal(t, "go", selected.PackageName)
+}

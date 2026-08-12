@@ -18,7 +18,6 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/package/types"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
-	"github.com/securebuildhq/securebuild/pkg/util"
 	"github.com/tuvistavie/securerandom"
 	"go.uber.org/zap"
 )
@@ -367,8 +366,8 @@ func WritePackageVersionDependencies(ctx context.Context, tx pgx.Tx, packageVers
 		return fmt.Errorf("get parents of build dependencies: %w", err)
 	}
 
-	runtimeDeps := util.Deduplicate(parentRuntimeDeps)
-	buildDeps := util.Deduplicate(parentBuildDeps)
+	runtimeDeps := deduplicateDependencySpecs(parentRuntimeDeps)
+	buildDeps := deduplicateDependencySpecs(parentBuildDeps)
 
 	logger.Debug("writing package version dependencies",
 		zap.String("package_version_id", packageVersion.ID),
@@ -399,14 +398,34 @@ func WritePackageVersionDependencies(ctx context.Context, tx pgx.Tx, packageVers
 	return nil
 }
 
-func getParentDependencies(ctx context.Context, tx pgx.Tx, depNames []string) ([]string, error) {
-	deps := []string{}
+// DependencySpec retains the complete Melange/APK selector while also recording
+// the normalized dependency name used by the existing dependency tables.
+type DependencySpec struct {
+	Name string
+	Spec string
+}
+
+func deduplicateDependencySpecs(deps []DependencySpec) []DependencySpec {
+	seen := make(map[string]struct{}, len(deps))
+	result := make([]DependencySpec, 0, len(deps))
+	for _, dep := range deps {
+		if _, ok := seen[dep.Name]; ok {
+			continue
+		}
+		seen[dep.Name] = struct{}{}
+		result = append(result, dep)
+	}
+	return result
+}
+
+func getParentDependencies(ctx context.Context, tx pgx.Tx, depNames []string) ([]DependencySpec, error) {
+	deps := make([]DependencySpec, 0, len(depNames))
 	for _, dep := range depNames {
 		depName, _, err := GetPackageInfoWithParentRedirection(ctx, tx, dep)
 		if err != nil {
 			return nil, fmt.Errorf("get package name with parent redirection: %w", err)
 		}
-		deps = append(deps, depName)
+		deps = append(deps, DependencySpec{Name: depName, Spec: dep})
 	}
 	return deps, nil
 }

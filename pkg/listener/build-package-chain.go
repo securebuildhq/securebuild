@@ -35,10 +35,21 @@ func handleBuildPackageChain(ctx context.Context, payload string) error {
 		return fmt.Errorf("failed to get package: %w", err)
 	}
 
-	// Create dependency map from database
-	dependencyMap, err := sbpackage.GetPackageDependencyMap(ctx)
+	dependencyMap, diagnostics, err := sbpackage.GetConstraintAwarePackageDependencyMap(ctx, buildPackageChainPayload.PackageVersionID)
 	if err != nil {
-		return fmt.Errorf("failed to create dependency map: %w", err)
+		return fmt.Errorf("failed to create constraint-aware dependency map: %w", err)
+	}
+	logger.Info("calculated constraint-aware dependency map",
+		zap.Int("dependencies", diagnostics.Dependencies),
+		zap.Int("pinned", diagnostics.Pinned),
+		zap.Int("unpinned", diagnostics.Unpinned),
+		zap.Int("unresolved", diagnostics.Unresolved),
+		zap.Int("ambiguous", diagnostics.Ambiguous),
+		zap.Int("missingSelectors", diagnostics.MissingSelectors),
+		zap.Int("storedProviderMoves", diagnostics.StoredProviderMove))
+	if diagnostics.MissingSelectors > 0 {
+		logger.Warn("constraint-aware dependency graph used package-name fallback for dependencies without selectors; run migrate-package-selectors",
+			zap.Int("missingSelectors", diagnostics.MissingSelectors))
 	}
 
 	// Check if package exists in the dependency map

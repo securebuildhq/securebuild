@@ -21,6 +21,8 @@ schema:
         type: text
         constraints:
           notNull: true
+      - name: provides_spec
+        type: text
       - name: is_subpackage
         type: boolean
         constraints:

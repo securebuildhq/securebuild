@@ -9,6 +9,7 @@ import { getPipelineDirectory } from '@/lib/pipeline/directory';
 interface ProvidesEntry {
   packageName: string;
   providesName: string;
+  providesSpec: string;
   isSubpackage: boolean;
 }
 
@@ -61,8 +62,7 @@ export async function compileMelangeYAML(melangeYaml: string): Promise<MelangeCo
  * Parse package name from provides string (e.g., "kotsadm=1.127.1-r7" -> "kotsadm")
  */
 function parsePackageName(provides: string): string {
-  const parts = provides.split('=');
-  return parts[0];
+  return provides.match(/^([^@=><~]+)/)?.[1] ?? provides;
 }
 
 /**
@@ -78,6 +78,7 @@ function extractProvidesFromConfig(compiled: MelangeConfig): ProvidesEntry[] {
       entries.push({
         packageName: compiled.package.name,
         providesName,
+        providesSpec: provides,
         isSubpackage: false,
       });
     }
@@ -92,6 +93,7 @@ function extractProvidesFromConfig(compiled: MelangeConfig): ProvidesEntry[] {
           entries.push({
             packageName: subpkg.name,
             providesName,
+            providesSpec: provides,
             isSubpackage: true,
           });
         }
@@ -138,10 +140,10 @@ export async function writePackageVersionProvides(
       await client.query(
         `
         INSERT INTO package_version_provides
-        (id, package_version_id, package_name, provides_name, is_subpackage)
-        VALUES ($1, $2, $3, $4, $5)
+        (id, package_version_id, package_name, provides_name, provides_spec, is_subpackage)
+        VALUES ($1, $2, $3, $4, $5, $6)
       `,
-        [id, packageVersionId, entry.packageName, entry.providesName, entry.isSubpackage]
+        [id, packageVersionId, entry.packageName, entry.providesName, entry.providesSpec, entry.isSubpackage]
       );
     }
   } catch (error) {
