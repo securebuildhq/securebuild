@@ -123,5 +123,6 @@ type PackageVersionProvides struct {
 	PackageVersionID string `json:"packageVersionId"`
 	PackageName      string `json:"packageName"`
 	ProvidesName     string `json:"providesName"`
+	ProvidesSpec     string `json:"providesSpec"`
 	IsSubpackage     bool   `json:"isSubpackage"`
 }

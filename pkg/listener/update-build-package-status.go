@@ -339,27 +339,15 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 		if err != nil {
 			return fmt.Errorf("failed to list package version build dependencies: %w", err)
 		}
+		resolvedProviders, err := sbpackage.GetPreferredAvailableProviderVersions(ctx, append(append([]string{}, runtimeDeps...), buildDeps...))
+		if err != nil {
+			return fmt.Errorf("failed to resolve dependency providers: %w", err)
+		}
 
 		for _, dep := range runtimeDeps {
-			pkgID, err := sbpackage.GetPackageIDByName(ctx, dep)
-			if err != nil {
-				logger.Debug("failed to get runtime dependency package id by name", zap.String("packageName", dep), zap.Error(err))
-				continue
-			}
-
-			pkg, err := sbpackage.GetPackage(ctx, pkgID)
-			if err != nil {
-				return fmt.Errorf("failed to get runtime dep package: %w", err)
-			}
-
-			// if the package has a parent, we actually depend on the parent
-			if pkg.ParentID != nil {
-				pkgID = *pkg.ParentID
-			}
-
-			latestPackageVersion, err := sbpackage.GetLatestBuiltPackageVersion(ctx, pkgID)
-			if err != nil {
-				// there might not be a built version yet, so we can just continue
+			latestPackageVersion, ok := resolvedProviders[dep]
+			if !ok {
+				logger.Debug("failed to resolve runtime dependency provider", zap.String("dependency", dep))
 				continue
 			}
 
@@ -369,25 +357,9 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 		}
 
 		for _, dep := range buildDeps {
-			pkgID, err := sbpackage.GetPackageIDByName(ctx, dep)
-			if err != nil {
-				logger.Debug("failed to get build dependency package id by name", zap.String("packageName", dep), zap.Error(err))
-				continue
-			}
-
-			pkg, err := sbpackage.GetPackage(ctx, pkgID)
-			if err != nil {
-				return fmt.Errorf("failed to get build dep package: %w", err)
-			}
-
-			// if the package has a parent, we actually depend on the parent
-			if pkg.ParentID != nil {
-				pkgID = *pkg.ParentID
-			}
-
-			latestPackageVersion, err := sbpackage.GetLatestBuiltPackageVersion(ctx, pkgID)
-			if err != nil {
-				// there might not be a built version yet, so we can just continue
+			latestPackageVersion, ok := resolvedProviders[dep]
+			if !ok {
+				logger.Debug("failed to resolve build dependency provider", zap.String("dependency", dep))
 				continue
 			}
 

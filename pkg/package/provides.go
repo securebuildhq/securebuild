@@ -17,6 +17,7 @@ import (
 type ProvidesEntry struct {
 	PackageName  string
 	ProvidesName string
+	ProvidesSpec string
 	IsSubpackage bool
 }
 
@@ -41,6 +42,7 @@ func extractProvidesFromConfig(compiled *config.Configuration) []ProvidesEntry {
 			entries = append(entries, ProvidesEntry{
 				PackageName:  compiled.Package.Name,
 				ProvidesName: parsed.Name,
+				ProvidesSpec: provides,
 				IsSubpackage: false,
 			})
 		}
@@ -54,6 +56,7 @@ func extractProvidesFromConfig(compiled *config.Configuration) []ProvidesEntry {
 				entries = append(entries, ProvidesEntry{
 					PackageName:  subpkg.Name,
 					ProvidesName: parsed.Name,
+					ProvidesSpec: provides,
 					IsSubpackage: true,
 				})
 			}
@@ -96,14 +99,15 @@ func WritePackageVersionProvides(ctx context.Context, tx pgx.Tx, packageVersion 
 
 		insertQuery := `
 			INSERT INTO package_version_provides
-			(id, package_version_id, package_name, provides_name, is_subpackage)
-			VALUES ($1, $2, $3, $4, $5)
+			(id, package_version_id, package_name, provides_name, provides_spec, is_subpackage)
+			VALUES ($1, $2, $3, $4, $5, $6)
 		`
 		_, err = tx.Exec(ctx, insertQuery,
 			id,
 			packageVersion.ID,
 			entry.PackageName,
 			entry.ProvidesName,
+			entry.ProvidesSpec,
 			entry.IsSubpackage,
 		)
 		if err != nil {

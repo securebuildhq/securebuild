@@ -64,7 +64,7 @@ func ListPackageVersionRuntimeDependencies(ctx context.Context, packageVersionID
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `select depends_on_package_name from package_version_dependency_runtime where package_version_id = $1`
+	query := `select COALESCE(dependency_spec, depends_on_package_name) from package_version_dependency_runtime where package_version_id = $1`
 	rows, err := conn.Query(ctx, query, packageVersionID)
 	if err != nil {
 		return nil, fmt.Errorf("list package version runtime dependencies: %w", err)
@@ -89,8 +89,8 @@ func SetPackageVersionRuntimeDependencyVersion(ctx context.Context, pkgVersion *
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `update package_version_dependency_runtime set depends_on_package_version_id = $1 where package_version_id = $2 and depends_on_package_name = $3`
-	_, err := conn.Exec(ctx, query, dependsOnPackageVersion.ID, pkgVersion.ID, runtimeDep)
+	query := `update package_version_dependency_runtime set depends_on_package_version_id = $1 where package_version_id = $2 and (dependency_spec = $3 or depends_on_package_name = $4)`
+	_, err := conn.Exec(ctx, query, dependsOnPackageVersion.ID, pkgVersion.ID, runtimeDep, ParsePackageName(runtimeDep))
 	if err != nil {
 		return fmt.Errorf("update package version dependency runtime: %w", err)
 	}
@@ -262,7 +262,14 @@ func resolveDependencyPackageID(ctx context.Context, tx pgx.Tx, dep string) (str
 	// First, try to find a package by exact name
 	depPkgID, err := getPackageIDByName(ctx, tx, depName)
 	if err == nil {
-		// Found by exact name
+		// An exact dependency can name a subpackage. Rebuild its parent package.
+		pkg, getErr := GetPackageWithTx(ctx, tx, depPkgID)
+		if getErr != nil {
+			return "", fmt.Errorf("get exact dependency package: %w", getErr)
+		}
+		if pkg.ParentID != nil {
+			return *pkg.ParentID, nil
+		}
 		return depPkgID, nil
 	}
 	if err != ErrPackageNotFound {
@@ -336,7 +343,7 @@ func resolveDependencyPackageID(ctx context.Context, tx pgx.Tx, dep string) (str
 	return pkgID, nil
 }
 
-func writePackageVersionDependencies(ctx context.Context, tx pgx.Tx, packageVersion *types.PackageVersion, deps []string, depType DependencyType) error {
+func writePackageVersionDependencies(ctx context.Context, tx pgx.Tx, packageVersion *types.PackageVersion, deps []DependencySpec, depType DependencyType) error {
 	var tableName string
 
 	switch depType {
@@ -373,13 +380,11 @@ func writePackageVersionDependencies(ctx context.Context, tx pgx.Tx, packageVers
 		zap.Int(fmt.Sprintf("%s_deps", depType), len(deps)),
 		zap.Any(fmt.Sprintf("%s_deps", depType), deps))
 
-	// Deduplicate dependencies by name (e.g., "glibc=2.41-r6" and "glibc=2.42-r1" -> keep one "glibc")
-	// We use a map to track unique package names and keep the first occurrence
-	uniqueDeps := make(map[string]string) // map[packageName]originalDepString
+	// Deduplicate dependencies by normalized name and keep the first selector.
+	uniqueDeps := make(map[string]string)
 	for _, dep := range deps {
-		depName := ParsePackageName(dep)
-		if _, exists := uniqueDeps[depName]; !exists {
-			uniqueDeps[depName] = dep
+		if _, exists := uniqueDeps[dep.Name]; !exists {
+			uniqueDeps[dep.Name] = dep.Spec
 		}
 	}
 
@@ -404,8 +409,8 @@ func writePackageVersionDependencies(ctx context.Context, tx pgx.Tx, packageVers
 			return fmt.Errorf("resolve %s dependency %s: %w", depType, depName, err)
 		}
 
-		query := fmt.Sprintf(`INSERT INTO %s (package_version_id, package_name, package_version, package_apk_release, depends_on_package_id, depends_on_package_name, depends_on_package_is_external) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (package_version_id, depends_on_package_id) DO NOTHING`, tableName)
-		_, err = tx.Exec(ctx, query, packageVersion.ID, pkgName, packageVersion.Version, packageVersion.APKRelease, depPkgID, depName, false)
+		query := fmt.Sprintf(`INSERT INTO %s (package_version_id, package_name, package_version, package_apk_release, depends_on_package_id, depends_on_package_name, dependency_spec, depends_on_package_is_external) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (package_version_id, depends_on_package_id) DO UPDATE SET depends_on_package_name = EXCLUDED.depends_on_package_name, dependency_spec = EXCLUDED.dependency_spec, depends_on_package_is_external = EXCLUDED.depends_on_package_is_external`, tableName)
+		_, err = tx.Exec(ctx, query, packageVersion.ID, pkgName, packageVersion.Version, packageVersion.APKRelease, depPkgID, depName, originalDep, false)
 		if err != nil {
 			return fmt.Errorf("insert package version dependency %s: %w", depType, err)
 		}
@@ -414,7 +419,7 @@ func writePackageVersionDependencies(ctx context.Context, tx pgx.Tx, packageVers
 	return nil
 }
 
-func WritePackageVersionRuntimeDependencies(ctx context.Context, tx pgx.Tx, packageVersion *types.PackageVersion, runtimeDeps []string) error {
+func WritePackageVersionRuntimeDependencies(ctx context.Context, tx pgx.Tx, packageVersion *types.PackageVersion, runtimeDeps []DependencySpec) error {
 	return writePackageVersionDependencies(ctx, tx, packageVersion, runtimeDeps, DependencyTypeRuntime)
 }
 
@@ -422,8 +427,8 @@ func SetPackageVersionBuildDependencyVersion(ctx context.Context, pkgVersion *ty
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `update package_version_dependency_buildtime set depends_on_package_version_id = $1 where package_version_id = $2 and depends_on_package_name = $3`
-	_, err := conn.Exec(ctx, query, dependsOnPackageVersion.ID, pkgVersion.ID, buildDep)
+	query := `update package_version_dependency_buildtime set depends_on_package_version_id = $1 where package_version_id = $2 and (dependency_spec = $3 or depends_on_package_name = $4)`
+	_, err := conn.Exec(ctx, query, dependsOnPackageVersion.ID, pkgVersion.ID, buildDep, ParsePackageName(buildDep))
 	if err != nil {
 		return fmt.Errorf("update package version dependency buildtime: %w", err)
 	}
@@ -435,7 +440,7 @@ func ListPackageVersionBuildDependencies(ctx context.Context, packageVersionID s
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `select depends_on_package_name from package_version_dependency_buildtime where package_version_id = $1`
+	query := `select COALESCE(dependency_spec, depends_on_package_name) from package_version_dependency_buildtime where package_version_id = $1`
 	rows, err := conn.Query(ctx, query, packageVersionID)
 	if err != nil {
 		return nil, fmt.Errorf("list package version build dependencies: %w", err)
@@ -456,7 +461,7 @@ func ListPackageVersionBuildDependencies(ctx context.Context, packageVersionID s
 	return dependencies, nil
 }
 
-func WritePackageVersionBuildDependencies(ctx context.Context, tx pgx.Tx, packageVersion *types.PackageVersion, buildDeps []string) error {
+func WritePackageVersionBuildDependencies(ctx context.Context, tx pgx.Tx, packageVersion *types.PackageVersion, buildDeps []DependencySpec) error {
 	return writePackageVersionDependencies(ctx, tx, packageVersion, buildDeps, DependencyTypeBuild)
 }
 
