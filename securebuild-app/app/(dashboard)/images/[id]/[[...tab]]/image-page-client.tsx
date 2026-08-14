@@ -17,6 +17,7 @@ import { setImageReadmeAction } from "@/lib/image/actions/set-image-readme";
 import { setImageApkoReadmeAction } from "@/lib/image/actions/set-image-apko-readme";
 import { addExternalRegistryAction } from "@/lib/image/actions/add-external-registry";
 import { removeExternalRegistryAction } from "@/lib/image/actions/remove-external-registry";
+import { updateExternalRegistryAction } from "@/lib/image/actions/update-external-registry";
 import { downloadImageScanResultAction, getImageScanResultsAction } from "@/lib/image/actions/get-image-scan-results";
 import { getFixableCVEs, FixableCVEsByAPKO } from "@/lib/image/actions/get-fixable-cves";
 import { buildImageAction } from "@/lib/image/actions/build-image";
@@ -31,7 +32,7 @@ import { getAPKOPackagesAction } from "@/lib/image/actions/get-apko-packages";
 import { sortAPKOsByVersion } from "@/lib/utils/apko-sort";
 import { sortTagsForDisplay } from "@/lib/utils/tag-sort";
 import { ImageScanSummary } from "@/lib/image/scan";
-import { Image, ImageBuild } from "@/lib/types/image";
+import { Image, ImageBuild, ImageExternalRegistry } from "@/lib/types/image";
 import { Session } from "@/lib/types/session";
 import { APKOPackage } from "@/lib/image/actions/get-apko-packages";
 import { BuildsTable } from "@/components/builds-table";
@@ -211,6 +212,11 @@ export function ImagePageClient({
   const [registryUrl, setRegistryUrl] = useState("");
   const [registryUsername, setRegistryUsername] = useState("");
   const [registryPassword, setRegistryPassword] = useState("");
+  const [editingRegistryId, setEditingRegistryId] = useState<string | null>(null);
+  const [editRegistryUrl, setEditRegistryUrl] = useState("");
+  const [editRegistryUsername, setEditRegistryUsername] = useState("");
+  const [editRegistryPassword, setEditRegistryPassword] = useState("");
+  const [savingRegistryId, setSavingRegistryId] = useState<string | null>(null);
   const [deletingRegistryId, setDeletingRegistryId] = useState<string | null>(null);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [registryToDelete, setRegistryToDelete] = useState<{ id: string; url: string } | null>(null);
@@ -707,6 +713,48 @@ const fetchFixableCVEs = async (force = false) => {
     setRegistryUsername("");
     setRegistryPassword("");
     setShowAddExternalRegistryForm(false);
+  };
+
+  const handleEditExternalRegistry = (registry: ImageExternalRegistry) => {
+    setEditingRegistryId(registry.id);
+    setEditRegistryUrl(registry.registryUrl);
+    setEditRegistryUsername(registry.username);
+    setEditRegistryPassword("");
+  };
+
+  const handleCancelEditExternalRegistry = () => {
+    setEditingRegistryId(null);
+    setEditRegistryUrl("");
+    setEditRegistryUsername("");
+    setEditRegistryPassword("");
+  };
+
+  const handleSaveExternalRegistry = async (registryId: string) => {
+    if (!session) return;
+    if (!editRegistryUrl.trim() || !editRegistryUsername.trim()) {
+      toast.error("Registry URL and username are required");
+      return;
+    }
+
+    setSavingRegistryId(registryId);
+    try {
+      await updateExternalRegistryAction(
+        session,
+        image.id,
+        registryId,
+        editRegistryUrl.trim(),
+        editRegistryUsername.trim(),
+        editRegistryPassword || undefined,
+      );
+      toast.success("External registry updated successfully");
+      handleCancelEditExternalRegistry();
+      setImage(await getImageAction(session, image.id));
+    } catch (error) {
+      console.error("Failed to update external registry:", error);
+      toast.error("Failed to update external registry");
+    } finally {
+      setSavingRegistryId(null);
+    }
   };
 
   const handleDeleteExternalRegistry = (registryId: string, registryUrl: string) => {
@@ -2520,7 +2568,7 @@ test:
                   </div>
                   <Button
                     onClick={() => setShowAddExternalRegistryForm(true)}
-                    disabled={showAddExternalRegistryForm}
+                    disabled={showAddExternalRegistryForm || editingRegistryId !== null}
                     size="sm"
                   >
                     <Plus className="mr-2 h-4 w-4" />
@@ -2605,30 +2653,81 @@ test:
                 {/* External Registries List */}
                 {image?.externalRegistries && image.externalRegistries.length > 0 ? (
                   <div className="space-y-4">
-                    {image.externalRegistries.map((registry: any) => (
+                    {image.externalRegistries.map((registry) => (
                       <div key={registry.id} className="border rounded-lg p-4">
-                        <div className="flex items-start justify-between">
+                        {editingRegistryId === registry.id ? (
+                          <div className="space-y-4">
+                            <div>
+                              <label className="text-sm font-medium text-muted-foreground">Registry URL</label>
+                              <Input
+                                value={editRegistryUrl}
+                                onChange={(e) => setEditRegistryUrl(e.target.value)}
+                                className="mt-1"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-muted-foreground">Username</label>
+                              <Input
+                                value={editRegistryUsername}
+                                onChange={(e) => setEditRegistryUsername(e.target.value)}
+                                className="mt-1"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-muted-foreground">Password</label>
+                              <Input
+                                type="password"
+                                value={editRegistryPassword}
+                                onChange={(e) => setEditRegistryPassword(e.target.value)}
+                                placeholder="Leave blank to keep the current password"
+                                className="mt-1"
+                              />
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => handleSaveExternalRegistry(registry.id)}
+                                disabled={savingRegistryId === registry.id || !editRegistryUrl.trim() || !editRegistryUsername.trim()}
+                              >
+                                <Save className="mr-2 h-4 w-4" />
+                                {savingRegistryId === registry.id ? "Saving..." : "Save"}
+                              </Button>
+                              <Button variant="outline" size="sm" onClick={handleCancelEditExternalRegistry} disabled={savingRegistryId === registry.id}>
+                                <X className="mr-2 h-4 w-4" />
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                        <div className="flex items-start justify-between gap-4">
                           <div>
                             <h3 className="font-semibold">{registry.registryUrl}</h3>
                             <p className="text-sm text-muted-foreground">Username: {registry.username}</p>
-                            <div className="flex items-center gap-2 mt-1">
+                            {registry.createdAt && <div className="flex items-center gap-2 mt-1">
                               <Clock className="h-3 w-3 text-muted-foreground" />
                               <span className="text-xs text-muted-foreground">
                                 Added {formatDate(registry.createdAt)}
                               </span>
-                            </div>
+                            </div>}
                           </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleDeleteExternalRegistry(registry.id, registry.registryUrl)}
-                            disabled={deletingRegistryId === registry.id}
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            {deletingRegistryId === registry.id ? "Deleting..." : "Delete"}
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => handleEditExternalRegistry(registry)} disabled={editingRegistryId !== null}>
+                              <Edit3 className="mr-2 h-4 w-4" />
+                              Edit
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDeleteExternalRegistry(registry.id, registry.registryUrl)}
+                              disabled={deletingRegistryId === registry.id || editingRegistryId !== null}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              {deletingRegistryId === registry.id ? "Deleting..." : "Delete"}
+                            </Button>
+                          </div>
                         </div>
+                        )}
                       </div>
                     ))}
                   </div>

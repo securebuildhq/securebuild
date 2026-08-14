@@ -115,10 +115,11 @@ export async function deleteImage(id: string): Promise<void> {
 }
 
 async function encryptExternalRegistryPassword(password: string): Promise<string> {
-  const secret = process.env.EXTERNAL_REGISTRY_ENCRYPTION_SECRET;
-  if (!secret) {
+  const secretEncoded = process.env.EXTERNAL_REGISTRY_ENCRYPTION_SECRET;
+  if (!secretEncoded) {
     throw new Error("EXTERNAL_REGISTRY_ENCRYPTION_SECRET environment variable is required");
   }
+  const secret = Buffer.from(secretEncoded, "base64").toString("utf-8");
 
   // Generate a random IV for each encryption
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -180,6 +181,46 @@ export async function getImageExternalRegistry(id: string): Promise<ImageExterna
       registryUrl: result.rows[0].registry_url,
       username: result.rows[0].username,
     };
+  } catch (err) {
+    console.error(err);
+    throw err;
+  }
+}
+
+export async function updateImageExternalRegistry(
+  imageId: string,
+  id: string,
+  registryUrl: string,
+  username: string,
+  password?: string,
+): Promise<ImageExternalRegistry> {
+  try {
+    const db = getDB(await getParam("DB_URI"));
+
+    if (password) {
+      const encryptedPassword = await encryptExternalRegistryPassword(password);
+      const result = await db.query(
+        `update image_external_registry
+         set registry_url = $1, username = $2, password = $3
+         where id = $4 and image_id = $5`,
+        [registryUrl, username, encryptedPassword, id, imageId],
+      );
+      if (result.rowCount === 0) {
+        throw new Error("External registry not found");
+      }
+    } else {
+      const result = await db.query(
+        `update image_external_registry
+         set registry_url = $1, username = $2
+         where id = $3 and image_id = $4`,
+        [registryUrl, username, id, imageId],
+      );
+      if (result.rowCount === 0) {
+        throw new Error("External registry not found");
+      }
+    }
+
+    return getImageExternalRegistry(id);
   } catch (err) {
     console.error(err);
     throw err;
