@@ -52,9 +52,21 @@ type ImageBuildConfig struct {
 
 // ExternalRegistryConfig represents an external registry configuration for pushing
 type ExternalRegistryConfig struct {
+	ID          string `json:"id"`
 	RegistryURL string `json:"registry_url"`
 	Username    string `json:"username"`
 	Password    string `json:"password"`
+}
+
+// ExternalRegistryPushResult records whether a tag was pushed to an external
+// registry. The control plane uses this to publish attestations only where the
+// builder successfully published the image.
+type ExternalRegistryPushResult struct {
+	RegistryID  string `json:"registry_id"`
+	RegistryURL string `json:"registry_url"`
+	Tag         string `json:"tag"`
+	Success     bool   `json:"success"`
+	Error       string `json:"error,omitempty"`
 }
 
 // registryRetryBackoff configures retry options for transient registry failures
@@ -221,9 +233,15 @@ func runBuildAndTestImage(ctx context.Context, configFile, workDir, sbomPath, lo
 	// Step 2.5: Push to external registries if configured
 	if len(config.ExternalRegistries) > 0 {
 		logger.Info("Step 2.5: Pushing images to external registries")
-		if err := pushToExternalRegistries(ctx, config); err != nil {
+		results := pushToExternalRegistries(ctx, config)
+		resultBytes, err := json.Marshal(results)
+		if err != nil {
 			WriteStatus(statusFile, types.ImageBuildStatusFailed)
-			return fmt.Errorf("external registry push failed: %w", err)
+			return fmt.Errorf("failed to marshal external registry push results: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(config.WorkDir, "external-registry-results.json"), resultBytes, 0o600); err != nil {
+			WriteStatus(statusFile, types.ImageBuildStatusFailed)
+			return fmt.Errorf("failed to write external registry push results: %w", err)
 		}
 	}
 
@@ -806,7 +824,7 @@ func getKeys(m map[string]interface{}) []string {
 }
 
 // pushToExternalRegistries pushes the built images to all configured external registries
-func pushToExternalRegistries(ctx context.Context, config *ImageBuildConfig) error {
+func pushToExternalRegistries(ctx context.Context, config *ImageBuildConfig) []ExternalRegistryPushResult {
 	if len(config.ExternalRegistries) == 0 {
 		logger.Info("No external registries configured, skipping external push")
 		return nil
@@ -818,26 +836,34 @@ func pushToExternalRegistries(ctx context.Context, config *ImageBuildConfig) err
 	layoutPath := layout.Path(config.WorkDir)
 	imageIndex, err := layoutPath.ImageIndex()
 	if err != nil {
-		return fmt.Errorf("failed to load image index from OCI layout: %w", err)
+		results := make([]ExternalRegistryPushResult, 0, len(config.Tags)*len(config.ExternalRegistries))
+		for _, tag := range config.Tags {
+			for _, extRegistry := range config.ExternalRegistries {
+				results = append(results, ExternalRegistryPushResult{RegistryID: extRegistry.ID, RegistryURL: extRegistry.RegistryURL, Tag: tag, Error: fmt.Sprintf("failed to load image index: %v", err)})
+			}
+		}
+		return results
 	}
 
 	// Push each tag to each external registry
+	results := make([]ExternalRegistryPushResult, 0, len(config.Tags)*len(config.ExternalRegistries))
 	for _, tag := range config.Tags {
 		for i, extRegistry := range config.ExternalRegistries {
 			logger.Infof("Pushing tag %s to external registry %d: %s", tag, i+1, extRegistry.RegistryURL)
 
 			if err := pushToSingleExternalRegistry(ctx, config, imageIndex, tag, extRegistry); err != nil {
 				logger.Warnf("Failed to push tag %s to external registry %s: %v", tag, extRegistry.RegistryURL, err)
-				// Continue with other registries even if one fails
+				results = append(results, ExternalRegistryPushResult{RegistryID: extRegistry.ID, RegistryURL: extRegistry.RegistryURL, Tag: tag, Error: err.Error()})
 				continue
 			}
 
+			results = append(results, ExternalRegistryPushResult{RegistryID: extRegistry.ID, RegistryURL: extRegistry.RegistryURL, Tag: tag, Success: true})
 			logger.Infof("Successfully pushed tag %s to external registry: %s", tag, extRegistry.RegistryURL)
 		}
 	}
 
 	logger.Info("Completed pushing images to external registries")
-	return nil
+	return results
 }
 
 // pushToSingleExternalRegistry pushes a single tag to a specific external registry

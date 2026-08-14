@@ -374,33 +374,27 @@ func processImageBuildResults(ctx context.Context, buildID string, tmpDir string
 		logger.Warn("failed to store multi-arch index manifest", zap.Error(err))
 	}
 
-	// Publish all catalog images
-	if err := image.PublishCatalogImage(ctx, img.Name, imageCatalogIDs, apko.ID); err != nil {
-		return fmt.Errorf("failed to publish catalog image: %w", err)
-	}
-
-	// Queue push to external registry
+	// Publish signatures and attestations to external registries where the VM
+	// successfully pushed the image.
 	externalRegistries, err := image.ListImageExternalRegistries(ctx, img.ID)
 	if err != nil {
-		logger.Warn("failed to list image external registries", zap.String("buildID", buildID), zap.Error(err))
-		// Don't fail the build for this - just log the warning
-	} else {
-		for _, registry := range externalRegistries {
-			pushPayload := map[string]string{
-				"imageId":          img.ID,
-				"externalRegistry": registry.ID,
-			}
-
-			pushPayloadBytes, err := json.Marshal(pushPayload)
-			if err != nil {
-				logger.Warn("failed to marshal push payload", zap.String("buildID", buildID), zap.Error(err))
-				continue
-			}
-
-			if err := persistence.EnqueueWork(ctx, "push_image_to_external_registry", string(pushPayloadBytes)); err != nil {
-				logger.Warn("failed to enqueue push to external registry", zap.String("buildID", buildID), zap.Error(err))
-			}
+		return fmt.Errorf("failed to list image external registries: %w", err)
+	}
+	if len(externalRegistries) > 0 {
+		resultsPath := filepath.Join(tmpDir, "external-registry-results.json")
+		pushResults, err := readExternalRegistryPushResults(resultsPath)
+		if err != nil {
+			return fmt.Errorf("failed to read builder external registry results: %w", err)
 		}
+		if err := publishBuildArtifactsToExternalRegistries(ctx, imageCatalogIDs, externalRegistries, pushResults); err != nil {
+			return err
+		}
+	}
+
+	// Do not make catalog entries visible until all required external
+	// publication and verification has succeeded.
+	if err := image.PublishCatalogImage(ctx, img.Name, imageCatalogIDs, apko.ID); err != nil {
+		return fmt.Errorf("failed to publish catalog image: %w", err)
 	}
 
 	// Set build finished timestamp
@@ -416,6 +410,55 @@ func processImageBuildResults(ctx context.Context, buildID string, tmpDir string
 	}
 
 	return nil
+}
+
+func publishBuildArtifactsToExternalRegistries(ctx context.Context, imageCatalogIDs []string, externalRegistries []imagetypes.ImageExternalRegistry, pushResults []externalRegistryPushResult) error {
+	registriesByID := make(map[string]imagetypes.ImageExternalRegistry, len(externalRegistries))
+	for _, externalRegistry := range externalRegistries {
+		registriesByID[externalRegistry.ID] = externalRegistry
+	}
+	catalogByTag := make(map[string]*imagetypes.ImageCatalogItem, len(imageCatalogIDs))
+	for _, imageCatalogID := range imageCatalogIDs {
+		catalogItem, err := image.GetImageCatalogItem(ctx, imageCatalogID)
+		if err != nil {
+			return fmt.Errorf("failed to load image catalog item %s: %w", imageCatalogID, err)
+		}
+		catalogByTag[catalogItem.Tag] = catalogItem
+	}
+
+	var publicationErrors []error
+	seen := make(map[string]bool, len(pushResults))
+	for _, result := range pushResults {
+		key := result.RegistryID + "\x00" + result.Tag
+		seen[key] = true
+		externalRegistry, ok := registriesByID[result.RegistryID]
+		if !ok {
+			publicationErrors = append(publicationErrors, fmt.Errorf("builder returned unknown external registry %s", result.RegistryID))
+			continue
+		}
+		catalogItem, ok := catalogByTag[result.Tag]
+		if !ok {
+			publicationErrors = append(publicationErrors, fmt.Errorf("builder returned unknown image tag %s for external registry %s", result.Tag, externalRegistry.RegistryURL))
+			continue
+		}
+		if !result.Success {
+			publicationErrors = append(publicationErrors, fmt.Errorf("external image push failed for registry %s tag %s: %s", externalRegistry.RegistryURL, result.Tag, result.Error))
+			continue
+		}
+		if err := publishExternalArtifacts(ctx, catalogItem.ID, catalogItem.IndexDigest, externalRegistry); err != nil {
+			publicationErrors = append(publicationErrors, fmt.Errorf("external artifact publication failed for registry %s tag %s: %w", externalRegistry.RegistryURL, result.Tag, err))
+		}
+	}
+
+	for registryID := range registriesByID {
+		externalRegistry := registriesByID[registryID]
+		for tag := range catalogByTag {
+			if !seen[registryID+"\x00"+tag] {
+				publicationErrors = append(publicationErrors, fmt.Errorf("builder did not report external push result for registry %s tag %s", externalRegistry.RegistryURL, tag))
+			}
+		}
+	}
+	return errors.Join(publicationErrors...)
 }
 
 // captureBuilderLogs captures stdout and stderr from build log files on the VM (looks up work dir from assignment).
