@@ -67,7 +67,7 @@ export default function ImagesPage() {
     if (!session) return
     setLoading(true)
     try {
-      const imagesData = await listImagesAction(session)
+      const imagesData = await listImagesAction()
       setImages(imagesData)
     } catch (error) {
       console.error("Failed to fetch images:", error)
@@ -80,7 +80,7 @@ export default function ImagesPage() {
     if (!session) return
     setIsScanningAll(true)
     try {
-      await scanImagesAction(session)
+      await scanImagesAction()
       // Refresh images after scanning
       await fetchImages()
     } catch (error) {
@@ -109,7 +109,7 @@ export default function ImagesPage() {
 
     setIsDeleting(true)
     try {
-      await deleteImageAction(session, selectedImageForDelete.id)
+      await deleteImageAction(selectedImageForDelete.id)
       setImages(images.filter(img => img.id !== selectedImageForDelete.id))
       setSelectedImageForDelete(null)
       setDeleteConfirmationText("")
@@ -125,7 +125,7 @@ export default function ImagesPage() {
     const actionKey = `build-${imageId}`
     addPendingAction(actionKey)
     try {
-      await buildImageAction(session, imageId)
+      await buildImageAction(imageId)
       console.log(`Build initiated for image: ${imageId}`)
       // Simulate a minimum duration for the visual feedback
       await new Promise((resolve) => setTimeout(resolve, 1000))
@@ -141,7 +141,7 @@ export default function ImagesPage() {
     const actionKey = `scan-${imageId}`
     addPendingAction(actionKey)
     try {
-      await scanImageAction(session, imageId, "both")
+      await scanImageAction(imageId, "both")
       console.log(`Scan initiated for image: ${imageId}`)
       // Simulate a minimum duration for the visual feedback
       await new Promise((resolve) => setTimeout(resolve, 1000))

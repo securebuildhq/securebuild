@@ -77,7 +77,7 @@ export function ExecutionsTable({ executions, showRetryButton = true }: Executio
     setCancellingIds(prev => new Set(prev).add(executionId));
 
     try {
-      await cancelExecutionAction(session, executionId);
+      await cancelExecutionAction(executionId);
       toast({
         title: "Execution cancelled",
         description: "The execution has been cancelled successfully",
@@ -110,7 +110,7 @@ export function ExecutionsTable({ executions, showRetryButton = true }: Executio
     setRetryingIds(prev => new Set(prev).add(executionId));
 
     try {
-      const success = await retryExecutionAction(session, executionId);
+      const success = await retryExecutionAction(executionId);
       if (success) {
         toast({
           title: "Execution retried",

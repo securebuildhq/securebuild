@@ -1,15 +1,17 @@
 "use server";
 
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { getDB } from "@/lib/data/db";
 import { getParam } from "@/lib/data/param";
-import { Session } from "@/lib/types/session";
 import { revalidatePath } from "next/cache";
 
-export async function setImagePublic(sess: Session, imageId: string, isPublic: boolean) {
-  // Validate session
-  if (!sess?.user) {
+export async function setImagePublic(imageId: string, isPublic: boolean) {
+  const session = await getServerSession();
+  if (!session) {
     throw new Error("Unauthorized: Valid session required");
   }
+
 
   const db = getDB(await getParam("DB_URI"));
 

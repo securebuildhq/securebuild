@@ -26,7 +26,7 @@ export default async function ImagePage({ params }: ImagePageProps) {
 
   try {
     // Fetch only essential image data on server
-    const image = await getImageAction(session, id);
+    const image = await getImageAction(id);
     
     // Only pre-load data for the current tab to avoid memory issues
     let initialScanResults: any[] = [];
@@ -35,7 +35,7 @@ export default async function ImagePage({ params }: ImagePageProps) {
 
     // Always pre-load builds data since it's needed for the General tab's ImageStatusIndicator
     try {
-      initialBuilds = await getImageBuildsAction(session, image.id);
+      initialBuilds = await getImageBuildsAction(image.id);
     } catch (error) {
       console.error("Failed to load builds:", error);
       initialBuilds = [];
@@ -44,7 +44,7 @@ export default async function ImagePage({ params }: ImagePageProps) {
     // Pre-load data only for the active tab to reduce memory usage
     if (currentTab === "security") {
       try {
-        initialScanResults = await getImageScanResultsAction(session, image.name);
+        initialScanResults = await getImageScanResultsAction(image.name);
       } catch (error) {
         console.error("Failed to load scan results:", error);
         initialScanResults = [];
@@ -56,7 +56,7 @@ export default async function ImagePage({ params }: ImagePageProps) {
         const apkoPackagesResults = await Promise.allSettled(
           limitedApkos.map(async (apko) => ({
             apkoId: apko.id,
-            packages: await getAPKOPackagesAction(session, apko.id).catch(() => [])
+            packages: await getAPKOPackagesAction(apko.id).catch(() => [])
           }))
         );
         

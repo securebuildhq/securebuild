@@ -8,8 +8,12 @@ import { getParam } from '@/lib/data/param'
 export async function validateBearerToken(
   request: NextRequest
 ): Promise<Session | null> {
-  const authHeader = request.headers.get('authorization')
-  
+  return validateBearerAuthorization(request.headers.get('authorization'))
+}
+
+export async function validateBearerAuthorization(
+  authHeader: string | null
+): Promise<Session | null> {
   const tokenInfo = await validateAIAgentToken(authHeader)
   if (!tokenInfo) return null
   

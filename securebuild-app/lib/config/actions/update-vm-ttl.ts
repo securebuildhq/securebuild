@@ -1,6 +1,7 @@
 "use server";
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { setVMTTLDuration } from "../config";
 
 export interface UpdateVMTTLResult {
@@ -9,9 +10,13 @@ export interface UpdateVMTTLResult {
 }
 
 export async function updateVMTTLAction(
-  session: Session,
   vmTTLDuration: string
 ): Promise<UpdateVMTTLResult> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   await setVMTTLDuration(vmTTLDuration);
 
   return {

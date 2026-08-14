@@ -1,11 +1,14 @@
 "use server"
 
-import { Session } from "@/lib/types/session"
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { deleteSystemAccount } from "../service-account"
 
-export async function deleteSystemTokenAction(sess: Session, id: string): Promise<void> {
-  if (!sess?.user) {
-    throw new Error("Unauthorized: Valid session required")
+export async function deleteSystemTokenAction(id: string): Promise<void> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
   }
+
   return deleteSystemAccount(id)
 }

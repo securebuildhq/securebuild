@@ -128,7 +128,7 @@ export default function TeamDetailsPage() {
     const fetchTeam = async () => {
       try {
         setLoading(true)
-        const currentTeam = await getTeamAction(session, teamId)
+        const currentTeam = await getTeamAction(teamId)
         setTeam(currentTeam)
         setPendingFeatureFlags(currentTeam.featureFlags || [])
       } catch (err) {
@@ -147,7 +147,7 @@ export default function TeamDetailsPage() {
 
     setIsSubmitting(true)
     try {
-      const nonce = await createGodModeNonceAction(session, team.id)
+      const nonce = await createGodModeNonceAction(team.id)
       window.open(`${process.env.NEXT_PUBLIC_GODMODE_REDIRECT}#${nonce}`, "_blank")
     } catch (err) {
       console.error("Failed to enter God Mode:", err)
@@ -164,7 +164,7 @@ export default function TeamDetailsPage() {
     setIsSubmitting(true)
     setSubmitError(null)
     try {
-      await setTeamPricingAction(session, team.id, selectedCatalogItemId, parseFloat(monthlyPrice))
+      await setTeamPricingAction(team.id, selectedCatalogItemId, parseFloat(monthlyPrice))
       setTeamPricing([
         ...teamPricing,
         {
@@ -193,10 +193,10 @@ export default function TeamDetailsPage() {
     setCreatingSubscription(catalogItemId)
     setSubscriptionError(null)
     try {
-      await createFreeSubscriptionAction(session, team.id, catalogItemId)
+      await createFreeSubscriptionAction(team.id, catalogItemId)
       
       // Refresh subscriptions to show the new one
-      const subscriptions = await listTeamSubscriptionsAction(session, team.id)
+      const subscriptions = await listTeamSubscriptionsAction(team.id)
       setTeamSubscriptions(subscriptions)
     } catch (err) {
       console.error("Failed to create subscription:", err)
@@ -214,10 +214,10 @@ export default function TeamDetailsPage() {
     setCancelingSubscription(true)
     setCancelSubscriptionError(null)
     try {
-      await cancelSubscriptionAction(session, team.id, subscriptionToCancel.subscriptionId)
+      await cancelSubscriptionAction(team.id, subscriptionToCancel.subscriptionId)
       
       // Refresh subscriptions to remove the canceled one
-      const subscriptions = await listTeamSubscriptionsAction(session, team.id)
+      const subscriptions = await listTeamSubscriptionsAction(team.id)
       setTeamSubscriptions(subscriptions)
       
       // Close the dialog
@@ -253,7 +253,7 @@ export default function TeamDetailsPage() {
     setFeatureFlagsUpdateError(null)
     
     try {
-      await updateTeamFeatureFlagsAction(session, teamId, pendingFeatureFlags)
+      await updateTeamFeatureFlagsAction(teamId, pendingFeatureFlags)
       
       // Update the team state to reflect the new feature flags
       if (team) {
@@ -273,7 +273,7 @@ export default function TeamDetailsPage() {
     const fetchCatalogItems = async () => {
       try {
         setCatalogLoading(true)
-        const items = await listCatalogItemsAction(session)
+        const items = await listCatalogItemsAction()
         if (items) {
           setCatalogItems(items)
         } else {
@@ -296,7 +296,7 @@ export default function TeamDetailsPage() {
     const fetchTeamPricing = async () => {
       try {
         setPricingLoading(true)
-        const pricing = await listTeamPricingAction(session, teamId)
+        const pricing = await listTeamPricingAction(teamId)
         if (pricing) {
           setTeamPricing(pricing.map(p => ({
             ...p,
@@ -323,7 +323,7 @@ export default function TeamDetailsPage() {
     const fetchTeamSubscriptions = async () => {
       try {
         setSubscriptionsLoading(true)
-        const subscriptions = await listTeamSubscriptionsAction(session, teamId)
+        const subscriptions = await listTeamSubscriptionsAction(teamId)
         setTeamSubscriptions(subscriptions)
       } catch (err) {
         console.error("Failed to fetch team subscriptions:", err)
@@ -821,7 +821,7 @@ export default function TeamDetailsPage() {
                 setEditSubmitting(true)
                 setEditError(null)
                 try {
-                  await setTeamPricingAction(session, team.id, editingPricing.catalogItemId, parseFloat(editPrice))
+                  await setTeamPricingAction(team.id, editingPricing.catalogItemId, parseFloat(editPrice))
                   setTeamPricing(teamPricing.map(p =>
                     p.catalogItemId === editingPricing.catalogItemId
                       ? { ...p, priceMonthly: parseFloat(editPrice) }
@@ -864,7 +864,7 @@ export default function TeamDetailsPage() {
                 if (!session || !team || !removingPricing) return
                 setEditSubmitting(true)
                 try {
-                  await removeTeamPricingAction(session, team.id, removingPricing.catalogItemId)
+                  await removeTeamPricingAction(team.id, removingPricing.catalogItemId)
                   setTeamPricing(teamPricing.filter(p => p.catalogItemId !== removingPricing.catalogItemId))
                   setRemoveDialogOpen(false)
                 } catch (err) {

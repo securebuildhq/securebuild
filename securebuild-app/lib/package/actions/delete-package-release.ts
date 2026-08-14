@@ -1,19 +1,20 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { deletePackageRelease, getPackage } from "../package";
 import { ValidationError } from "@/lib/errors/validation-error";
 
 export async function deletePackageReleaseAction(
-  sess: Session, 
   pkgId: string,
   version: string,
   apkRelease: number
 ): Promise<void> {
-  // Validate session
-  if (!sess?.user) {
-    throw new ValidationError("Unauthorized: Valid session required");
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
   }
+
 
   // Validate input parameters
   if (!pkgId?.trim()) {

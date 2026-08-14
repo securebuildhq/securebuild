@@ -1,15 +1,17 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { getPackage, getPackageVersion } from "../package";
 import { enqueueWork } from "@/lib/utils/queue";
 import { logger } from "@/lib/utils/logger";
 
-export async function buildPackageAction(sess: Session, id: string): Promise<boolean> {
-  // Validate session
-  if (!sess?.user) {
+export async function buildPackageAction(id: string): Promise<boolean> {
+  const session = await getServerSession();
+  if (!session) {
     throw new Error("Unauthorized: Valid session required");
   }
+
 
   logger.info("Rebuilding individual package", { id })
   const pkg = await getPackage(id)
@@ -17,15 +19,16 @@ export async function buildPackageAction(sess: Session, id: string): Promise<boo
     throw new Error("Package not found")
   }
 
-  await enqueueWork("build_package", { packageId: id, cause: `built by ${sess.user.name}`, causeId: sess.user.id })
+  await enqueueWork("build_package", { packageId: id, cause: `built by ${session.user.name}`, causeId: session.user.id })
   return true
 }
 
-export async function buildPackageVersionAction(sess: Session, packageId: string, version: string, apkRelease: number): Promise<boolean> {
-  // Validate session
-  if (!sess?.user) {
+export async function buildPackageVersionAction(packageId: string, version: string, apkRelease: number): Promise<boolean> {
+  const session = await getServerSession();
+  if (!session) {
     throw new Error("Unauthorized: Valid session required");
   }
+
 
   logger.info("Building specific package version", { packageId, version, apkRelease })
 
@@ -42,8 +45,8 @@ export async function buildPackageVersionAction(sess: Session, packageId: string
   await enqueueWork("build_package", {
     packageId,
     packageVersionId: pkgVersion.id,
-    cause: `built by ${sess.user.name}`,
-    causeId: sess.user.id
+    cause: `built by ${session.user.name}`,
+    causeId: session.user.id
   })
 
   return true

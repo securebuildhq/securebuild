@@ -60,7 +60,7 @@ function NewCatalogItemContent() {
         setImagesLoading(true)
         try {
           // Fetch all images
-          const images = await listImagesAction(session)
+          const images = await listImagesAction()
           setAllImages(images)
         } catch (err) {
           console.error("Failed to fetch images:", err)
@@ -101,7 +101,6 @@ function NewCatalogItemContent() {
     setIsSaving(true)
     try {
       await createCatalogItemAction(
-        session,
         name,
         description,
         isActive,

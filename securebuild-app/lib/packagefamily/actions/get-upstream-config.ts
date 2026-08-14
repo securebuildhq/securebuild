@@ -1,12 +1,17 @@
 'use server'
 
-import { Session } from "@/lib/types/session"
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { getUpstreamConfigFromLatestPackage, getUpstreamConfigFromPackage, UpstreamConfig } from "../packagefamily"
 
 export async function getUpstreamConfigAction(
-  session: Session,
   packageFamilyId: string
 ): Promise<UpstreamConfig | null> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   if (!session) {
     throw new Error("Unauthorized")
   }
@@ -15,9 +20,13 @@ export async function getUpstreamConfigAction(
 }
 
 export async function getUpstreamConfigFromPackageAction(
-  session: Session,
   packageId: string
 ): Promise<UpstreamConfig | null> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   if (!session) {
     throw new Error("Unauthorized")
   }

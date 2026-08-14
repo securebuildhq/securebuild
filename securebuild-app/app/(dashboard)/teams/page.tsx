@@ -24,7 +24,7 @@ export default function TeamsPage() {
     const fetchTeams = async () => {
       try {
         setLoading(true)
-        const teamsData = await listTeamsAction(session)
+        const teamsData = await listTeamsAction()
         setTeams(teamsData)
       } catch (err) {
         console.error("Failed to fetch teams:", err)

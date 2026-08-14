@@ -128,9 +128,8 @@ export default function SBOMScansPage() {
     const seq = ++fetchSeqRef.current;
     try {
       const [counts, statusesData] = await Promise.all([
-        getExternalSBOMCountsAction(session, timePeriod),
+        getExternalSBOMCountsAction(timePeriod),
         listExternalSBOMStatusesAction(
-          session,
           {
             status: sbomStatusFilter === "all" ? undefined : sbomStatusFilter,
             timePeriod: debouncedRegistrySearch || debouncedImageSearch || debouncedTagSearch || debouncedDigestSearch ? undefined : timePeriod,

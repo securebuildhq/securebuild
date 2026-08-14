@@ -132,7 +132,7 @@ export default function BuildersPage() {
     if (!session) return;
     try {
       // Fetch pool builders (is_on_demand = false)
-      const poolData = await listBuildersAction(session, false);
+      const poolData = await listBuildersAction(false);
       setBuilders(
         poolData.map((b: any) => ({
           id: b.id,
@@ -150,7 +150,7 @@ export default function BuildersPage() {
       );
 
       // Fetch on-demand builders (is_on_demand = true)
-      const onDemandData = await listBuildersAction(session, true);
+      const onDemandData = await listBuildersAction(true);
       setOnDemandBuilders(
         onDemandData.map((b: any) => ({
           id: b.id,
@@ -175,7 +175,7 @@ export default function BuildersPage() {
   const fetchBuilderHistory = async () => {
     if (!session) return;
     try {
-      const data = await listBuilderHistoryAction(session);
+      const data = await listBuilderHistoryAction();
       setBuilderHistory(data);
     } catch (e) {
       setBuilderHistory([]);
@@ -220,7 +220,7 @@ export default function BuildersPage() {
 
     const fetchVMTTL = async () => {
       try {
-        const result = await getVMTTLAction(session);
+        const result = await getVMTTLAction();
         setVmTTL(result.vmTTLDuration);
       } catch (error) {
         console.error('Failed to fetch VM TTL:', error);
@@ -251,7 +251,7 @@ export default function BuildersPage() {
 
     setIsSavingVMTTL(true);
     try {
-      await updateVMTTLAction(session, vmTTL);
+      await updateVMTTLAction(vmTTL);
       toast({
         title: "Success",
         description: `VM TTL updated to ${vmTTL}`,
@@ -275,7 +275,7 @@ export default function BuildersPage() {
     if (!session || !confirmDelete) return;
     setDeletingId(confirmDelete.id);
     try {
-      await deleteBuilderAction(session, confirmDelete.id);
+      await deleteBuilderAction(confirmDelete.id);
       setBuilders((prev) => prev.filter((b) => b.id !== confirmDelete.id));
       setConfirmDelete(null);
     } catch (e) {

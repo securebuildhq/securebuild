@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const pkg = await getPackageByNameAction(session, packageName);
+    const pkg = await getPackageByNameAction(packageName);
     if (!pkg) {
       return NextResponse.json(
         { error: "Package not found" },

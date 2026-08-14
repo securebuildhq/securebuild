@@ -1,7 +1,7 @@
 "use server"
 
 import { Image } from "@/lib/types/image";
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
 import { ValidationError } from "@/lib/types/errors";
 import { createLinkedImage } from "../image";
 
@@ -14,8 +14,9 @@ export interface CreateLinkedImageRequest {
   gitTag: string;
 }
 
-async function createLinkedImageActionImpl(session: Session, req: CreateLinkedImageRequest): Promise<Image> {
-  if (!session?.user) {
+async function createLinkedImageActionImpl(req: CreateLinkedImageRequest): Promise<Image> {
+  const session = await getServerSession();
+  if (!session) {
     throw new Error("Unauthorized: Valid session required");
   }
 

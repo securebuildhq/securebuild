@@ -74,10 +74,10 @@ export default function DashboardPage() {
       try {
         // Fetch dashboard stats and failing packages
         const [stats, failingPackages, counts, paused] = await Promise.all([
-          getDashboardStatsAction(session),
-          getFailingPackagesAction(session, failingPackagesPage, FAILING_PACKAGES_PER_PAGE),
-          executionsCountAction(session, "1d"),
-          isExecutionPausedAction(session)
+          getDashboardStatsAction(),
+          getFailingPackagesAction(failingPackagesPage, FAILING_PACKAGES_PER_PAGE),
+          executionsCountAction("1d"),
+          isExecutionPausedAction()
         ]);
 
         setDashboardStats(stats);
@@ -103,10 +103,10 @@ export default function DashboardPage() {
       try {
         // Refresh all data
         const [stats, failingPackages, counts, paused] = await Promise.all([
-          getDashboardStatsAction(session),
-          getFailingPackagesAction(session, failingPackagesPage, FAILING_PACKAGES_PER_PAGE),
-          executionsCountAction(session, "1d"),
-          isExecutionPausedAction(session)
+          getDashboardStatsAction(),
+          getFailingPackagesAction(failingPackagesPage, FAILING_PACKAGES_PER_PAGE),
+          executionsCountAction("1d"),
+          isExecutionPausedAction()
         ]);
 
         setDashboardStats(stats);

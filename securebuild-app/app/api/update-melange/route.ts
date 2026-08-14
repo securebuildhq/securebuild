@@ -73,7 +73,6 @@ export async function POST(request: NextRequest) {
 
     // Call the server action with validated session
     const result = await updatePackageAction(
-      session,
       id,
       version,
       apkRelease,

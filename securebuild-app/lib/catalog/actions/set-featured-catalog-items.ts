@@ -1,8 +1,14 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { setFeaturedCatalogItems } from "../catalog";
 
-export async function setFeaturedCatalogItemsAction(sess: Session, featuredItemIds: string[]) {
+export async function setFeaturedCatalogItemsAction(featuredItemIds: string[]) {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   await setFeaturedCatalogItems(featuredItemIds);
 }

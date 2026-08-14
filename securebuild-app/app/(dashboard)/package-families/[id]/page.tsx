@@ -82,7 +82,7 @@ export default function PackageFamilyDetailsPage() {
     if (!session) return
 
     try {
-      const data = await getPackageFamilyAction(session, familyId)
+      const data = await getPackageFamilyAction(familyId)
       setPackageFamily(data || null)
       if (data) {
         setEditForm({
@@ -103,7 +103,7 @@ export default function PackageFamilyDetailsPage() {
 
         // Fetch upstream config from latest package version
         try {
-          const config = await getUpstreamConfigAction(session, familyId)
+          const config = await getUpstreamConfigAction(familyId)
           setUpstreamConfig(config)
         } catch (err) {
           console.error("Failed to fetch upstream config:", err)
@@ -127,7 +127,7 @@ export default function PackageFamilyDetailsPage() {
 
     const refreshInterval = setInterval(async () => {
       try {
-        const data = await getPackageFamilyAction(session, familyId)
+        const data = await getPackageFamilyAction(familyId)
         // Update state only if we have data, regardless of changes
         // This ensures we stay in sync with the server
         if (data) {
@@ -148,7 +148,7 @@ export default function PackageFamilyDetailsPage() {
     setError(null)
 
     try {
-      const updated = await updatePackageFamilyAction(session, familyId, {
+      const updated = await updatePackageFamilyAction(familyId, {
         name: editForm.name.trim(),
         versionPattern: editForm.versionPattern,
         packageNameTemplate: editForm.packageNameTemplate,
@@ -180,7 +180,7 @@ export default function PackageFamilyDetailsPage() {
 
     setIsDeleting(true)
     try {
-      await deletePackageFamilyAction(session, familyId)
+      await deletePackageFamilyAction(familyId)
       router.push("/package-families")
     } catch (err) {
       console.error("Failed to delete package family:", err)
@@ -219,7 +219,7 @@ export default function PackageFamilyDetailsPage() {
     setSuccessMessage(null)
 
     try {
-      const result = await triggerPackageFamilyUpdateCheckAction(session, familyId)
+      const result = await triggerPackageFamilyUpdateCheckAction(familyId)
 
       if (result.success) {
         setSuccessMessage(result.message)
@@ -229,7 +229,7 @@ export default function PackageFamilyDetailsPage() {
 
           // Reload package family to refresh linked packages
           try {
-            const data = await getPackageFamilyAction(session, familyId)
+            const data = await getPackageFamilyAction(familyId)
             if (data) {
               setPackageFamily(data)
             }

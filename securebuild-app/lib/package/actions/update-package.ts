@@ -1,6 +1,7 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { getPackage, getPackageVersion, updatePackageVersion, extractPackageInfoFromMelange } from "../package";
 import { Package, PackageVersion } from "@/lib/types/package";
 import { getLastExecutionForPackageVersion } from "@/lib/execution/execution";
@@ -22,7 +23,12 @@ export interface UpdatePackageError {
   message: string
 }
 
-export async function updatePackageAction(sess: Session, id: string, version: string, apkRelease: number, opts: UpdateActionOpts): Promise<PackageVersion | UpdatePackageError> {
+export async function updatePackageAction(id: string, version: string, apkRelease: number, opts: UpdateActionOpts): Promise<PackageVersion | UpdatePackageError> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const pkg = await getPackage(id)
 
   if (!pkg) {

@@ -56,7 +56,7 @@ export function PackagesTable({ packages, onRefresh, onSort, sortConfig }: Packa
 
   const handleCheckForUpdates = async (pkg: Package) => {
     if (!session) return
-    await checkForUpdatesAction(session, pkg.id)
+    await checkForUpdatesAction(pkg.id)
     setUpdateQueuedPackageName(pkg.name)
     setIsUpdateQueuedModalOpen(true)
   }
@@ -66,7 +66,7 @@ export function PackagesTable({ packages, onRefresh, onSort, sortConfig }: Packa
     setIsBuildLoading(true)
     setSelectedPackage(pkg)
     try {
-      await buildPackageChainAction(session, pkg.id)
+      await buildPackageChainAction(pkg.id)
       // Refresh the package list to show updated status
       if (onRefresh) {
         await onRefresh()
@@ -93,7 +93,7 @@ export function PackagesTable({ packages, onRefresh, onSort, sortConfig }: Packa
     if (!session || !selectedPackage) return
     setDeleteLoading(true)
     try {
-      await deletePackageAction(session, selectedPackage.id)
+      await deletePackageAction(selectedPackage.id)
       setDeleteModalOpen(false)
       setSelectedPackage(null)
       // Refresh the package list to show updated status

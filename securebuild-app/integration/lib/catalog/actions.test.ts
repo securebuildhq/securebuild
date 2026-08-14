@@ -41,6 +41,9 @@ jest.mock('stripe', () => {
 // Mock cookies to return our test session token
 let mockSessionToken: string | undefined;
 jest.mock('next/headers', () => ({
+  headers: jest.fn(() => ({
+    get: jest.fn(() => null)
+  })),
   cookies: jest.fn(() => ({
     get: jest.fn((name: string) => {
       if (name === 'buildadmin_session' && mockSessionToken) {
@@ -108,7 +111,6 @@ describe('Catalog Item Server Actions', () => {
     it('should retrieve catalog item by ID', async () => {
       // Create a catalog item first
       const created = await createCatalogItemAction(
-        session,
         'Get Test Item',
         'Description for get test',
         true,
@@ -122,7 +124,7 @@ describe('Catalog Item Server Actions', () => {
       );
 
       // Retrieve it
-      const catalogItem = await getCatalogItemAction(session, created.id);
+      const catalogItem = await getCatalogItemAction(created.id);
 
       expect(catalogItem).toBeDefined();
       expect(catalogItem?.id).toBe(created.id);
@@ -135,7 +137,6 @@ describe('Catalog Item Server Actions', () => {
     it('should list all catalog items', async () => {
       // Create multiple catalog items
       await createCatalogItemAction(
-        session,
         'List Test Item 1',
         'First list test item',
         true,
@@ -149,7 +150,6 @@ describe('Catalog Item Server Actions', () => {
       );
 
       await createCatalogItemAction(
-        session,
         'List Test Item 2',
         'Second list test item',
         true,
@@ -162,7 +162,7 @@ describe('Catalog Item Server Actions', () => {
         []
       );
 
-      const catalogItems = await listCatalogItemsAction(session);
+      const catalogItems = await listCatalogItemsAction();
 
       expect(catalogItems).toBeDefined();
       expect(Array.isArray(catalogItems)).toBe(true);

@@ -51,7 +51,7 @@ export default function AIPackagePage() {
         console.log("loadPersistedChat: Found persistedId", persistedId);
         setIsLoadingPersistedChat(true)
         try {
-          const persistedData = await getGenerateMelangeAction(session, persistedId)
+          const persistedData = await getGenerateMelangeAction(persistedId)
           if (persistedData) {
             const newAtomChatHistory: AtomChatMessage[] = (persistedData.messages as GenerateMelangeMessage[]).map(msg => ({
               id: msg.id,
@@ -120,7 +120,7 @@ export default function AIPackagePage() {
         setChatMessages(prev => [...prev, { sender: "user", text: userInput }])
         setChatMessages(prev => [...prev, { sender: "ai", text: "Generating initial configuration..." }])
 
-        const result = await generateMelangeAction(session, userInput)
+        const result = await generateMelangeAction(userInput)
 
         const newAtomChatHistory: AtomChatMessage[] = (result.messages as GenerateMelangeMessage[]).map(msg => ({
           id: msg.id,

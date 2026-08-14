@@ -17,6 +17,7 @@ import { setImageReadmeAction } from "@/lib/image/actions/set-image-readme";
 import { setImageApkoReadmeAction } from "@/lib/image/actions/set-image-apko-readme";
 import { addExternalRegistryAction } from "@/lib/image/actions/add-external-registry";
 import { removeExternalRegistryAction } from "@/lib/image/actions/remove-external-registry";
+import { updateExternalRegistryAction } from "@/lib/image/actions/update-external-registry";
 import { downloadImageScanResultAction, getImageScanResultsAction } from "@/lib/image/actions/get-image-scan-results";
 import { getFixableCVEs, FixableCVEsByAPKO } from "@/lib/image/actions/get-fixable-cves";
 import { buildImageAction } from "@/lib/image/actions/build-image";
@@ -31,7 +32,7 @@ import { getAPKOPackagesAction } from "@/lib/image/actions/get-apko-packages";
 import { sortAPKOsByVersion } from "@/lib/utils/apko-sort";
 import { sortTagsForDisplay } from "@/lib/utils/tag-sort";
 import { ImageScanSummary } from "@/lib/image/scan";
-import { Image, ImageBuild } from "@/lib/types/image";
+import { Image, ImageBuild, ImageExternalRegistry } from "@/lib/types/image";
 import { Session } from "@/lib/types/session";
 import { APKOPackage } from "@/lib/image/actions/get-apko-packages";
 import { BuildsTable } from "@/components/builds-table";
@@ -211,6 +212,11 @@ export function ImagePageClient({
   const [registryUrl, setRegistryUrl] = useState("");
   const [registryUsername, setRegistryUsername] = useState("");
   const [registryPassword, setRegistryPassword] = useState("");
+  const [editingRegistryId, setEditingRegistryId] = useState<string | null>(null);
+  const [editRegistryUrl, setEditRegistryUrl] = useState("");
+  const [editRegistryUsername, setEditRegistryUsername] = useState("");
+  const [editRegistryPassword, setEditRegistryPassword] = useState("");
+  const [savingRegistryId, setSavingRegistryId] = useState<string | null>(null);
   const [deletingRegistryId, setDeletingRegistryId] = useState<string | null>(null);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [registryToDelete, setRegistryToDelete] = useState<{ id: string; url: string } | null>(null);
@@ -266,7 +272,7 @@ export function ImagePageClient({
 
     setScanResultsLoading(true);
     try {
-      const results = await getImageScanResultsAction(session, image.name);
+      const results = await getImageScanResultsAction(image.name);
       setScanResults(results);
     } catch (error) {
       console.error("Failed to fetch scan results:", error);
@@ -296,7 +302,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setApkoPackagesLoading(prev => ({ ...prev, [apkoId]: true }));
     try {
-      const packages = await getAPKOPackagesAction(session, apkoId);
+      const packages = await getAPKOPackagesAction(apkoId);
       setApkoPackages(prev => ({ ...prev, [apkoId]: packages }));
     } catch (error) {
       console.error("Failed to fetch APKO packages:", error);
@@ -311,7 +317,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setBuildsLoading(true);
     try {
-      const imageBuilds = await getImageBuildsAction(session, image.id);
+      const imageBuilds = await getImageBuildsAction(image.id);
       setBuilds(imageBuilds);
     } catch (error) {
       console.error("Failed to fetch builds:", error);
@@ -361,7 +367,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setIsBuilding(true);
     try {
-      await buildImageAction(session, image.id);
+      await buildImageAction(image.id);
       toast.success("Build All initiated successfully");
       console.log(`Build initiated for image: ${image.id}`);
       // Simulate a minimum duration for the visual feedback
@@ -370,7 +376,7 @@ const fetchFixableCVEs = async (force = false) => {
       // Wait a bit for the build to be created, then refresh the builds list
       const refreshBuilds = async (retries = 5, delay = 1000) => {
         try {
-          const builds = await getImageBuildsAction(session, image.id);
+          const builds = await getImageBuildsAction(image.id);
           setBuilds(builds);
         } catch (error) {
           console.error("Failed to refresh builds after build trigger:", error);
@@ -397,7 +403,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setBuildingApkoId(apkoId);
     try {
-      await buildImageApkoAction(session, image.id, apkoId);
+      await buildImageApkoAction(image.id, apkoId);
       toast.success("Build initiated successfully for APKO");
       console.log(`Build initiated for APKO: ${apkoId} of image: ${image.id}`);
       // Simulate a minimum duration for the visual feedback
@@ -406,7 +412,7 @@ const fetchFixableCVEs = async (force = false) => {
       // Wait a bit for the build to be created, then refresh the builds list
       const refreshBuilds = async (retries = 5, delay = 1000) => {
         try {
-          const builds = await getImageBuildsAction(session, image.id);
+          const builds = await getImageBuildsAction(image.id);
           setBuilds(builds);
         } catch (error) {
           console.error("Failed to refresh builds after build trigger:", error);
@@ -433,7 +439,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setScanningApkoId(apkoId);
     try {
-      await scanImageApkoAction(session, image.id, apkoId);
+      await scanImageApkoAction(image.id, apkoId);
       toast.success("Scan initiated successfully for APKO");
       console.log(`Scan initiated for APKO: ${apkoId} of image: ${image.id}`);
       // Simulate a minimum duration for the visual feedback
@@ -452,7 +458,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setIsTogglingPublic(true);
     try {
-      await setImagePublic(session, image.id, checked);
+      await setImagePublic(image.id, checked);
       setIsPublic(checked);
       toast.success(checked ? "Image is now public" : "Image is now private");
     } catch (error) {
@@ -471,7 +477,6 @@ const fetchFixableCVEs = async (force = false) => {
     setIsSavingGitLink(true);
     try {
       const updated = await updateImageGitLinkAction(
-        session,
         image.id,
         linkGitRepo ? gitEditForm.gitRemote.trim() : "",
         linkGitRepo ? gitEditForm.apkoFilePath.trim() : "",
@@ -497,13 +502,13 @@ const fetchFixableCVEs = async (force = false) => {
 
     setIsAddingLinkedApko(true);
     try {
-      await addLinkedImageApkoAction(session, image.id, linkedApkoGitTag.trim());
+      await addLinkedImageApkoAction(image.id, linkedApkoGitTag.trim());
       toast.success("APKO from git tag added successfully");
       setLinkedApkoGitTag("");
       setShowAddLinkedApkoForm(false);
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
     } catch (error) {
       console.error("Failed to add linked APKO:", error);
@@ -524,11 +529,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setSaving(true);
     try {
-      await updateImageApkoYamlAction(session, image.id, apkoId, yamlContent);
+      await updateImageApkoYamlAction(image.id, apkoId, yamlContent);
       toast.success("APKO YAML updated successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
       setEditingApkoId(null);
       setOriginalYamlContent("");
@@ -561,11 +566,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setSavingAlternateImage(true);
     try {
-      await setImageAlternateImageAction(session, image.id, alternateImageContent);
+      await setImageAlternateImageAction(image.id, alternateImageContent);
       toast.success("Alternate image updated successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
       setEditingAlternateImage(false);
       setOriginalAlternateImageContent("");
@@ -597,11 +602,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setSavingTags(true);
     try {
-      await updateImageApkoTagsAction(session, image.id, editingTagsApkoId, newTags);
+      await updateImageApkoTagsAction(image.id, editingTagsApkoId, newTags);
       toast.success("Tags updated successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
     } catch (error) {
       console.error("Failed to save tags:", error);
@@ -622,11 +627,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setIsAddingApko(true);
     try {
-      await addImageApkoAction(session, image.id, "");
+      await addImageApkoAction(image.id, "");
       toast.success("New APKO configuration added successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
 
       // Place the most recently created APKO into editing mode.
@@ -659,11 +664,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setRemovingApkoId(apkoId);
     try {
-      await removeImageApkoAction(session, apkoId);
+      await removeImageApkoAction(apkoId);
       toast.success("APKO configuration removed successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
     } catch (error) {
       console.error("Failed to remove APKO config:", error);
@@ -682,7 +687,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setIsAddingExternalRegistry(true);
     try {
-      await addExternalRegistryAction(session, image.id, registryUrl.trim(), registryUsername.trim(), registryPassword.trim());
+      await addExternalRegistryAction(image.id, registryUrl.trim(), registryUsername.trim(), registryPassword.trim());
       toast.success("External registry added successfully");
 
       // Reset form
@@ -692,7 +697,7 @@ const fetchFixableCVEs = async (force = false) => {
       setShowAddExternalRegistryForm(false);
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
     } catch (error) {
       console.error("Failed to add external registry:", error);
@@ -709,6 +714,47 @@ const fetchFixableCVEs = async (force = false) => {
     setShowAddExternalRegistryForm(false);
   };
 
+  const handleEditExternalRegistry = (registry: ImageExternalRegistry) => {
+    setEditingRegistryId(registry.id);
+    setEditRegistryUrl(registry.registryUrl);
+    setEditRegistryUsername(registry.username);
+    setEditRegistryPassword("");
+  };
+
+  const handleCancelEditExternalRegistry = () => {
+    setEditingRegistryId(null);
+    setEditRegistryUrl("");
+    setEditRegistryUsername("");
+    setEditRegistryPassword("");
+  };
+
+  const handleSaveExternalRegistry = async (registryId: string) => {
+    if (!session) return;
+    if (!editRegistryUrl.trim() || !editRegistryUsername.trim()) {
+      toast.error("Registry URL and username are required");
+      return;
+    }
+
+    setSavingRegistryId(registryId);
+    try {
+      await updateExternalRegistryAction(
+        image.id,
+        registryId,
+        editRegistryUrl.trim(),
+        editRegistryUsername.trim(),
+        editRegistryPassword || undefined,
+      );
+      toast.success("External registry updated successfully");
+      handleCancelEditExternalRegistry();
+      setImage(await getImageAction(image.id));
+    } catch (error) {
+      console.error("Failed to update external registry:", error);
+      toast.error("Failed to update external registry");
+    } finally {
+      setSavingRegistryId(null);
+    }
+  };
+
   const handleDeleteExternalRegistry = (registryId: string, registryUrl: string) => {
     setRegistryToDelete({ id: registryId, url: registryUrl });
     setShowDeleteConfirmation(true);
@@ -719,11 +765,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setDeletingRegistryId(registryToDelete.id);
     try {
-      await removeExternalRegistryAction(session, image.id, registryToDelete.id);
+      await removeExternalRegistryAction(image.id, registryToDelete.id);
       toast.success("External registry removed successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
     } catch (error) {
       console.error("Failed to remove external registry:", error);
@@ -753,11 +799,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setSavingApkoReadme(true);
     try {
-      await setImageApkoReadmeAction(session, apkoId, apkoReadmeContent);
+      await setImageApkoReadmeAction(apkoId, apkoReadmeContent);
       toast.success("APKO README updated successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
       setEditingApkoReadmeId(null);
       setOriginalApkoReadmeContent("");
@@ -852,7 +898,7 @@ test:
       }
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
       setEditingApkoTestId(null);
       setOriginalApkoTestContent("");
@@ -884,11 +930,11 @@ test:
 
     setSavingReadme(true);
     try {
-      await setImageReadmeAction(session, image.id, readmeContent);
+      await setImageReadmeAction(image.id, readmeContent);
       toast.success("README saved successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
       setReadmeContent(updatedImage.readme || "");
     } catch (error) {
@@ -905,7 +951,7 @@ test:
 
     setDownloadingScanId(scanId);
     try {
-      const result = await downloadImageScanResultAction(session, scanId);
+      const result = await downloadImageScanResultAction(scanId);
 
       // Create and download the JSON file
       const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
@@ -2520,7 +2566,7 @@ test:
                   </div>
                   <Button
                     onClick={() => setShowAddExternalRegistryForm(true)}
-                    disabled={showAddExternalRegistryForm}
+                    disabled={showAddExternalRegistryForm || editingRegistryId !== null}
                     size="sm"
                   >
                     <Plus className="mr-2 h-4 w-4" />
@@ -2605,30 +2651,81 @@ test:
                 {/* External Registries List */}
                 {image?.externalRegistries && image.externalRegistries.length > 0 ? (
                   <div className="space-y-4">
-                    {image.externalRegistries.map((registry: any) => (
+                    {image.externalRegistries.map((registry) => (
                       <div key={registry.id} className="border rounded-lg p-4">
-                        <div className="flex items-start justify-between">
+                        {editingRegistryId === registry.id ? (
+                          <div className="space-y-4">
+                            <div>
+                              <label className="text-sm font-medium text-muted-foreground">Registry URL</label>
+                              <Input
+                                value={editRegistryUrl}
+                                onChange={(e) => setEditRegistryUrl(e.target.value)}
+                                className="mt-1"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-muted-foreground">Username</label>
+                              <Input
+                                value={editRegistryUsername}
+                                onChange={(e) => setEditRegistryUsername(e.target.value)}
+                                className="mt-1"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-muted-foreground">Password</label>
+                              <Input
+                                type="password"
+                                value={editRegistryPassword}
+                                onChange={(e) => setEditRegistryPassword(e.target.value)}
+                                placeholder="Leave blank to keep the current password"
+                                className="mt-1"
+                              />
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => handleSaveExternalRegistry(registry.id)}
+                                disabled={savingRegistryId === registry.id || !editRegistryUrl.trim() || !editRegistryUsername.trim()}
+                              >
+                                <Save className="mr-2 h-4 w-4" />
+                                {savingRegistryId === registry.id ? "Saving..." : "Save"}
+                              </Button>
+                              <Button variant="outline" size="sm" onClick={handleCancelEditExternalRegistry} disabled={savingRegistryId === registry.id}>
+                                <X className="mr-2 h-4 w-4" />
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                        <div className="flex items-start justify-between gap-4">
                           <div>
                             <h3 className="font-semibold">{registry.registryUrl}</h3>
                             <p className="text-sm text-muted-foreground">Username: {registry.username}</p>
-                            <div className="flex items-center gap-2 mt-1">
+                            {registry.createdAt && <div className="flex items-center gap-2 mt-1">
                               <Clock className="h-3 w-3 text-muted-foreground" />
                               <span className="text-xs text-muted-foreground">
                                 Added {formatDate(registry.createdAt)}
                               </span>
-                            </div>
+                            </div>}
                           </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleDeleteExternalRegistry(registry.id, registry.registryUrl)}
-                            disabled={deletingRegistryId === registry.id}
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            {deletingRegistryId === registry.id ? "Deleting..." : "Delete"}
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => handleEditExternalRegistry(registry)} disabled={editingRegistryId !== null}>
+                              <Edit3 className="mr-2 h-4 w-4" />
+                              Edit
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDeleteExternalRegistry(registry.id, registry.registryUrl)}
+                              disabled={deletingRegistryId === registry.id || editingRegistryId !== null}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              {deletingRegistryId === registry.id ? "Deleting..." : "Delete"}
+                            </Button>
+                          </div>
                         </div>
+                        )}
                       </div>
                     ))}
                   </div>

@@ -49,7 +49,7 @@ export default function TeamPage() {
     if (!session?.user?.id) return
     setIsInviting(true)
     try {
-      await createInvite(inviteEmail, session.user.id)
+      await createInvite(inviteEmail)
       toast.success(`Invite sent to ${inviteEmail}`)
       setInviteEmail("")
       // Refresh invites list

@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Call the server action with validated session
-    const success = await buildPackageAction(session, id)
+    const success = await buildPackageAction(id)
 
     return NextResponse.json({
       success: true,

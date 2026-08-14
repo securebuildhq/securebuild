@@ -1,10 +1,16 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { getImageBuildsByImageId } from "../image";
 import { ImageBuild } from "@/lib/types/image";
 
-export async function getImageBuildsAction(sess: Session, imageId: string): Promise<ImageBuild[]> {
+export async function getImageBuildsAction(imageId: string): Promise<ImageBuild[]> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   try {
     const builds = await getImageBuildsByImageId(imageId);
     return builds;

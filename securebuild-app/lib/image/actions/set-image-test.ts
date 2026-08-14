@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createOrUpdateImageTest, deleteImageTest } from "../image-test";
 import { enqueueWork } from "../../utils/queue";
+import { getServerSession } from "@/lib/auth/server-session";
 
 /**
  * Server action to create or update image test YAML
@@ -13,6 +14,11 @@ export async function setImageTestAction(
   testYaml: string,
   description?: string
 ): Promise<{ success: boolean; error?: string }> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   try {
     await createOrUpdateImageTest(apkoId, apkoVersionId, testYaml, description);
 
@@ -43,6 +49,11 @@ export async function deleteImageTestAction(
   apkoId: string,
   apkoVersionId: string
 ): Promise<{ success: boolean; error?: string }> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   try {
     await deleteImageTest(apkoId, apkoVersionId);
 

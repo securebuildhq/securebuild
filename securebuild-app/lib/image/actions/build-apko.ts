@@ -1,12 +1,14 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { enqueueWork } from "@/lib/utils/queue";
 import { getImage, getImageAPKO } from "../image";
 
-export async function buildImageApkoAction(sess: Session, imageId: string, apkoId: string): Promise<void> {
-  if (!sess || !sess.id) {
-    throw new Error("Unauthorized: Invalid session");
+export async function buildImageApkoAction(imageId: string, apkoId: string): Promise<void> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
   }
 
   // Verify the image exists

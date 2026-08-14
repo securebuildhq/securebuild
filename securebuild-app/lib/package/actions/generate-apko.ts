@@ -1,6 +1,7 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { logger } from "@/lib/utils/logger";
 import { createGenerateApko } from "../apko";
 
@@ -11,9 +12,14 @@ export interface GenerateApkoResult {
 }
 
 
-export async function generateApkoAction(sess: Session, melangeYaml: string): Promise<GenerateApkoResult> {
-  logger.debug("Generating apko action", { userId: sess.user.id, sessionId: sess.id });
-  const generate = await createGenerateApko(sess.user.id, sess.id, melangeYaml)
+export async function generateApkoAction(melangeYaml: string): Promise<GenerateApkoResult> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
+  logger.debug("Generating apko action", { userId: session.user.id, sessionId: session.id });
+  const generate = await createGenerateApko(session.user.id, session.id, melangeYaml)
   return {
     id: generate.id,
     isFailed: false,

@@ -1,10 +1,16 @@
 "use server"
 
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { CatalogItem } from "@/lib/types/catalog";
-import { Session } from "@/lib/types/session";
 import { listCatalogItems } from "../catalog";
 
-export async function listCatalogItemsAction(sess: Session): Promise<CatalogItem[]> {
+export async function listCatalogItemsAction(): Promise<CatalogItem[]> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const catalogItems = await listCatalogItems();
   return catalogItems;
 }

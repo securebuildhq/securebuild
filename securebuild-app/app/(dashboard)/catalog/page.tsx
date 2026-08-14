@@ -27,9 +27,9 @@ export default function CatalogPage() {
 
     const doListCatalogItems = async () => {
       setLoading(true)
-      const fetchedFeaturedCatalogItems = await listFeaturedCatalogItemsAction(session)
+      const fetchedFeaturedCatalogItems = await listFeaturedCatalogItemsAction()
       setFeaturedItems(fetchedFeaturedCatalogItems)
-      const fetchedCatalogItems = await listCatalogItemsAction(session)
+      const fetchedCatalogItems = await listCatalogItemsAction()
       setCatalogItems(fetchedCatalogItems)
       setLoading(false)
     }
@@ -43,7 +43,7 @@ export default function CatalogPage() {
       return
     }
     try {
-      await setFeaturedCatalogItemsAction(session, featuredItemIds)
+      await setFeaturedCatalogItemsAction(featuredItemIds)
       console.log("Featured items saved successfully!")
     } catch (error) {
       console.error("Failed to save featured items:", error)

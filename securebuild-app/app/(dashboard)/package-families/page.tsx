@@ -28,7 +28,7 @@ export default function PackageFamiliesPage() {
     const fetchPackageFamilies = async () => {
       try {
         setLoading(true)
-        const data = await listPackageFamiliesAction(session)
+        const data = await listPackageFamiliesAction()
         setPackageFamilies(data)
       } catch (err) {
         console.error("Failed to fetch package families:", err)

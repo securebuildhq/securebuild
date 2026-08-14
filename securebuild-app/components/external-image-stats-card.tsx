@@ -56,7 +56,7 @@ export function ExternalImageStatsCard() {
       
       try {
         setLoading(true)
-        const data = await getExternalImageStatsAction(session)
+        const data = await getExternalImageStatsAction()
         setStats(data)
         setError(null)
       } catch (err) {

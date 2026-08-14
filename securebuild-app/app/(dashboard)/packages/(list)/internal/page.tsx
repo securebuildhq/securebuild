@@ -216,7 +216,7 @@ export default function InternalPackagesPage() {
       sortDirection: sortConfig.field ? sortConfig.direction : undefined,
     }
     const pagination = { page: currentPage, limit: PAGE_SIZE }
-    const result = await listPackagesAction(session, filtersWithSort, pagination)
+    const result = await listPackagesAction(filtersWithSort, pagination)
     console.log(result)
     setPackages(result.packages)
     setTotalCount(result.totalCount)
@@ -237,7 +237,7 @@ export default function InternalPackagesPage() {
       sortDirection: sortConfig.field ? sortConfig.direction : undefined,
     }
     const pagination = { page: currentPage, limit: PAGE_SIZE }
-    const result = await listPackagesAction(session, filtersWithSort, pagination)
+    const result = await listPackagesAction(filtersWithSort, pagination)
     setPackages(result.packages)
     setTotalCount(result.totalCount)
   }

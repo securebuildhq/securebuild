@@ -1,6 +1,7 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { Package } from "@/lib/types/package";
 import { getDB } from "@/lib/data/db";
 import { getParam } from "@/lib/data/param";
@@ -26,7 +27,12 @@ export interface FailingPackagesResult {
   totalPages: number;
 }
 
-export async function getDashboardStatsAction(sess: Session): Promise<DashboardStats> {
+export async function getDashboardStatsAction(): Promise<DashboardStats> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   try {
     const db = getDB(await getParam("DB_URI"));
 
@@ -140,10 +146,14 @@ export async function getDashboardStatsAction(sess: Session): Promise<DashboardS
 }
 
 export async function getFailingPackagesAction(
-  sess: Session,
   page: number = 1,
   limit: number = 10
 ): Promise<FailingPackagesResult> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   try {
     // Validate pagination
     if (!Number.isInteger(page) || page < 1) {

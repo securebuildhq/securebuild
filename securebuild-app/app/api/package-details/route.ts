@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Call the server action with validated session
-    const packageData = await getPackageAction(session, id)
+    const packageData = await getPackageAction(id)
 
     return NextResponse.json({
       success: true,

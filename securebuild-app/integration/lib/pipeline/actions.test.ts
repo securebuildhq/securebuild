@@ -25,6 +25,9 @@ jest.mock('@/lib/utils/queue', () => ({
 // Mock cookies to return our test session token
 let mockSessionToken: string | undefined;
 jest.mock('next/headers', () => ({
+  headers: jest.fn(() => ({
+    get: jest.fn(() => null)
+  })),
   cookies: jest.fn(() => ({
     get: jest.fn((name: string) => {
       if (name === 'buildadmin_session' && mockSessionToken) {
@@ -108,7 +111,7 @@ describe('Pipeline Server Actions Integration Tests', () => {
    */
   it('should handle pipeline CRUD operations', async () => {
     // Create a pipeline with deeply nested path
-    const createdPipeline = await createPipelineAction(session, {
+    const createdPipeline = await createPipelineAction({
       pipelineType: 'package',
       path: 'test/integration/smoke/binary',
       yamlContent: MOCK_TEST_PIPELINE,
@@ -134,7 +137,7 @@ describe('Pipeline Server Actions Integration Tests', () => {
 
     // Update the pipeline
     const updatedYaml = 'name: smoke-binary-v2\npipeline:\n  - runs: |\n      echo "updated"\n';
-    const updatedPipeline = await updatePipelineAction(session, 'test/integration/smoke/binary', {
+    const updatedPipeline = await updatePipelineAction('test/integration/smoke/binary', {
       path: 'test/integration/smoke/binary-v2',
       yamlContent: updatedYaml,
       description: 'Updated test pipeline'
@@ -154,7 +157,7 @@ describe('Pipeline Server Actions Integration Tests', () => {
     jest.clearAllMocks();
 
     // List all pipelines
-    const allPipelines = await listPipelinesAction(session);
+    const allPipelines = await listPipelinesAction();
     expect(Array.isArray(allPipelines)).toBe(true);
     expect(allPipelines.length).toBeGreaterThanOrEqual(1);
 
@@ -163,7 +166,7 @@ describe('Pipeline Server Actions Integration Tests', () => {
     expect(paths).toContain('test/integration/smoke/binary-v2');
 
     // Delete the pipeline
-    await deletePipelineAction(session, 'test/integration/smoke/binary-v2');
+    await deletePipelineAction('test/integration/smoke/binary-v2');
 
     // Verify pipeline_sync was triggered with correct payload
     expect(enqueueWork).toHaveBeenCalledWith('pipeline_sync', {
@@ -173,7 +176,7 @@ describe('Pipeline Server Actions Integration Tests', () => {
     });
 
     // Verify it's gone by checking the list
-    const afterDelete = await listPipelinesAction(session);
+    const afterDelete = await listPipelinesAction();
     const pathsAfterDelete = afterDelete.map(p => p.path);
     expect(pathsAfterDelete).not.toContain('test/integration/smoke/binary-v2');
   }, 30000);
@@ -183,7 +186,7 @@ describe('Pipeline Server Actions Integration Tests', () => {
    */
   it('should reject duplicate pipeline paths', async () => {
     // Create first pipeline
-    await createPipelineAction(session, {
+    await createPipelineAction({
       pipelineType: 'package',
       path: 'test/duplicate-test',
       yamlContent: MOCK_TEST_PIPELINE,
@@ -192,7 +195,7 @@ describe('Pipeline Server Actions Integration Tests', () => {
 
     // Try to create another with the same path
     try {
-      await createPipelineAction(session, {
+      await createPipelineAction({
         pipelineType: 'package',
         path: 'test/duplicate-test',
         yamlContent: MOCK_TEST_PIPELINE,
@@ -209,7 +212,7 @@ describe('Pipeline Server Actions Integration Tests', () => {
    */
   it('should throw ValidationError when deleting non-existent pipeline', async () => {
     // Deleting a non-existent pipeline should throw a ValidationError
-    await expect(deletePipelineAction(session, 'nonexistent/pipeline')).rejects.toThrow('Pipeline not found');
+    await expect(deletePipelineAction('nonexistent/pipeline')).rejects.toThrow('Pipeline not found');
   }, 30000);
 
   /**
@@ -217,28 +220,28 @@ describe('Pipeline Server Actions Integration Tests', () => {
    */
   it('should treat paths as case-sensitive', async () => {
     // Create pipeline with lowercase
-    await createPipelineAction(session, {
+    await createPipelineAction({
       pipelineType: 'package',
       path: 'test/lowercase',
       yamlContent: 'name: lower\npipeline:\n  - runs: |\n      echo "lower"\n',
     });
 
     // Create pipeline with uppercase - should be different
-    await createPipelineAction(session, {
+    await createPipelineAction({
       pipelineType: 'package',
       path: 'test/UPPERCASE',
       yamlContent: 'name: upper\npipeline:\n  - runs: |\n      echo "upper"\n',
     });
 
-    const pipelines = await listPipelinesAction(session);
+    const pipelines = await listPipelinesAction();
     const paths = pipelines.map(p => p.path);
 
     expect(paths).toContain('test/lowercase');
     expect(paths).toContain('test/UPPERCASE');
 
     // Clean up
-    await deletePipelineAction(session, 'test/lowercase');
-    await deletePipelineAction(session, 'test/UPPERCASE');
+    await deletePipelineAction('test/lowercase');
+    await deletePipelineAction('test/UPPERCASE');
   }, 30000);
 
   /**
@@ -253,7 +256,7 @@ pipeline:
 `;
 
     // Create an image pipeline - this should not fail even if the path matches a reserved package pipeline name
-    const createdPipeline = await createPipelineAction(session, {
+    const createdPipeline = await createPipelineAction({
       pipelineType: 'image',
       path: 'fetch', // This is a reserved package pipeline name but should be allowed for image pipelines
       yamlContent: MOCK_IMAGE_PIPELINE,
@@ -266,6 +269,6 @@ pipeline:
     expect(createdPipeline.description).toBe('Test image pipeline');
 
     // Clean up
-    await deletePipelineAction(session, 'fetch', 'image');
+    await deletePipelineAction('fetch', 'image');
   }, 30000);
 });

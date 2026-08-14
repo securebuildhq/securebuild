@@ -116,7 +116,7 @@ export default function PipelinesPage() {
     if (!session) return
     setLoading(true)
     try {
-      const pipelinesData = await listPipelinesAction(session, 'package')
+      const pipelinesData = await listPipelinesAction('package')
       setPipelines(pipelinesData)
     } catch (error) {
       console.error("Failed to fetch pipelines:", error)
@@ -129,7 +129,7 @@ export default function PipelinesPage() {
     if (!session) return
     setImageTestLoading(true)
     try {
-      const pipelinesData = await listPipelinesAction(session, 'image')
+      const pipelinesData = await listPipelinesAction('image')
       setImageTestPipelines(pipelinesData)
     } catch (error) {
       console.error("Failed to fetch image test pipelines:", error)
@@ -188,14 +188,14 @@ export default function PipelinesPage() {
 
       if (editingPipeline) {
         // Update existing pipeline
-        await updatePipelineAction(session, editingPipeline.path, {
+        await updatePipelineAction(editingPipeline.path, {
           path: modalPath.trim(),
           yamlContent: modalYaml,
           description: modalDescription || undefined,
         })
       } else {
         // Create new pipeline
-        await createPipelineAction(session, {
+        await createPipelineAction({
           pipelineType: 'package',
           path: modalPath.trim(),
           yamlContent: modalYaml,
@@ -224,7 +224,7 @@ export default function PipelinesPage() {
 
     setIsDeleting(true)
     try {
-      await deletePipelineAction(session, selectedPipelineForDelete.path)
+      await deletePipelineAction(selectedPipelineForDelete.path)
       setPipelines(pipelines.filter(p => p.path !== selectedPipelineForDelete.path))
       setSelectedPipelineForDelete(null)
       setDeleteConfirmationText("")
@@ -290,14 +290,14 @@ export default function PipelinesPage() {
 
       if (editingImageTestPipeline) {
         // Update existing pipeline
-        await updatePipelineAction(session, editingImageTestPipeline.path, {
+        await updatePipelineAction(editingImageTestPipeline.path, {
           path: imageTestModalPath.trim(),
           yamlContent: imageTestModalYaml,
           description: imageTestModalDescription || undefined,
         }, 'image')
       } else {
         // Create new pipeline
-        await createPipelineAction(session, {
+        await createPipelineAction({
           pipelineType: 'image',
           path: imageTestModalPath.trim(),
           yamlContent: imageTestModalYaml,
@@ -326,7 +326,7 @@ export default function PipelinesPage() {
 
     setIsDeleting(true)
     try {
-      await deletePipelineAction(session, selectedImageTestPipelineForDelete.path, 'image')
+      await deletePipelineAction(selectedImageTestPipelineForDelete.path, 'image')
       setImageTestPipelines(imageTestPipelines.filter(p => p.path !== selectedImageTestPipelineForDelete.path))
       setSelectedImageTestPipelineForDelete(null)
       setImageTestDeleteConfirmationText("")

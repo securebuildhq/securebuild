@@ -47,6 +47,7 @@ export interface ImageExternalRegistry {
   id: string;
   registryUrl: string;
   username: string;
+  createdAt?: Date;
 }
 
 export interface ImageTag {

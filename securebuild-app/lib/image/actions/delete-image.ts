@@ -1,9 +1,15 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { deleteImage } from "../image";
 
-export async function deleteImageAction(sess: Session, id: string): Promise<void> {
+export async function deleteImageAction(id: string): Promise<void> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   await deleteImage(id);
   return;
 }

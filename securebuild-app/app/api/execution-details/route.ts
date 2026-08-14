@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Call the server action with validated session
-    const execution = await getExecutionAction(session, id)
+    const execution = await getExecutionAction(id)
 
     return NextResponse.json({
       success: true,

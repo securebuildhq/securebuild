@@ -86,7 +86,6 @@ export async function POST(request: NextRequest) {
     // Call the server action with validated session and data
     // Pass copyFilesFromExisting=false to use the API-provided additionalFiles (or none)
     const packageVersion = await createPackageReleaseAction(
-      session,
       pkgId,
       version,
       melangeYaml,

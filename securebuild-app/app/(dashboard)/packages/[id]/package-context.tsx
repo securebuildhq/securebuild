@@ -134,7 +134,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
     }
     setLoading(true)
     setPackageError(null)
-    getPackageDataAction(session, id)
+    getPackageDataAction(id)
       .then(({ pkg, selectedVersionData }) => {
         setPkg(pkg)
         setSelectedVersionData(selectedVersionData)
@@ -159,7 +159,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
     const versionInfo = parseVersionKey(selectedVersion)
     if (!versionInfo) return
 
-    getPackageVersionByReleaseAction(session, pkg.id, versionInfo.version, versionInfo.apkRelease)
+    getPackageVersionByReleaseAction(pkg.id, versionInfo.version, versionInfo.apkRelease)
       .then((ver) => {
         const yamlContent = ver.melangeYaml || ""
         const useRoot = ver.useRoot || false
@@ -198,7 +198,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
       limit: 20
     }
 
-    listExecutionsAction(session, filters)
+    listExecutionsAction(filters)
       .then(({ executions: packageExecutions }) => {
         const transformedExecutions: Execution[] = transformExecutions(packageExecutions)
         setExecutions(transformedExecutions)
@@ -228,7 +228,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
         limit: 20
       }
 
-      listExecutionsAction(session, filters)
+      listExecutionsAction(filters)
         .then(({ executions: packageExecutions }) => {
           const transformedExecutions: Execution[] = transformExecutions(packageExecutions)
           setExecutions(transformedExecutions)
@@ -245,11 +245,11 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
     if (!session) return
     setIsBuildingPackageChain(true)
     try {
-      await buildPackageChainAction(session, pkg.id)
+      await buildPackageChainAction(pkg.id)
       setSuccessMessage("Package chain build triggered successfully!")
       setSuccessModalOpen(true)
       // Refresh package data
-      const { pkg: updatedPkg } = await getPackageDataAction(session, pkg.id)
+      const { pkg: updatedPkg } = await getPackageDataAction(pkg.id)
       setPkg(updatedPkg)
     } catch (error) {
       console.error("Error building package chain:", error)
@@ -291,7 +291,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
         customDiskSize: customDiskSize.trim() ? parseInt(customDiskSize.trim()) : null
       }
 
-      const result = await updatePackageAction(session, pkg.id, versionInfo.version, versionInfo.apkRelease, opts)
+      const result = await updatePackageAction(pkg.id, versionInfo.version, versionInfo.apkRelease, opts)
 
       if ('isFailed' in result && result.isFailed) {
         setErrorMessage(result.message)
@@ -301,7 +301,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
       setSuccessMessage("Configuration saved successfully!")
       setSuccessModalOpen(true)
 
-      getPackageDataAction(session, pkg.id).then(({ pkg }) => setPkg(pkg))
+      getPackageDataAction(pkg.id).then(({ pkg }) => setPkg(pkg))
     } catch (error) {
       console.error("Error saving configuration:", error)
       setErrorMessage(`Error: ${error instanceof Error ? error.message : "An unknown error occurred"}`)
@@ -338,7 +338,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
       }
 
       // First save the configuration
-      const result = await updatePackageAction(session, pkg.id, versionInfo.version, versionInfo.apkRelease, opts)
+      const result = await updatePackageAction(pkg.id, versionInfo.version, versionInfo.apkRelease, opts)
 
       if ('isFailed' in result && result.isFailed) {
         setErrorMessage(result.message)
@@ -347,11 +347,11 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Update package state
-      const { pkg: updatedPkg } = await getPackageDataAction(session, pkg.id)
+      const { pkg: updatedPkg } = await getPackageDataAction(pkg.id)
       setPkg(updatedPkg)
 
       // Then trigger the build for the specific version
-      await buildPackageVersionAction(session, pkg.id, versionInfo.version, versionInfo.apkRelease)
+      await buildPackageVersionAction(pkg.id, versionInfo.version, versionInfo.apkRelease)
 
       setSuccessMessage("Configuration saved and build triggered successfully!")
       setSuccessModalOpen(true)
@@ -364,7 +364,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
         }
 
         try {
-          const { executions: packageExecutions } = await listExecutionsAction(session, filters)
+          const { executions: packageExecutions } = await listExecutionsAction(filters)
           const transformedExecutions: Execution[] = transformExecutions(packageExecutions)
           setExecutions(transformedExecutions)
         } catch (error) {
@@ -405,7 +405,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Trigger the build without saving (linked versions are read-only)
-      await buildPackageVersionAction(session, pkg.id, versionInfo.version, versionInfo.apkRelease)
+      await buildPackageVersionAction(pkg.id, versionInfo.version, versionInfo.apkRelease)
 
       setSuccessMessage("Build triggered successfully!")
       setSuccessModalOpen(true)
@@ -418,7 +418,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
         }
 
         try {
-          const { executions: packageExecutions } = await listExecutionsAction(session, filters)
+          const { executions: packageExecutions } = await listExecutionsAction(filters)
           const transformedExecutions: Execution[] = transformExecutions(packageExecutions)
           setExecutions(transformedExecutions)
         } catch (error) {
@@ -443,7 +443,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
   const handleSetDeleteProtection = async (isDeleteProtectionEnabled: boolean) => {
     if (!session || !pkg) return
     try {
-      const updatedPkg = await setDeleteProtectionAction(session, pkg.id, isDeleteProtectionEnabled)
+      const updatedPkg = await setDeleteProtectionAction(pkg.id, isDeleteProtectionEnabled)
       setPkg(updatedPkg)
     } catch (error) {
       console.error("Error setting delete protection:", error)
@@ -475,12 +475,12 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
     setIsCreatingVersion(true)
 
     try {
-      const newVersion = await createPackageVersionAction(session, pkg.id, versionLabelInput.trim())
+      const newVersion = await createPackageVersionAction(pkg.id, versionLabelInput.trim())
       console.log("Created new version:", newVersion)
       setSuccessMessage("New version created successfully!")
       setSuccessModalOpen(true)
       // Refresh package data to show new version
-      const { pkg: updatedPkg } = await getPackageDataAction(session, pkg.id)
+      const { pkg: updatedPkg } = await getPackageDataAction(pkg.id)
       setPkg(updatedPkg)
       // Automatically select the newly created version
       if (newVersion.apkRelease !== undefined) {
@@ -512,7 +512,6 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
     try {
       // Create new release - archiving happens on the server side
       const newVersion = await createPackageReleaseAction(
-        session,
         pkg.id,
         versionInfo.version,
         selectedVersionData?.melangeYaml || ""
@@ -523,7 +522,7 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
       setSuccessModalOpen(true)
 
       // Get fresh package data after creating the release
-      const { pkg: updatedPkg } = await getPackageDataAction(session, pkg.id)
+      const { pkg: updatedPkg } = await getPackageDataAction(pkg.id)
       setPkg(updatedPkg)
 
       // Automatically select the newly created version
@@ -570,13 +569,13 @@ export function PackageProvider({ children }: { children: React.ReactNode }) {
     setIsDeletingVersion(true)
 
     try {
-      await deletePackageReleaseAction(session, pkg.id, versionInfo.version, versionInfo.apkRelease)
+      await deletePackageReleaseAction(pkg.id, versionInfo.version, versionInfo.apkRelease)
 
       setSuccessMessage("Release deleted successfully!")
       setSuccessModalOpen(true)
 
       // Refresh package data to update the version list
-      const { pkg: updatedPkg } = await getPackageDataAction(session, pkg.id)
+      const { pkg: updatedPkg } = await getPackageDataAction(pkg.id)
       setPkg(updatedPkg)
 
       // Select a different version if the deleted one was selected

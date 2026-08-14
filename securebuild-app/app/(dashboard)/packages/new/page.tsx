@@ -80,7 +80,7 @@ export default function NewPipelinePage() {
         }
       }
 
-      const p = await createPackageAction(session, melangeYaml, additionalFiles, useRoot)
+      const p = await createPackageAction(melangeYaml, additionalFiles, useRoot)
       router.push("/packages")
     } catch (error: any) {
       console.error("Error creating package:", error)
