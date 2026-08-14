@@ -28,7 +28,6 @@ func StartListeners(ctx context.Context) error {
 	StartBuildImageListener(ctx, l)
 	StartBuildAPKOListener(ctx, l)
 	StartCustomBuildRequestListener(ctx, l)
-	StartPushImageToExternalRegistryListener(ctx, l)
 	StartScanImageListener(ctx, l)
 	StartScanCatalogImageListener(ctx, l)
 	StartExternalImageSbomListener(ctx, l)
@@ -201,18 +200,6 @@ func StartCustomBuildRequestListener(ctx context.Context, l *Listener) {
 			if err := HandleCustomBuildRequest(ctx, notification.Payload); err != nil {
 				logger.Error(fmt.Errorf("failed to handle custom build request notification: %w", err))
 				return fmt.Errorf("failed to handle custom build request notification: %w", err)
-			}
-			return nil
-		})
-	})
-}
-
-func StartPushImageToExternalRegistryListener(ctx context.Context, l *Listener) {
-	l.AddHandler(ctx, "push_image_to_external_registry", 1, time.Minute*1, func(ctx context.Context, notification *pgconn.Notification) error {
-		return telemetry.WithSpan(ctx, "listener.push_image_to_external_registry", func(ctx context.Context) error {
-			if err := handlePushImageToExternalRegistry(ctx, notification.Payload); err != nil {
-				logger.Error(fmt.Errorf("failed to handle push image to external registry notification: %w", err))
-				return fmt.Errorf("failed to handle push image to external registry notification: %w", err)
 			}
 			return nil
 		})

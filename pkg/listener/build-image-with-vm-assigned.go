@@ -409,6 +409,7 @@ func buildAndPushImageOnVM(ctx context.Context, vmID string, imageName string, i
 		externalRegistryConfigs := make([]map[string]interface{}, 0, len(externalRegistries))
 		for _, registry := range externalRegistries {
 			externalRegistryConfigs = append(externalRegistryConfigs, map[string]interface{}{
+				"id":           registry.ID,
 				"registry_url": registry.RegistryURL,
 				"username":     registry.Username,
 				"password":     registry.Password,
@@ -492,6 +493,7 @@ func downloadSBOMsAndMetadata(ctx context.Context, runner buildbackend.Runner, v
 		"apko-build.*",
 		"builder-output.log",
 		"builder-status",
+		"external-registry-results.json",
 	}
 	if err := buildbackend.RunnerCopyToLocalTar(ctx, runner, vmWorkDir, hostTmpDir, includePatterns); err != nil {
 		return fmt.Errorf("failed to download SBOMs and metadata: %w", err)
