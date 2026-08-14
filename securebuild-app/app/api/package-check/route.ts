@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     const results: { [packageName: string]: boolean } = {};
 
     for (const packageName of packageNames) {
-      const pkg = await tryGetPackageByNameAction(session, packageName);
+      const pkg = await tryGetPackageByNameAction(packageName);
       results[packageName] = pkg !== null;
     }
 

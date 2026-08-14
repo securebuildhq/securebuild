@@ -50,7 +50,7 @@ export default function SystemTokensPage() {
     if (!session) return
     try {
       setLoading(true)
-      const data = await listSystemTokensAction(session)
+      const data = await listSystemTokensAction()
       setTokens(data)
     } catch (err) {
       console.error("Failed to fetch system tokens:", err)
@@ -70,7 +70,7 @@ export default function SystemTokensPage() {
     setIsCreating(true)
     setError(null)
     try {
-      const result = await createSystemTokenAction(session, newTokenName.trim(), newTokenExpiry)
+      const result = await createSystemTokenAction(newTokenName.trim(), newTokenExpiry)
       setCreatedToken(result.value)
       setNewTokenName("")
       setNewTokenExpiry("never")
@@ -89,7 +89,7 @@ export default function SystemTokensPage() {
     setIsDeleting(true)
     setError(null)
     try {
-      await deleteToken(session, deleteId)
+      await deleteToken(deleteId)
       await fetchTokens()
       setDeleteConfirmOpen(false)
       setDeleteId(null)

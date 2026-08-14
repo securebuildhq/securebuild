@@ -57,7 +57,6 @@ export async function POST(request: NextRequest) {
 
     // Call the server action with validated session
     const packageId = await createPackageAction(
-      session,
       melangeYaml,
       additionalFiles,
       useRoot

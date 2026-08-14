@@ -1,6 +1,7 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { getDB } from "@/lib/data/db";
 import { getParam } from "@/lib/data/param";
 
@@ -18,7 +19,12 @@ export interface BuilderHistory {
   architecture?: string;
 }
 
-export async function listBuilderHistoryAction(sess: Session): Promise<BuilderHistory[]> {
+export async function listBuilderHistoryAction(): Promise<BuilderHistory[]> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   try {
     const db = getDB(await getParam("DB_URI"));
 

@@ -1,10 +1,16 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { PackageFamily, CreatePackageFamilyRequest } from "@/lib/types/packagefamily";
 import { createPackageFamily } from "../packagefamily";
 
-export async function createPackageFamilyAction(session: Session, request: CreatePackageFamilyRequest): Promise<PackageFamily> {
+export async function createPackageFamilyAction(request: CreatePackageFamilyRequest): Promise<PackageFamily> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   // TODO: Add session validation when implemented
   return await createPackageFamily(request);
 }

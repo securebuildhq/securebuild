@@ -58,8 +58,8 @@ export default function EditCatalogItemPage() {
       try {
         // Fetch catalog item and all images in parallel
         const [item, images] = await Promise.all([
-          getCatalogItemAction(session, id),
-          listImagesAction(session)
+          getCatalogItemAction(id),
+          listImagesAction()
         ])
         
         if (item) {
@@ -115,7 +115,6 @@ export default function EditCatalogItemPage() {
     setIsSaving(true)
     try {
       await updateCatalogItemAction(
-        session,
         id,
         name,
         description,

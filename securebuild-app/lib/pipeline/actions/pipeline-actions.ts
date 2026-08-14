@@ -1,7 +1,8 @@
 "use server"
 
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { Pipeline, CreatePipelineRequest, UpdatePipelineRequest } from "@/lib/types/pipeline";
-import { Session } from "@/lib/types/session";
 import {
   getAllPipelines,
   createPipeline as createPipelineDB,
@@ -27,16 +28,25 @@ function convertPipeline(dbPipeline: PipelineDB): Pipeline {
   };
 }
 
-export async function listPipelinesAction(sess: Session, pipelineType: PipelineType = 'package'): Promise<Pipeline[]> {
+export async function listPipelinesAction(pipelineType: PipelineType = 'package'): Promise<Pipeline[]> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const dbPipelines = await getAllPipelines(pipelineType);
   return dbPipelines.map(convertPipeline);
 }
 
 
 export async function createPipelineAction(
-  sess: Session,
   request: CreatePipelineRequest
 ): Promise<Pipeline> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   // Sanitize and validate the path
   const sanitizedPath = validatePipelinePath(request.path);
 
@@ -56,11 +66,15 @@ export async function createPipelineAction(
 }
 
 export async function updatePipelineAction(
-  sess: Session,
   path: string,
   request: UpdatePipelineRequest,
   pipelineType: PipelineType = 'package'
 ): Promise<Pipeline> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   // Sanitize and validate the updated path
   const sanitizedPath = validatePipelinePath(request.path);
 
@@ -84,7 +98,12 @@ export async function updatePipelineAction(
   return convertPipeline(dbPipeline);
 }
 
-export async function deletePipelineAction(sess: Session, path: string, pipelineType: PipelineType = 'package'): Promise<void> {
+export async function deletePipelineAction(path: string, pipelineType: PipelineType = 'package'): Promise<void> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const deleted = await deletePipelineDB(path, pipelineType);
 
   if (!deleted) {

@@ -1,11 +1,17 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { getExecution } from "../execution";
 import { enqueueWork } from "@/lib/utils/queue";
 import { getPackageVersion } from "@/lib/package/package";
 
-export async function retryExecutionAction(sess: Session, id: string): Promise<boolean> {
+export async function retryExecutionAction(id: string): Promise<boolean> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const lastExecution = await getExecution(id);
   const pgvVersion = await getPackageVersion(lastExecution.packageId, lastExecution.versionLabel, lastExecution.apkRelease);
 

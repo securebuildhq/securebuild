@@ -1,8 +1,14 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { resumeExecutions } from "../execution";
 
-export async function resumeExecutionsAction(sess: Session): Promise<boolean> {
+export async function resumeExecutionsAction(): Promise<boolean> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   return resumeExecutions();
 }

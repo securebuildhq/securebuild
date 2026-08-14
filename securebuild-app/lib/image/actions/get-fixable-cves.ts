@@ -2,6 +2,7 @@
 
 import { getParam } from "../../data/param";
 import { getDB } from "../../data/db";
+import { getServerSession } from "@/lib/auth/server-session";
 
 export interface FixableCVE {
   artifactName: string;
@@ -81,6 +82,11 @@ function isValidSemver(version: string): boolean {
 }
 
 export async function getFixableCVEs(imageName: string, imageId: string): Promise<FixableCVEsByAPKO[]> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const ociImagePrefix = await getParam("OCI_IMAGE_PREFIX");
   const registryImagePrefix = await getParam("REGISTRY_IMAGE_PREFIX");
   const prefix = ociImagePrefix || registryImagePrefix;

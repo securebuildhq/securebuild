@@ -1,6 +1,7 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { listPackagesAction } from "@/lib/package/actions/list-packages";
 
 export interface AvailablePackage {
@@ -10,7 +11,12 @@ export interface AvailablePackage {
   createdAt: Date;
 }
 
-export async function listAvailablePackagesAction(session: Session): Promise<AvailablePackage[]> {
+export async function listAvailablePackagesAction(): Promise<AvailablePackage[]> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   // Get all packages and filter out ones already in families
   const filters = {
     search: "",
@@ -20,7 +26,7 @@ export async function listAvailablePackagesAction(session: Session): Promise<Ava
     fips: "",
     arch: ""
   };
-  const allPackages = await listPackagesAction(session, filters, { page: 1, limit: 1000 });
+  const allPackages = await listPackagesAction(filters, { page: 1, limit: 1000 });
   
   // For now, return all packages. In the future, we could filter out packages already in families
   return allPackages.packages.map(pkg => ({

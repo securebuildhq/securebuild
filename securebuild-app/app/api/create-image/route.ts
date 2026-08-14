@@ -27,7 +27,6 @@ export async function POST(request: NextRequest) {
     }
 
     const image = await createImageAction(
-      session,
       name,
       alternateImage || "",
       apkos,

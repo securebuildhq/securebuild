@@ -39,7 +39,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Call the server action with validated session
-    await deletePackageAction(session, id)
+    await deletePackageAction(id)
 
     return NextResponse.json({
       success: true

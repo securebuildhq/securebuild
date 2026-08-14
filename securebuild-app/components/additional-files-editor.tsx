@@ -43,7 +43,6 @@ export function AdditionalFilesEditor({
     try {
       setLoading(true);
       const loadedFiles = await listAdditionalFilesAction(
-        session,
         packageId,
         version,
         apkRelease
@@ -84,7 +83,6 @@ export function AdditionalFilesEditor({
     try {
       setSaving(true);
       await updateAdditionalFileAction(
-        session,
         packageId,
         version,
         apkRelease,
@@ -118,7 +116,6 @@ export function AdditionalFilesEditor({
 
     try {
       const newFile = await createAdditionalFileAction(
-        session,
         packageId,
         version,
         apkRelease,
@@ -145,7 +142,6 @@ export function AdditionalFilesEditor({
 
     try {
       await deleteAdditionalFileAction(
-        session,
         packageId,
         version,
         apkRelease,
@@ -173,7 +169,6 @@ export function AdditionalFilesEditor({
 
     try {
       const updatedFile = await renameAdditionalFileAction(
-        session,
         packageId,
         version,
         apkRelease,

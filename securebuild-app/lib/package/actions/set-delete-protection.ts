@@ -1,10 +1,16 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { getPackage, setDeleteProtection } from "../package";
 import { Package } from "@/lib/types/package";
 
-export async function setDeleteProtectionAction(sess: Session, id: string, isDeleteProtectionEnabled: boolean): Promise<Package> {
+export async function setDeleteProtectionAction(id: string, isDeleteProtectionEnabled: boolean): Promise<Package> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const pkg = await getPackage(id);
   if (!pkg) {
     throw new Error("Package not found");

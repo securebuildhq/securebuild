@@ -31,7 +31,7 @@ export default function CatalogItemPage() {
     const fetchItem = async () => {
       setLoading(true)
       try {
-        const fetchedItem = await getCatalogItemAction(session, id)
+        const fetchedItem = await getCatalogItemAction(id)
         if (fetchedItem) {
           setItem(fetchedItem)
         } else {

@@ -96,7 +96,7 @@ export default function ImageBuildsPage() {
       const loadBuilds = async () => {
         try {
           setLoading(true);
-          const fetchedBuilds = await listAllImageBuildsAction(session);
+          const fetchedBuilds = await listAllImageBuildsAction();
           setBuilds(fetchedBuilds);
           setTotalCount(fetchedBuilds.length);
         } catch (error) {

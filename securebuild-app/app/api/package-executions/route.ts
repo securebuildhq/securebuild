@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Call the server action with validated session
-    const result = await listExecutionsAction(session, filters, pagination)
+    const result = await listExecutionsAction(filters, pagination)
 
     return NextResponse.json({
       success: true,

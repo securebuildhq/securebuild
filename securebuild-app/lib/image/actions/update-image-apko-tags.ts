@@ -1,8 +1,14 @@
 "use server"
 
-import { Session } from "@/lib/types/session"
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { updateImageAPKOTags } from "../image"
 
-export async function updateImageApkoTagsAction(sess: Session, imageId: string, apkoId: string, tags: string[]): Promise<void> {
+export async function updateImageApkoTagsAction(imageId: string, apkoId: string, tags: string[]): Promise<void> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   await updateImageAPKOTags(apkoId, tags)
 }

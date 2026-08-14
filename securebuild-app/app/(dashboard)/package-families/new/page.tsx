@@ -74,7 +74,7 @@ export default function NewPackageFamilyPage() {
     const fetchPackages = async () => {
       try {
         setPackagesLoading(true)
-        const packages = await listAvailablePackagesAction(session)
+        const packages = await listAvailablePackagesAction()
         setAvailablePackages(packages)
       } catch (err) {
         console.error("Failed to fetch packages:", err)
@@ -100,7 +100,7 @@ export default function NewPackageFamilyPage() {
     const fetchUpstreamConfig = async () => {
       try {
         setUpstreamConfigLoading(true)
-        const config = await getUpstreamConfigFromPackageAction(session, templatePackage.id)
+        const config = await getUpstreamConfigFromPackageAction(templatePackage.id)
         setUpstreamConfig(config)
       } catch (err) {
         console.error("Failed to fetch upstream config:", err)
@@ -200,7 +200,7 @@ export default function NewPackageFamilyPage() {
     setIsSaving(true)
 
     try {
-      const newFamily = await createPackageFamilyAction(session, {
+      const newFamily = await createPackageFamilyAction({
         name: name.trim(),
         monitoringEnabled: automationMode !== 'disabled',
         checkFrequencyMinutes,
@@ -251,7 +251,7 @@ export default function NewPackageFamilyPage() {
     setIsSavingLinked(true)
 
     try {
-      const newFamily = await createLinkedPackageFamilyAction(session, {
+      const newFamily = await createLinkedPackageFamilyAction({
         name: linkedName.trim(),
         gitRemote: gitRemote.trim(),
         melangeFilePath: melangeFilePath.trim(),

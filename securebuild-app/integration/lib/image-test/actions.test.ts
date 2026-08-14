@@ -33,6 +33,14 @@ jest.mock('@/lib/auth/middleware/bearer-auth', () => ({
   getSessionWithBearer: mockGetSessionWithBearer
 }));
 
+jest.mock('@/lib/auth/server-session', () => ({
+  getServerSession: jest.fn().mockResolvedValue({
+    id: 'test-session-id',
+    expiresAt: new Date('2099-01-01T00:00:00Z'),
+    user: { id: 'test-user-id' },
+  }),
+}));
+
 // Helper to set up authenticated session mock
 function mockAuthenticatedSession() {
   mockGetSessionWithBearer.mockResolvedValue({

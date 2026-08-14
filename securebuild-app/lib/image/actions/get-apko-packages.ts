@@ -1,6 +1,7 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { getAPKOPackages } from "../image";
 
 export interface APKOPackage {
@@ -10,7 +11,12 @@ export interface APKOPackage {
   updatedAt: Date;
 }
 
-export async function getAPKOPackagesAction(sess: Session, apkoId: string): Promise<APKOPackage[]> {
+export async function getAPKOPackagesAction(apkoId: string): Promise<APKOPackage[]> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const packages = await getAPKOPackages(apkoId);
   return packages;
 }

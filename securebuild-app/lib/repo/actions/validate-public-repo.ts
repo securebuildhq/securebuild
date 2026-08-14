@@ -1,7 +1,14 @@
-import { Session } from "@/lib/types/session";
 
 
-export async function validatePublicRepoAction(sess: Session, repo: string): Promise<boolean> {
+import { getServerSession } from "@/lib/auth/server-session";
+
+
+export async function validatePublicRepoAction(repo: string): Promise<boolean> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   // Parse repo string to get owner and name
   let owner = "";
   let name = "";

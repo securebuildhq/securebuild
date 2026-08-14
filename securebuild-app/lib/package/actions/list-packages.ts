@@ -1,7 +1,7 @@
 "use server"
 
 import { Package } from "@/lib/types/package";
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
 import { listPackages, countPackages, PackageFilters, PaginationOptions } from "../package";
 import { traceServerAction } from "@/lib/observability/tracing";
 
@@ -10,7 +10,12 @@ export interface PackageListResult {
   totalCount: number;
 }
 
-async function listPackagesActionImpl(sess: Session, filters: PackageFilters, pagination: PaginationOptions): Promise<PackageListResult> {
+async function listPackagesActionImpl(filters: PackageFilters, pagination: PaginationOptions): Promise<PackageListResult> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const [packages, totalCount] = await Promise.all([
     listPackages(filters, pagination),
     countPackages(filters)

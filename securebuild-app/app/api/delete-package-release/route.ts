@@ -55,7 +55,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Call the server action with validated session
-    await deletePackageReleaseAction(session, pkgId, version, apkRelease)
+    await deletePackageReleaseAction(pkgId, version, apkRelease)
 
     return NextResponse.json({
       success: true

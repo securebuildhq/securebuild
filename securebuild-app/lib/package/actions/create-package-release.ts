@@ -1,23 +1,24 @@
 "use server"
 
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { PackageVersion, AdditionalFiles } from "@/lib/types/package";
-import { Session } from "@/lib/types/session";
 import { createPackageRelease, getLatestRevisionByVersion } from "../package";
 import { ValidationError } from "@/lib/errors/validation-error";
 import { bumpReleaseInMelangeYAML } from "@/lib/package/melange";
 
 export async function createPackageReleaseAction(
-  sess: Session,
   pkgId: string,
   version: string,
   melangeYaml: string,
   additionalFiles?: AdditionalFiles,
   copyFilesFromExisting: boolean = true
 ): Promise<PackageVersion> {
-  // Validate session
-  if (!sess?.user) {
-    throw new ValidationError("Unauthorized: Valid session required");
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
   }
+
 
   // Get the current version to validate it exists
   const existingVersion = await getLatestRevisionByVersion(pkgId, version);

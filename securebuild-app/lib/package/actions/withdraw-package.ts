@@ -1,17 +1,18 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { withdrawPackage } from "../package";
 import { ValidationError } from "@/lib/errors/validation-error";
 
 export async function withdrawPackageAction(
-  sess: Session,
   filename: string
 ): Promise<void> {
-  // Validate session
-  if (!sess?.user) {
-    throw new ValidationError("Unauthorized: Valid session required");
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
   }
+
 
   // Validate input parameters
   if (!filename?.trim()) {

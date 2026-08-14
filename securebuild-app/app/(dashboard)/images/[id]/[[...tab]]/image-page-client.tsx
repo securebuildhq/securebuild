@@ -272,7 +272,7 @@ export function ImagePageClient({
 
     setScanResultsLoading(true);
     try {
-      const results = await getImageScanResultsAction(session, image.name);
+      const results = await getImageScanResultsAction(image.name);
       setScanResults(results);
     } catch (error) {
       console.error("Failed to fetch scan results:", error);
@@ -302,7 +302,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setApkoPackagesLoading(prev => ({ ...prev, [apkoId]: true }));
     try {
-      const packages = await getAPKOPackagesAction(session, apkoId);
+      const packages = await getAPKOPackagesAction(apkoId);
       setApkoPackages(prev => ({ ...prev, [apkoId]: packages }));
     } catch (error) {
       console.error("Failed to fetch APKO packages:", error);
@@ -317,7 +317,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setBuildsLoading(true);
     try {
-      const imageBuilds = await getImageBuildsAction(session, image.id);
+      const imageBuilds = await getImageBuildsAction(image.id);
       setBuilds(imageBuilds);
     } catch (error) {
       console.error("Failed to fetch builds:", error);
@@ -367,7 +367,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setIsBuilding(true);
     try {
-      await buildImageAction(session, image.id);
+      await buildImageAction(image.id);
       toast.success("Build All initiated successfully");
       console.log(`Build initiated for image: ${image.id}`);
       // Simulate a minimum duration for the visual feedback
@@ -376,7 +376,7 @@ const fetchFixableCVEs = async (force = false) => {
       // Wait a bit for the build to be created, then refresh the builds list
       const refreshBuilds = async (retries = 5, delay = 1000) => {
         try {
-          const builds = await getImageBuildsAction(session, image.id);
+          const builds = await getImageBuildsAction(image.id);
           setBuilds(builds);
         } catch (error) {
           console.error("Failed to refresh builds after build trigger:", error);
@@ -403,7 +403,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setBuildingApkoId(apkoId);
     try {
-      await buildImageApkoAction(session, image.id, apkoId);
+      await buildImageApkoAction(image.id, apkoId);
       toast.success("Build initiated successfully for APKO");
       console.log(`Build initiated for APKO: ${apkoId} of image: ${image.id}`);
       // Simulate a minimum duration for the visual feedback
@@ -412,7 +412,7 @@ const fetchFixableCVEs = async (force = false) => {
       // Wait a bit for the build to be created, then refresh the builds list
       const refreshBuilds = async (retries = 5, delay = 1000) => {
         try {
-          const builds = await getImageBuildsAction(session, image.id);
+          const builds = await getImageBuildsAction(image.id);
           setBuilds(builds);
         } catch (error) {
           console.error("Failed to refresh builds after build trigger:", error);
@@ -439,7 +439,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setScanningApkoId(apkoId);
     try {
-      await scanImageApkoAction(session, image.id, apkoId);
+      await scanImageApkoAction(image.id, apkoId);
       toast.success("Scan initiated successfully for APKO");
       console.log(`Scan initiated for APKO: ${apkoId} of image: ${image.id}`);
       // Simulate a minimum duration for the visual feedback
@@ -458,7 +458,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setIsTogglingPublic(true);
     try {
-      await setImagePublic(session, image.id, checked);
+      await setImagePublic(image.id, checked);
       setIsPublic(checked);
       toast.success(checked ? "Image is now public" : "Image is now private");
     } catch (error) {
@@ -477,7 +477,6 @@ const fetchFixableCVEs = async (force = false) => {
     setIsSavingGitLink(true);
     try {
       const updated = await updateImageGitLinkAction(
-        session,
         image.id,
         linkGitRepo ? gitEditForm.gitRemote.trim() : "",
         linkGitRepo ? gitEditForm.apkoFilePath.trim() : "",
@@ -503,13 +502,13 @@ const fetchFixableCVEs = async (force = false) => {
 
     setIsAddingLinkedApko(true);
     try {
-      await addLinkedImageApkoAction(session, image.id, linkedApkoGitTag.trim());
+      await addLinkedImageApkoAction(image.id, linkedApkoGitTag.trim());
       toast.success("APKO from git tag added successfully");
       setLinkedApkoGitTag("");
       setShowAddLinkedApkoForm(false);
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
     } catch (error) {
       console.error("Failed to add linked APKO:", error);
@@ -530,11 +529,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setSaving(true);
     try {
-      await updateImageApkoYamlAction(session, image.id, apkoId, yamlContent);
+      await updateImageApkoYamlAction(image.id, apkoId, yamlContent);
       toast.success("APKO YAML updated successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
       setEditingApkoId(null);
       setOriginalYamlContent("");
@@ -567,11 +566,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setSavingAlternateImage(true);
     try {
-      await setImageAlternateImageAction(session, image.id, alternateImageContent);
+      await setImageAlternateImageAction(image.id, alternateImageContent);
       toast.success("Alternate image updated successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
       setEditingAlternateImage(false);
       setOriginalAlternateImageContent("");
@@ -603,11 +602,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setSavingTags(true);
     try {
-      await updateImageApkoTagsAction(session, image.id, editingTagsApkoId, newTags);
+      await updateImageApkoTagsAction(image.id, editingTagsApkoId, newTags);
       toast.success("Tags updated successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
     } catch (error) {
       console.error("Failed to save tags:", error);
@@ -628,11 +627,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setIsAddingApko(true);
     try {
-      await addImageApkoAction(session, image.id, "");
+      await addImageApkoAction(image.id, "");
       toast.success("New APKO configuration added successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
 
       // Place the most recently created APKO into editing mode.
@@ -665,11 +664,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setRemovingApkoId(apkoId);
     try {
-      await removeImageApkoAction(session, apkoId);
+      await removeImageApkoAction(apkoId);
       toast.success("APKO configuration removed successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
     } catch (error) {
       console.error("Failed to remove APKO config:", error);
@@ -688,7 +687,7 @@ const fetchFixableCVEs = async (force = false) => {
 
     setIsAddingExternalRegistry(true);
     try {
-      await addExternalRegistryAction(session, image.id, registryUrl.trim(), registryUsername.trim(), registryPassword.trim());
+      await addExternalRegistryAction(image.id, registryUrl.trim(), registryUsername.trim(), registryPassword.trim());
       toast.success("External registry added successfully");
 
       // Reset form
@@ -698,7 +697,7 @@ const fetchFixableCVEs = async (force = false) => {
       setShowAddExternalRegistryForm(false);
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
     } catch (error) {
       console.error("Failed to add external registry:", error);
@@ -739,7 +738,6 @@ const fetchFixableCVEs = async (force = false) => {
     setSavingRegistryId(registryId);
     try {
       await updateExternalRegistryAction(
-        session,
         image.id,
         registryId,
         editRegistryUrl.trim(),
@@ -748,7 +746,7 @@ const fetchFixableCVEs = async (force = false) => {
       );
       toast.success("External registry updated successfully");
       handleCancelEditExternalRegistry();
-      setImage(await getImageAction(session, image.id));
+      setImage(await getImageAction(image.id));
     } catch (error) {
       console.error("Failed to update external registry:", error);
       toast.error("Failed to update external registry");
@@ -767,11 +765,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setDeletingRegistryId(registryToDelete.id);
     try {
-      await removeExternalRegistryAction(session, image.id, registryToDelete.id);
+      await removeExternalRegistryAction(image.id, registryToDelete.id);
       toast.success("External registry removed successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
     } catch (error) {
       console.error("Failed to remove external registry:", error);
@@ -801,11 +799,11 @@ const fetchFixableCVEs = async (force = false) => {
 
     setSavingApkoReadme(true);
     try {
-      await setImageApkoReadmeAction(session, apkoId, apkoReadmeContent);
+      await setImageApkoReadmeAction(apkoId, apkoReadmeContent);
       toast.success("APKO README updated successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
       setEditingApkoReadmeId(null);
       setOriginalApkoReadmeContent("");
@@ -900,7 +898,7 @@ test:
       }
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
       setEditingApkoTestId(null);
       setOriginalApkoTestContent("");
@@ -932,11 +930,11 @@ test:
 
     setSavingReadme(true);
     try {
-      await setImageReadmeAction(session, image.id, readmeContent);
+      await setImageReadmeAction(image.id, readmeContent);
       toast.success("README saved successfully");
 
       // Refresh the image data
-      const updatedImage = await getImageAction(session, image.id);
+      const updatedImage = await getImageAction(image.id);
       setImage(updatedImage);
       setReadmeContent(updatedImage.readme || "");
     } catch (error) {
@@ -953,7 +951,7 @@ test:
 
     setDownloadingScanId(scanId);
     try {
-      const result = await downloadImageScanResultAction(session, scanId);
+      const result = await downloadImageScanResultAction(scanId);
 
       // Create and download the JSON file
       const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });

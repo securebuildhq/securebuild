@@ -1,7 +1,8 @@
 "use server"
 
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { Execution } from "@/lib/types/execution";
-import { Session } from "@/lib/types/session";
 import { listExecutions, ExecutionFilters } from "../execution";
 
 // Define a type for the serialized execution data
@@ -14,7 +15,12 @@ export type SerializedExecution = Omit<Execution, 'createdAt' | 'x86_64BuildStar
   aarch64BuildFinishedAt: string | null;
 };
 
-export async function listExecutionsAction(sess: Session, filters: ExecutionFilters = {}, pagination?: { page?: number; limit?: number }): Promise<{ executions: SerializedExecution[]; totalCount: number }> {
+export async function listExecutionsAction(filters: ExecutionFilters = {}, pagination?: { page?: number; limit?: number }): Promise<{ executions: SerializedExecution[]; totalCount: number }> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const { executions: executionsFromDb, totalCount } = await listExecutions(filters, pagination);
 
   // Ensure dates are serialized as ISO strings before sending to the client

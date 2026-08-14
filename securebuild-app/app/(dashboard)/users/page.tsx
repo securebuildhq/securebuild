@@ -27,7 +27,7 @@ export default function UsersPage() {
       if (!session) return
       try {
         setIsLoading(true)
-        const usersData = await listUsersAction(session)
+        const usersData = await listUsersAction()
         setUsers(usersData)
       } catch (error) {
         console.error("Failed to load users:", error)

@@ -1,7 +1,7 @@
 "use server"
 
 import { Image } from "@/lib/types/image";
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
 import { ValidationError } from "@/lib/types/errors";
 import { createImage } from "../image";
 import { traceServerAction } from "@/lib/observability/tracing";
@@ -52,9 +52,9 @@ function validateImageName(name: string): void {
   }
 }
 
-async function createImageActionImpl(sess: Session, name: string, alternateImage: string, apkos: CreateImageAPKO[]): Promise<Image> {
-  // Validate session
-  if (!sess?.user) {
+async function createImageActionImpl(name: string, alternateImage: string, apkos: CreateImageAPKO[]): Promise<Image> {
+  const session = await getServerSession();
+  if (!session) {
     throw new Error("Unauthorized: Valid session required");
   }
 

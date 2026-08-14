@@ -1,6 +1,7 @@
 "use server";
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import {
   getExternalScanCounts,
   getExternalSBOMCounts,
@@ -41,31 +42,39 @@ export interface SerializedExternalSBOMStatusItem {
 }
 
 export async function getExternalScanCountsAction(
-  sess: Session,
   timePeriod?: TimePeriod
 ): Promise<ExternalScanCounts> {
-  if (!sess?.user) throw new Error("Unauthorized: Valid session required");
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   return getExternalScanCounts(timePeriod);
 }
 
 export async function getExternalSBOMCountsAction(
-  sess: Session,
   timePeriod?: TimePeriod
 ): Promise<ExternalSBOMCounts> {
-  if (!sess?.user) throw new Error("Unauthorized: Valid session required");
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   return getExternalSBOMCounts(timePeriod);
 }
 
 export async function getExternalScanThroughputAction(
-  sess: Session,
   timePeriod?: TimePeriod
 ): Promise<ExternalScanThroughput> {
-  if (!sess?.user) throw new Error("Unauthorized: Valid session required");
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   return getExternalScanThroughput(timePeriod);
 }
 
 export async function listExternalScansAction(
-  sess: Session,
   filters: {
     status?: string;
     timePeriod?: TimePeriod;
@@ -76,7 +85,11 @@ export async function listExternalScansAction(
   } = {},
   pagination?: { page?: number; limit?: number }
 ): Promise<{ scans: SerializedExternalScanItem[]; totalCount: number }> {
-  if (!sess?.user) throw new Error("Unauthorized: Valid session required");
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const { scans, totalCount } = await listExternalScans(filters, pagination);
   const serialized: SerializedExternalScanItem[] = scans.map((s) => ({
     ...s,
@@ -90,7 +103,6 @@ export async function listExternalScansAction(
 }
 
 export async function listExternalSBOMStatusesAction(
-  sess: Session,
   filters: {
     status?: string;
     timePeriod?: TimePeriod;
@@ -101,7 +113,11 @@ export async function listExternalSBOMStatusesAction(
   } = {},
   pagination?: { page?: number; limit?: number }
 ): Promise<{ statuses: SerializedExternalSBOMStatusItem[]; totalCount: number }> {
-  if (!sess?.user) throw new Error("Unauthorized: Valid session required");
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const { statuses, totalCount } = await listExternalSBOMStatuses(filters, pagination);
   const serialized: SerializedExternalSBOMStatusItem[] = statuses.map((s) => ({
     ...s,

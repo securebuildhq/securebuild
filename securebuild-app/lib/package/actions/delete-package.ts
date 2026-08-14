@@ -1,15 +1,17 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { enqueueWork } from "@/lib/utils/queue";
 import { getPackage } from "../package";
 import { ValidationError } from "@/lib/errors/validation-error";
 
-export async function deletePackageAction(sess: Session, id: string): Promise<boolean> {
-  // Validate session
-  if (!sess?.user) {
-    throw new ValidationError("Unauthorized: Valid session required");
+export async function deletePackageAction(id: string): Promise<boolean> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
   }
+
 
   // Validate input parameters
   if (!id?.trim()) {

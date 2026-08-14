@@ -85,7 +85,6 @@ export async function POST(request: NextRequest) {
 
     // Call the server action with validated session
     const additionalFile = await createAdditionalFileAction(
-      session,
       packageId,
       version,
       apkRelease,

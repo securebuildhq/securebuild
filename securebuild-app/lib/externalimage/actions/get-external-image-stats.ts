@@ -1,13 +1,15 @@
 "use server";
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { getExternalImageStats, ExternalImageStats } from "../externalimage";
 
-export async function getExternalImageStatsAction(sess: Session): Promise<ExternalImageStats> {
-  // Validate session
-  if (!sess?.user) {
+export async function getExternalImageStatsAction(): Promise<ExternalImageStats> {
+  const session = await getServerSession();
+  if (!session) {
     throw new Error("Unauthorized: Valid session required");
   }
+
 
   return await getExternalImageStats();
 }

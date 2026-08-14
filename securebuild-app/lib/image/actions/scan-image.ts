@@ -1,10 +1,16 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { enqueueWork } from "@/lib/utils/queue";
 import { getImage } from "../image";
 
-export async function scanImageAction(sess: Session, id: string, option: "securebuild" | "canonical" | "both"): Promise<void> {
+export async function scanImageAction(id: string, option: "securebuild" | "canonical" | "both"): Promise<void> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   await getImage(id);
 
   const payload = {

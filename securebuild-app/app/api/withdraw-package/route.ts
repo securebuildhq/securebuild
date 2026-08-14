@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     const trimmedFilename = filename.trim()
 
     // Call the server action with validated session
-    await withdrawPackageAction(session, trimmedFilename)
+    await withdrawPackageAction(trimmedFilename)
 
     return NextResponse.json({
       success: true,

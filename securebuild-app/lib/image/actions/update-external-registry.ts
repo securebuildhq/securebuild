@@ -1,20 +1,22 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { ImageExternalRegistry } from "@/lib/types/image";
 import { getImage, updateImageExternalRegistry } from "../image";
 
 export async function updateExternalRegistryAction(
-  sess: Session,
   imageId: string,
   registryId: string,
   registryUrl: string,
   username: string,
   password?: string,
 ): Promise<ImageExternalRegistry> {
-  if (!sess?.user) {
+  const session = await getServerSession();
+  if (!session) {
     throw new Error("Unauthorized: Valid session required");
   }
+
 
   const img = await getImage(imageId);
   if (!img) {

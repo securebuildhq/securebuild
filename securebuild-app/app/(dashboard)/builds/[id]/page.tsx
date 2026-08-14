@@ -42,7 +42,7 @@ export default function BuildDetailPage() {
     if (!id || !session) return;
 
     try {
-      const data = await getImageBuildAction(session, id);
+      const data = await getImageBuildAction(id);
       if (data) {
         setBuild(data);
         setError(null);

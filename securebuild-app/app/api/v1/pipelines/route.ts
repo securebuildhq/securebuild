@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Create the pipeline using the action (includes reserved pipeline validation)
-    const pipeline = await createPipelineAction(session, {
+    const pipeline = await createPipelineAction({
       pipelineType: body.pipelineType,
       path: sanitizedPath,
       yamlContent: body.yamlContent,

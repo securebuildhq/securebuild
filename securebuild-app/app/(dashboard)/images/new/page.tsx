@@ -127,7 +127,7 @@ export default function NewImagePage() {
         tags: apko.tags
       }))
 
-      const image = await createImageAction(session, imageName, alternateImage, apkosWithNames)
+      const image = await createImageAction(imageName, alternateImage, apkosWithNames)
       console.log("Image created:", image)
       router.push("/images")
     } catch (error) {
@@ -182,7 +182,7 @@ export default function NewImagePage() {
         return
       }
 
-      const image = await createLinkedImageAction(session, {
+      const image = await createLinkedImageAction({
         name: linkedImageName.trim(),
         gitRemote: linkedGitRemote.trim(),
         apkoFilePath: linkedApkoFilePath.trim(),

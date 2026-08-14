@@ -1,9 +1,15 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { logger } from "@/lib/utils/logger";
 
-export async function cancelExecutionAction(session: Session, id: string): Promise<void> {
+export async function cancelExecutionAction(id: string): Promise<void> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   try {
     logger.info("Cancelling execution", {
       executionId: id,

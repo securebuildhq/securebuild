@@ -134,7 +134,7 @@ export default function ExecutionsPage() {
             }
           }
           const pagination = { page: currentPage, limit: PAGE_SIZE };
-          const result = await listExecutionsAction(session, filters, pagination);
+          const result = await listExecutionsAction(filters, pagination);
 
           // Map exec.id (string from DB) directly to TableExecution.id
           const transformedResults: TableExecution[] = result.executions.map((exec) => ({
@@ -165,7 +165,7 @@ export default function ExecutionsPage() {
       const fetchExecutionCounts = async () => {
         setCountsLoading(true);
         try {
-          const counts = await executionsCountAction(session, timePeriod);
+          const counts = await executionsCountAction(timePeriod);
           setExecutionCounts(counts);
         } catch (error) {
           console.error("Failed to fetch execution counts:", error);
@@ -197,7 +197,7 @@ export default function ExecutionsPage() {
           }
         }
         const pagination = { page: currentPage, limit: PAGE_SIZE };
-        const result = await listExecutionsAction(session, filters, pagination);
+        const result = await listExecutionsAction(filters, pagination);
         const transformedResults: TableExecution[] = result.executions.map((exec) => ({
           id: exec.id,
           packageId: exec.packageId,
@@ -223,7 +223,7 @@ export default function ExecutionsPage() {
 
     const fetchExecutionCounts = async () => {
       try {
-        const counts = await executionsCountAction(session, timePeriod);
+        const counts = await executionsCountAction(timePeriod);
         setExecutionCounts(counts);
       } catch (error) {
         console.error('Auto-refresh counts failed:', error);
@@ -232,7 +232,7 @@ export default function ExecutionsPage() {
 
     const checkPauseStatus = async () => {
       try {
-        const paused = await isExecutionPausedAction(session);
+        const paused = await isExecutionPausedAction();
         setIsPaused(paused);
       } catch (error) {
         console.error("Failed to check pause status:", error);
@@ -253,7 +253,7 @@ export default function ExecutionsPage() {
     if (session && user) {
       const checkPauseStatus = async () => {
         try {
-          const paused = await isExecutionPausedAction(session);
+          const paused = await isExecutionPausedAction();
           setIsPaused(paused);
         } catch (error) {
           console.error("Failed to check pause status:", error);
@@ -268,7 +268,7 @@ export default function ExecutionsPage() {
 
     setPauseLoading(true);
     try {
-      await pauseExecutionsAction(session);
+      await pauseExecutionsAction();
       setIsPaused(true);
       toast({
         title: "Executions Paused",
@@ -291,7 +291,7 @@ export default function ExecutionsPage() {
 
     setResumeLoading(true);
     try {
-      await resumeExecutionsAction(session);
+      await resumeExecutionsAction();
       setIsPaused(false);
       toast({
         title: "Executions Resumed",

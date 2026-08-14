@@ -1,16 +1,18 @@
 "use server"
 
-import { Session } from "@/lib/types/session";
+import { getServerSession } from "@/lib/auth/server-session";
+
 import { PackageFamily } from "@/lib/types/packagefamily";
 import { createLinkedPackageFamily } from "../packagefamily";
 
 export async function createLinkedPackageFamilyAction(
-  session: Session,
   request: { name: string; gitRemote: string; melangeFilePath: string; initialTag: string }
 ): Promise<PackageFamily> {
-  if (!session?.user) {
+  const session = await getServerSession();
+  if (!session) {
     throw new Error("Unauthorized: Valid session required");
   }
+
 
   if (!request.name?.trim()) {
     throw new Error("Name is required");

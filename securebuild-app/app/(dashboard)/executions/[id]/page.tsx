@@ -60,7 +60,7 @@ export default function ExecutionDetailPage() {
     if (!id || !session) return;
 
     try {
-      const data = await getExecutionAction(session, id);
+      const data = await getExecutionAction(id);
       if (data) {
         setExecution(data);
         setError(null);

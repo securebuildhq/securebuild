@@ -10,6 +10,7 @@ import { createSession, sessionToken } from "@/lib/auth/session";
 import { sendAuthEmail } from "@/lib/auth/email";
 import { getAppOrigin } from "@/lib/auth/actions/auth-config";
 import { logger } from "@/lib/utils/logger";
+import { getServerSession } from "@/lib/auth/server-session";
 
 // Module-level rate limiter: tracks last email sent time per address
 const lastSent = new Map<string, number>();
@@ -36,7 +37,12 @@ export interface InviteRecord {
  * Caller is responsible for verifying that the current user is an admin.
  * Throws if the email is already registered or already has a pending invite.
  */
-export async function createInvite(email: string, invitedByUserId: string): Promise<void> {
+export async function createInvite(email: string): Promise<void> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   const normalizedEmail = email.toLowerCase().trim();
   const db = getDB(await getParam("DB_URI"));
 
@@ -90,7 +96,7 @@ export async function createInvite(email: string, invitedByUserId: string): Prom
     await db.query(
       `INSERT INTO buildadmin_invite (id, email, invite_token, invited_by_user_id, created_at, expires_at)
        VALUES ($1, $2, $3, $4, now(), $5)`,
-      [id, normalizedEmail, inviteToken, invitedByUserId, expiresAt],
+      [id, normalizedEmail, inviteToken, session.user.id, expiresAt],
     );
 
     recordEmailSent(normalizedEmail);
@@ -190,6 +196,11 @@ export async function acceptInvite(token: string, password: string): Promise<str
  * Does NOT include the invite_token in the returned data.
  */
 export async function listInvites(): Promise<InviteRecord[]> {
+  const session = await getServerSession();
+  if (!session) {
+    throw new Error("Unauthorized: Valid session required");
+  }
+
   try {
     const db = getDB(await getParam("DB_URI"));
 
