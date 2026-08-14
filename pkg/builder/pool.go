@@ -1321,6 +1321,8 @@ echo "Installing grype..."
 curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
 echo "Checking grype version..."
 grype version
+echo "Downloading grype vulnerability database..."
+grype db update
 `
 
 	stdoutCh := make(chan string)
