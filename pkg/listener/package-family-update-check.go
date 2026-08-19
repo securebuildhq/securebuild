@@ -702,14 +702,7 @@ func getExistingGitTagsForFamily(ctx context.Context, pf *package_family.Package
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	tmpl := "{name}-{major}.{minor}"
-	if pf.PackageNameTemplate != "" {
-		tmpl = pf.PackageNameTemplate
-	}
-	tmpl = strings.ReplaceAll(tmpl, "{name}", regexp.QuoteMeta(pf.Name))
-	tmpl = strings.ReplaceAll(tmpl, "{major}", "[0-9]+")
-	tmpl = strings.ReplaceAll(tmpl, "{minor}", "[0-9]+")
-	familyPattern := "^" + tmpl + "$"
+	familyPattern := package_family.GeneratePackageNamePattern(pf.PackageNameTemplate, pf.Name)
 
 	query := `
 		SELECT pv.git_tag, pv.git_commit_sha
@@ -2376,14 +2369,7 @@ func getExistingVersionsForFamily(ctx context.Context, pf *package_family.Packag
 	// - "go" with template "{name}-{major}.{minor}" → "^go-[0-9]+\.[0-9]+$" matches go-1.26 but NOT go-boring-1.26
 	// - "eclipse-temurin" with template "{name}-{major}-jre" → "^eclipse-temurin-[0-9]+-jre$"
 	// Default to "{name}-{major}.{minor}" if no template is set.
-	tmpl := "{name}-{major}.{minor}"
-	if pf.PackageNameTemplate != "" {
-		tmpl = pf.PackageNameTemplate
-	}
-	tmpl = strings.ReplaceAll(tmpl, "{name}", regexp.QuoteMeta(pf.Name))
-	tmpl = strings.ReplaceAll(tmpl, "{major}", "[0-9]+")
-	tmpl = strings.ReplaceAll(tmpl, "{minor}", "[0-9]+")
-	familyPattern := "^" + tmpl + "$"
+	familyPattern := package_family.GeneratePackageNamePattern(pf.PackageNameTemplate, pf.Name)
 
 	query := `
 		SELECT DISTINCT p.name, pv.version

@@ -4,7 +4,6 @@ import { PackageFamily, PackageFamilyWithPackages, PackageFamilyPackage, CreateP
 import { randomBytes } from "crypto";
 import semver from "semver";
 import * as yaml from "js-yaml";
-import { enqueueWork } from "@/lib/utils/queue";
 
 export async function listPackageFamilies(): Promise<PackageFamily[]> {
   const pool = getDB(process.env.DB_URI!);
@@ -554,13 +553,14 @@ export async function getUpstreamConfigFromLatestPackage(packageFamilyId: string
 
 export interface CreateLinkedPackageFamilyRequest {
   name: string;
+  packageNameTemplate: string;
   gitRemote: string;
   melangeFilePath: string;
   initialTag: string;
 }
 
 export async function createLinkedPackageFamily(req: CreateLinkedPackageFamilyRequest): Promise<PackageFamily> {
-  const { name, gitRemote, melangeFilePath, initialTag } = req;
+  const { name, packageNameTemplate, gitRemote, melangeFilePath, initialTag } = req;
 
   const pool = getDB(process.env.DB_URI!);
   const client = await pool.connect();
@@ -582,11 +582,11 @@ export async function createLinkedPackageFamily(req: CreateLinkedPackageFamilyRe
         notify_on_build_failure, check_for_updates_at, consecutive_errors,
         created_at, updated_at, git_remote, melange_file_path, initial_tag
       ) VALUES (
-        $1, $2, true, 360, null, null, null,
-        false, null, false, true, $3, 0,
-        $4, $5, $6, $7, $8
+        $1, $2, false, 360, null, null, $3,
+        false, null, false, true, $4, 0,
+        $5, $6, $7, $8, $9
       )
-    `, [familyId, name, checkAt, now, now, gitRemote, melangeFilePath, initialTag]);
+    `, [familyId, name, packageNameTemplate, checkAt, now, now, gitRemote, melangeFilePath, initialTag]);
 
     await client.query('COMMIT');
 
@@ -594,10 +594,6 @@ export async function createLinkedPackageFamily(req: CreateLinkedPackageFamilyRe
     if (!created) {
       throw new Error('Failed to create linked package family');
     }
-
-    await enqueueWork('package_family_update_check', { packageFamilyId: familyId }).catch(err => {
-      console.warn('Failed to enqueue update check:', err);
-    });
 
     return created;
   } catch (error) {

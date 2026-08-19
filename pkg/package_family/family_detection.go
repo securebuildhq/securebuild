@@ -2,6 +2,7 @@ package package_family
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Masterminds/semver"
@@ -23,6 +24,23 @@ func GeneratePackageName(template, familyName string, major, minor int) string {
 	result = strings.ReplaceAll(result, "{major}", fmt.Sprintf("%d", major))
 	result = strings.ReplaceAll(result, "{minor}", fmt.Sprintf("%d", minor))
 	return result
+}
+
+// GeneratePackageNamePattern converts a package name template into an anchored
+// regular expression. Literal template characters are escaped before the
+// supported placeholders are expanded so valid package-name characters such
+// as "." and "+" retain their literal meaning.
+func GeneratePackageNamePattern(template, familyName string) string {
+	if template == "" {
+		template = "{name}-{major}.{minor}"
+	}
+
+	pattern := regexp.QuoteMeta(template)
+	pattern = strings.ReplaceAll(pattern, regexp.QuoteMeta("{name}"), regexp.QuoteMeta(familyName))
+	pattern = strings.ReplaceAll(pattern, regexp.QuoteMeta("{major}"), "[0-9]+")
+	pattern = strings.ReplaceAll(pattern, regexp.QuoteMeta("{minor}"), "[0-9]+")
+
+	return "^" + pattern + "$"
 }
 
 // IdentifyFamilyPackages filters a list of packages to return only those that belong
