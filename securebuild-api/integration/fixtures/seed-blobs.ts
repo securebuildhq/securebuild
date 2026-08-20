@@ -7,6 +7,7 @@
  */
 
 const EXISTING_DIGEST = 'sha256:abc123def456789012345678901234567890123456789012345678901234';
+const STALE_SCAN_DIGEST = 'sha256:stale1234567890123456789012345678901234567890123456789012345';
 
 const PARSED_RESULTS_DETAILS = JSON.stringify({
   descriptor: { name: 'grype', version: '0.95.0' },
@@ -155,6 +156,15 @@ export const SEED_BLOBS: SeedBlob[] = [
   {
     digest: EXISTING_DIGEST,
     arch: 'aarch64',
+    rawResult: RAW_RESULT,
+    parsedResultsDetails: PARSED_RESULTS_DETAILS,
+    sbom: SBOM,
+  },
+  // Stale scan — its DB row still points at the last successful result while
+  // the on-demand scan tests transition the current status back to queued.
+  {
+    digest: STALE_SCAN_DIGEST,
+    arch: 'x86_64',
     rawResult: RAW_RESULT,
     parsedResultsDetails: PARSED_RESULTS_DETAILS,
     sbom: SBOM,
