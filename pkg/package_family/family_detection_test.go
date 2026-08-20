@@ -1,6 +1,7 @@
 package package_family
 
 import (
+	"regexp"
 	"testing"
 )
 
@@ -125,6 +126,54 @@ func TestIdentifyFamilyPackages(t *testing.T) {
 				}
 				if resultPkg.Name != expectedPkg.Name || resultPkg.Version != expectedPkg.Version {
 					t.Errorf("Package mismatch for ID %s: expected %+v, got %+v", id, expectedPkg, resultPkg)
+				}
+			}
+		})
+	}
+}
+
+func TestGeneratePackageNamePattern(t *testing.T) {
+	tests := []struct {
+		name       string
+		template   string
+		familyName string
+		matches    []string
+		rejects    []string
+	}{
+		{
+			name:       "default template",
+			template:   "{name}-{major}.{minor}",
+			familyName: "go",
+			matches:    []string{"go-1.24"},
+			rejects:    []string{"go-1x24", "go-boring-1.24"},
+		},
+		{
+			name:       "literal plus",
+			template:   "lib{name}_{major}+compat",
+			familyName: "ssl",
+			matches:    []string{"libssl_3+compat"},
+			rejects:    []string{"libssl_33compat", "libssl_3compat"},
+		},
+		{
+			name:       "regex characters in family name",
+			template:   "{name}-{major}",
+			familyName: "lib.foo+bar",
+			matches:    []string{"lib.foo+bar-2"},
+			rejects:    []string{"libXfooobar-2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pattern := regexp.MustCompile(GeneratePackageNamePattern(tt.template, tt.familyName))
+			for _, value := range tt.matches {
+				if !pattern.MatchString(value) {
+					t.Errorf("pattern %q did not match %q", pattern, value)
+				}
+			}
+			for _, value := range tt.rejects {
+				if pattern.MatchString(value) {
+					t.Errorf("pattern %q unexpectedly matched %q", pattern, value)
 				}
 			}
 		})

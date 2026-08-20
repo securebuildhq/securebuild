@@ -19,6 +19,7 @@ import { formatVersion, parseVersion } from "@/lib/types/packagefamily"
 import { listAvailablePackagesAction, AvailablePackage } from "@/lib/packagefamily/actions/list-available-packages"
 import { getUpstreamConfigFromPackageAction } from "@/lib/packagefamily/actions/get-upstream-config"
 import { UpstreamConfig } from "@/lib/packagefamily/packagefamily"
+import { validatePackageNameTemplate } from "@/lib/packagefamily/package-name-template"
 
 interface SelectedPackage extends AvailablePackage {
   versionMajor: number;
@@ -61,6 +62,7 @@ export default function NewPackageFamilyPage() {
 
   // Linked repository form state
   const [linkedName, setLinkedName] = useState("")
+  const [linkedPackageNameTemplate, setLinkedPackageNameTemplate] = useState("{name}-{major}.{minor}")
   const [gitRemote, setGitRemote] = useState("")
   const [melangeFilePath, setMelangeFilePath] = useState("")
   const [initialTag, setInitialTag] = useState("")
@@ -234,6 +236,11 @@ export default function NewPackageFamilyPage() {
       setLinkedError("Name is required.")
       return
     }
+    const packageNameTemplateError = validatePackageNameTemplate(linkedPackageNameTemplate)
+    if (packageNameTemplateError) {
+      setLinkedError(packageNameTemplateError)
+      return
+    }
     if (!gitRemote.trim()) {
       setLinkedError("Git remote is required.")
       return
@@ -253,6 +260,7 @@ export default function NewPackageFamilyPage() {
     try {
       const newFamily = await createLinkedPackageFamilyAction({
         name: linkedName.trim(),
+        packageNameTemplate: linkedPackageNameTemplate.trim(),
         gitRemote: gitRemote.trim(),
         melangeFilePath: melangeFilePath.trim(),
         initialTag: initialTag.trim(),
@@ -736,6 +744,19 @@ export default function NewPackageFamilyPage() {
                   />
                   <p className="text-sm text-slate-600 dark:text-slate-400">
                     A unique identifier for this package family.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="linked-package-name-template">Package Name Template</Label>
+                  <Input
+                    id="linked-package-name-template"
+                    placeholder="{name}-{major}.{minor}"
+                    value={linkedPackageNameTemplate}
+                    onChange={(e) => setLinkedPackageNameTemplate(e.target.value)}
+                  />
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    Template for package names using {"{name}"}, {"{major}"}, and {"{minor}"} variables.
                   </p>
                 </div>
 
