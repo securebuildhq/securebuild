@@ -426,9 +426,11 @@ export const getExternalImageScan = traceFunction('lib.externalimage.getExternal
 
     const row = result.rows[0]
 
-    // Only successful scans have result blobs in object storage.
+    // is_in_object_store records whether a completed result is available. A
+    // subsequent rescan may move status back to queued/running/failed while
+    // preserving that previous result, so status must not gate blob reads.
     let scanResult: string | null = null
-    if (row.status === 'succeeded' && row.is_in_object_store) {
+    if (row.is_in_object_store) {
       try {
         scanResult = format === 'raw'
           ? await getRawResult(digest, arch)
@@ -908,10 +910,11 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
 
       const scanResult = await db.query(scanQuery, [arch, ownedDigestList])
 
-      // Process scan results. Only successful scans have result blobs.
+      // Process scan results. A queued/running/failed rescan may still have a
+      // result from the previous successful scan in object storage.
       for (const row of scanResult.rows) {
         let scanResultBlob: string | null = null
-        if (row.scan_status === 'succeeded' && row.is_in_object_store) {
+        if (row.is_in_object_store) {
           try {
             scanResultBlob = format === 'raw'
               ? await getRawResult(row.digest, arch)

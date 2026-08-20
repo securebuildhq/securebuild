@@ -121,6 +121,38 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(res.headers.get('X-SecureBuild-Result_Count')).toBe('1');
     });
 
+    it('serves the previous scan result while a rescan is queued', async () => {
+      await env.dbPool.query(
+        `UPDATE external_image_scan SET status = 'queued' WHERE digest = $1`,
+        [digest()],
+      );
+
+      try {
+        const getRes = await env.client.get(
+          `/api/v1/external-image/scan?digest=${encodeURIComponent(digest())}&arch=amd64&format=parsed`,
+        );
+        expect(getRes.status).toBe(200);
+        expect(getRes.data.scan_status).toBe('queued');
+        expect(getRes.data.counts.high).toBe(1);
+        expect(getRes.data.counts.total).toBe(1);
+
+        const batchRes = await env.client.post('/api/v1/external-image/scan', {
+          digests: [digest()],
+          arch: 'amd64',
+          format: 'parsed',
+        });
+        expect(batchRes.status).toBe(200);
+        expect(batchRes.data[0].scan_status).toBe('queued');
+        expect(batchRes.data[0].result.counts.high).toBe(1);
+        expect(batchRes.data[0].result.counts.total).toBe(1);
+      } finally {
+        await env.dbPool.query(
+          `UPDATE external_image_scan SET status = 'succeeded' WHERE digest = $1`,
+          [digest()],
+        );
+      }
+    });
+
     it('GET /sbom?digest returns SPDX SBOM', async () => {
       const res = await env.client.get(`/api/v1/external-image/sbom?digest=${encodeURIComponent(digest())}`);
       expect(res.status).toBe(200);
