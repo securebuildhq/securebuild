@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { image_name, tag } = body;
+    const { image_name, tag, image_tags } = body;
 
     if (!image_name || typeof image_name !== 'string') {
       return NextResponse.json(
@@ -69,6 +69,14 @@ export async function POST(request: NextRequest) {
     if (!semver.valid(tag) || semver.prerelease(tag) !== null) {
       return NextResponse.json(
         { error: `Tag '${tag}' is not a valid semantic version.` },
+        { status: 400 }
+      );
+    }
+
+    if (image_tags !== undefined &&
+        (!Array.isArray(image_tags) || image_tags.some((imageTag) => typeof imageTag !== 'string' || imageTag.length === 0))) {
+      return NextResponse.json(
+        { error: 'image_tags must be an array of non-empty strings' },
         { status: 400 }
       );
     }
@@ -99,6 +107,7 @@ export async function POST(request: NextRequest) {
     const jobId = await enqueueWork("image_update_check", {
       imageId: image.id,
       tag: tag,
+      imageTags: image_tags ?? [],
     });
 
     return NextResponse.json(

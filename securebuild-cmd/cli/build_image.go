@@ -37,6 +37,7 @@ func BuildImageCmd() *cobra.Command {
 
 			imageName := v.GetString("image-name")
 			tag := v.GetString("tag")
+			imageTags := v.GetStringSlice("image-tag")
 			apiEndpoint := v.GetString("api-endpoint")
 			apiToken := v.GetString("api-token")
 			debug := v.GetBool("debug")
@@ -54,17 +55,18 @@ func BuildImageCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			return runBuildImage(ctx, imageName, tag, apiEndpoint, apiToken, debug)
+			return runBuildImage(ctx, imageName, tag, imageTags, apiEndpoint, apiToken, debug)
 		},
 	}
 
 	cmd.Flags().String("image-name", "", "Image name (e.g. go, busybox)")
 	cmd.Flags().String("tag", "", "Git tag to build (e.g. 1.24.13)")
+	cmd.Flags().StringSlice("image-tag", nil, "Additional image tag to apply (may be repeated)")
 
 	return cmd
 }
 
-func runBuildImage(ctx context.Context, imageName, tag, apiEndpoint, apiToken string, debug bool) error {
+func runBuildImage(ctx context.Context, imageName, tag string, imageTags []string, apiEndpoint, apiToken string, debug bool) error {
 	client := NewClient(apiEndpoint, apiToken, debug)
 
 	fmt.Fprintf(os.Stderr, "Triggering image update: %s @ %s\n", imageName, tag)
@@ -72,6 +74,7 @@ func runBuildImage(ctx context.Context, imageName, tag, apiEndpoint, apiToken st
 	triggerResp, err := client.TriggerImage(ctx, ImageTriggerRequest{
 		ImageName: imageName,
 		Tag:       tag,
+		ImageTags: imageTags,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to trigger image update: %w", err)

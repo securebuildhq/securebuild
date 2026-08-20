@@ -105,6 +105,26 @@ describe('POST /api/v1/image-update', () => {
       });
       expect(res.status).toBe(400);
     });
+
+    it('POST with invalid image_tags returns 400', async () => {
+      const res = await env.client.post('/api/v1/image-update', {
+        image_name: 'go',
+        tag: '1.24.13',
+        image_tags: ['latest', ''],
+      });
+      expect(res.status).toBe(400);
+      const data = res.data as Record<string, unknown>;
+      expect(data.error).toContain('image_tags');
+    });
+
+    it('POST accepts optional additional image tags', async () => {
+      const res = await env.client.post('/api/v1/image-update', {
+        image_name: 'go',
+        tag: '1.24.13',
+        image_tags: ['1.24', 'latest', '1.24.13'],
+      });
+      expect(res.status).toBe(202);
+    });
   });
 });
 

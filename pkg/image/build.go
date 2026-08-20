@@ -109,6 +109,25 @@ func UpdateImageBuildStatus(ctx context.Context, buildID string, status types.Im
 	return nil
 }
 
+// UpdateImageBuildStatusIfCurrent updates a build only if it is still in the
+// expected status. This prevents a delayed producer update from overwriting a
+// status already advanced by a worker.
+func UpdateImageBuildStatusIfCurrent(ctx context.Context, buildID string, current, next types.ImageBuildStatus) error {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	_, err := conn.Exec(ctx, `
+		UPDATE image_build
+		SET status = $1
+		WHERE id = $2 AND status = $3
+	`, next, buildID, current)
+	if err != nil {
+		return fmt.Errorf("failed to conditionally update image build status: %w", err)
+	}
+
+	return nil
+}
+
 // GetImageBuildStatus retrieves the status of an image build
 func GetImageBuildStatus(ctx context.Context, buildID string) (types.ImageBuildStatus, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
