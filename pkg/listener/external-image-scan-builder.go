@@ -37,6 +37,11 @@ func getScanCapacityCache(ctx context.Context) *scan.ScanCapacityCache {
 // expectedArchs is the list of architectures that external image scans check for.
 var expectedArchs = []string{"x86_64", "aarch64"}
 
+// externalImageScanRecencyThreshold is the minimum age of a completed scan
+// before it can be claimed for another dispatch. It matches the active-image
+// rescan interval used by the scheduler.
+const externalImageScanRecencyThreshold = 4 * time.Hour
+
 // HandleExternalImageScanOnBuilder dispatches an external image CVE scan to a
 // builder VM. It copies the SBOM to the builder, launches grype CLI via nohup
 // for each architecture, and returns immediately. The scan status poller
@@ -61,7 +66,7 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 		return fmt.Errorf("scan capacity cache is not ready")
 	}
 
-	recent, err := externalimage.WasScannedRecently(ctx, p.Digest, 4*time.Hour)
+	recent, err := externalimage.WasScannedRecently(ctx, p.Digest, externalImageScanRecencyThreshold)
 	if err != nil {
 		logger.Warn("failed to check scan recency, proceeding with scan",
 			zap.String("digest", p.Digest),
@@ -120,16 +125,15 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 		return NewNonRetryableError(fmt.Errorf("no architectures with SBOMs to scan for digest %s", p.Digest))
 	}
 
-	// Atomically claim the scan: set status to "running" for archs that are
-	// not already running. If 0 rows are updated, another handler already
-	// claimed it.
-	claimed, claimErr := claimScanForDispatch(ctx, p.Digest, archsToScan)
+	// Atomically claim eligible architectures. Rows that are already running
+	// or that just completed are excluded by the claim query.
+	claimedArchs, claimErr := claimScanForDispatch(ctx, p.Digest, archsToScan)
 	if claimErr != nil {
 		// DB error during claim — return error so the listener retries.
 		return fmt.Errorf("failed to claim scan for dispatch: %w", claimErr)
 	}
-	if !claimed {
-		logger.Info("discarding external_image_scan message: scan already claimed by another handler",
+	if len(claimedArchs) == 0 {
+		logger.Info("discarding external_image_scan message: no eligible architectures to claim",
 			zap.String("digest", p.Digest))
 		return nil
 	}
@@ -140,9 +144,9 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 	// that happens when all builders are full. We return nil so the message
 	// is cleanly completed (not retried by the listener) and the scheduler
 	// re-enqueues when capacity frees up.
-	dispatchErr := dispatchScanToBuilder(ctx, cache, p.Digest, sbomByArch, archsToScan)
+	dispatchErr := dispatchScanToBuilder(ctx, cache, p.Digest, sbomByArch, claimedArchs)
 	if dispatchErr != nil {
-		if revertErr := revertScanToQueued(ctx, p.Digest, archsToScan); revertErr != nil {
+		if revertErr := revertScanToQueued(ctx, p.Digest, claimedArchs); revertErr != nil {
 			// Revert failed — return the revert error so the listener retries
 			// the message instead of acking it. Without this, the scan row
 			// stays "running" with no builder work directory until the 1-hour
@@ -401,29 +405,55 @@ func isScanAlreadyRunning(ctx context.Context, digest string) bool {
 // results are preserved so the API can still serve the last successful scan
 // while waiting for the retry.
 //
-// Returns (true, nil) if at least one row was claimed, (false, nil) if another
-// handler already claimed it, or (false, err) if the claim failed due to a
-// database error. On DB error, the caller returns the error so the listener
-// retries the message instead of dispatching without a durable claim.
-func claimScanForDispatch(ctx context.Context, digest string, archs []string) (bool, error) {
+// Succeeded or failed rows with a recent scan_completed_at are excluded
+// atomically. This closes a race with the result collector: it stores each
+// architecture's result before updating last_security_scanned_at for the
+// digest, so a duplicate queue handler can otherwise reclaim a just-completed
+// row during that window and revert it to "queued" when no builder is
+// available. Queued rows are not subject to this guard because they can retain
+// an earlier scan_completed_at while waiting to retry a failed dispatch.
+//
+// Returns the architectures actually claimed. The caller must dispatch and,
+// on failure, revert only these architectures so a partial claim cannot
+// overwrite or redispatch a concurrently completed architecture.
+func claimScanForDispatch(ctx context.Context, digest string, archs []string) ([]string, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
 	staleThreshold := fmt.Sprintf("%d minutes", int(scan.ScanStalenessThreshold.Minutes()))
+	recentThreshold := fmt.Sprintf("%d minutes", int(externalImageScanRecencyThreshold.Minutes()))
 
-	tag, err := conn.Exec(ctx,
+	rows, err := conn.Query(ctx,
 		`UPDATE external_image_scan
 		 SET status = 'running',
 		     scan_status_updated_at = NOW(),
 		     scan_status_message = NULL,
 		     scan_attempted_at = COALESCE(scan_attempted_at, NOW())
 		 WHERE digest = $1 AND arch = ANY($2::text[])
-		   AND (status != 'running' OR scan_status_updated_at <= NOW() - interval '`+staleThreshold+`')`,
+		   AND (status NOT IN ('succeeded', 'failed')
+		        OR scan_completed_at IS NULL
+		        OR scan_completed_at <= NOW() - interval '`+recentThreshold+`')
+		   AND (status != 'running' OR scan_status_updated_at <= NOW() - interval '`+staleThreshold+`')
+		 RETURNING arch`,
 		digest, archs)
 	if err != nil {
-		return false, fmt.Errorf("failed to claim scan rows: %w", err)
+		return nil, fmt.Errorf("failed to claim scan rows: %w", err)
 	}
-	return tag.RowsAffected() > 0, nil
+	defer rows.Close()
+
+	claimedArchs := make([]string, 0, len(archs))
+	for rows.Next() {
+		var arch string
+		if err := rows.Scan(&arch); err != nil {
+			return nil, fmt.Errorf("failed to read claimed scan architecture: %w", err)
+		}
+		claimedArchs = append(claimedArchs, arch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed while reading claimed scan architectures: %w", err)
+	}
+
+	return claimedArchs, nil
 }
 
 // revertScanToQueued transitions scan rows from "running" back to "queued"
