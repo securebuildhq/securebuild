@@ -23,8 +23,89 @@ import (
 )
 
 type ImageUpdateCheckPayload struct {
-	ImageID string `json:"imageId"`
-	Tag     string `json:"tag"`
+	ImageID   string   `json:"imageId"`
+	Tag       string   `json:"tag"`
+	ImageTags []string `json:"imageTags,omitempty"`
+}
+
+func deduplicateImageTags(tags []string) []string {
+	seen := make(map[string]struct{}, len(tags))
+	result := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		result = append(result, tag)
+	}
+	return result
+}
+
+func hasNewImageTags(existingTags, requestedTags []string) bool {
+	existing := make(map[string]struct{}, len(existingTags))
+	for _, tag := range existingTags {
+		existing[tag] = struct{}{}
+	}
+	for _, tag := range requestedTags {
+		if _, ok := existing[tag]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isReusableImageBuildStatus(status string) bool {
+	switch imagetypes.ImageBuildStatus(status) {
+	case imagetypes.ImageBuildStatusQueued,
+		imagetypes.ImageBuildStatusBuilding,
+		imagetypes.ImageBuildStatusTesting,
+		imagetypes.ImageBuildStatusPublishing,
+		imagetypes.ImageBuildStatusSuccess:
+		return true
+	default:
+		return false
+	}
+}
+
+// assignImageAPKOTags makes targetApkoID the sole owner of tags within an image.
+func assignImageAPKOTags(ctx context.Context, imageID, targetApkoID string, tags []string) error {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tag assignment transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `
+		UPDATE image_apko
+		SET tags = ARRAY(
+			SELECT existing_tag
+			FROM unnest(tags) AS existing_tag
+			WHERE NOT (existing_tag = ANY($3::text[]))
+		), updated_at = NOW()
+		WHERE image_id = $1 AND id <> $2 AND tags && $3::text[]
+	`, imageID, targetApkoID, tags)
+	if err != nil {
+		return fmt.Errorf("remove tags from previous APKOs: %w", err)
+	}
+
+	commandTag, err := tx.Exec(ctx, `
+		UPDATE image_apko SET tags = $1, name = $2, updated_at = NOW()
+		WHERE id = $3 AND image_id = $4
+	`, tags, tags[0], targetApkoID, imageID)
+	if err != nil {
+		return fmt.Errorf("update target APKO tags: %w", err)
+	}
+	if commandTag.RowsAffected() != 1 {
+		return fmt.Errorf("target APKO %s not found for image %s", targetApkoID, imageID)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tag assignment transaction: %w", err)
+	}
+	return nil
 }
 
 func handleImageUpdateCheck(ctx context.Context, payload string) error {
@@ -64,10 +145,10 @@ func handleImageUpdateCheck(ctx context.Context, payload string) error {
 		logger.Warn("No GitHub API token found, using unauthenticated client")
 	}
 
-	return performImageUpdateCheck(ctx, githubClient, img, p.Tag)
+	return performImageUpdateCheck(ctx, githubClient, img, p.Tag, p.ImageTags)
 }
 
-func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, img *imagetypes.Image, tag string) error {
+func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, img *imagetypes.Image, tag string, additionalTags []string) error {
 	gitRemote := img.GitRemote
 	apkoFilePath := img.ApkoFilePath
 
@@ -77,6 +158,12 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 		zap.String("git_remote", gitRemote),
 		zap.String("tag", tag))
 
+	// The template-generated tag is always present. Additional tags may repeat it
+	// (or each other), so normalize the complete desired tag set before assigning it.
+	imageTags := deduplicateImageTags(append([]string{
+		package_family.GenerateImageTag(img.TagTemplate, tag),
+	}, additionalTags...))
+
 	// Resolve the tag to a commit SHA
 	currentSHA, err := gitspec.ResolveTagToCommit(ctx, githubClient, gitRemote, tag)
 	if err != nil {
@@ -85,18 +172,24 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 
 	// Check if an image_apko with this tag already exists for this image
 	var existingApkoID string
+	var existingImageTags []string
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
 	err = conn.QueryRow(ctx,
-		`SELECT id FROM image_apko WHERE image_id = $1 AND git_tag = $2`,
-		img.ID, tag).Scan(&existingApkoID)
+		`SELECT id, tags FROM image_apko WHERE image_id = $1 AND git_tag = $2`,
+		img.ID, tag).Scan(&existingApkoID, &existingImageTags)
 
 	if err != nil && err != pgx.ErrNoRows {
 		return fmt.Errorf("failed to check for existing APKO: %w", err)
 	}
 
 	if existingApkoID != "" {
+		imageTagsAdded := hasNewImageTags(existingImageTags, imageTags)
+		if err := assignImageAPKOTags(ctx, img.ID, existingApkoID, imageTags); err != nil {
+			return fmt.Errorf("failed to assign image tags: %w", err)
+		}
+
 		// APKO exists — check if the SHA matches
 		latestVersion, err := image.GetLatestImageAPKOVersion(ctx, existingApkoID)
 		if err != nil {
@@ -111,7 +204,7 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 				zap.String("apko_id", existingApkoID))
 
 			existingBuild, err := image.GetLatestImageBuildByImageApkoVersionID(ctx, latestVersion.ID)
-			if err == nil && existingBuild != nil {
+			if err == nil && existingBuild != nil && !imageTagsAdded && isReusableImageBuildStatus(existingBuild.Status) {
 				resultJSON, _ := json.Marshal(map[string]string{
 					"image_build_id": existingBuild.ID,
 				})
@@ -119,10 +212,13 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 				return nil
 			}
 
-			// No existing build — queue one
-			logger.Info("No existing build for APKO, queuing new build",
+			// A new alias must go through the builder even when this commit was
+			// built previously, otherwise the registry never receives that tag.
+			logger.Info("Queuing image build for APKO",
 				zap.String("apko_id", existingApkoID),
-				zap.String("tag", tag))
+				zap.String("tag", tag),
+				zap.Bool("image_tags_added", imageTagsAdded),
+				zap.Bool("existing_build_found", err == nil && existingBuild != nil))
 
 			if err := queueImageBuildForAPKO(ctx, existingApkoID); err != nil {
 				return fmt.Errorf("failed to queue image build: %w", err)
@@ -220,11 +316,8 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 		pinnedYAML = apkoSpec.Content
 	}
 
-	// Generate OCI tag
-	ociTag := package_family.GenerateImageTag(img.TagTemplate, tag)
-
 	// Create image_apko + image_apko_version + image_package
-	apkoID, err := createLinkedImageAPKO(ctx, img.ID, gitRemote, apkoFilePath, tag, currentSHA, ociTag, pinnedYAML, packageID, pinnedVersion)
+	apkoID, err := createLinkedImageAPKO(ctx, img.ID, gitRemote, apkoFilePath, tag, currentSHA, imageTags, pinnedYAML, packageID, pinnedVersion)
 	if err != nil {
 		return fmt.Errorf("failed to create linked image APKO: %w", err)
 	}

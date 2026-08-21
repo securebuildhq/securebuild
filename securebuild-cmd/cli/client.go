@@ -48,8 +48,9 @@ type JobStatusResponse struct {
 }
 
 type ImageTriggerRequest struct {
-	ImageName string `json:"image_name"`
-	Tag       string `json:"tag"`
+	ImageName string   `json:"image_name"`
+	Tag       string   `json:"tag"`
+	ImageTags []string `json:"image_tags,omitempty"`
 }
 
 type ImageBuildResponse struct {

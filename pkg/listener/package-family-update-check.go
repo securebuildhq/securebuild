@@ -1199,7 +1199,7 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 		ociTag := package_family.GenerateImageTag(template, gitTag)
 
 		// Create the image_apko and image_apko_version
-		apkoID, err := createLinkedImageAPKO(ctx, img.ImageID, img.GitRemote, img.ApkoFilePath.String, gitTag, apkoSpec.CommitSHA, ociTag, pinnedApkoYAML, packageID, versionStr)
+		apkoID, err := createLinkedImageAPKO(ctx, img.ImageID, img.GitRemote, img.ApkoFilePath.String, gitTag, apkoSpec.CommitSHA, []string{ociTag}, pinnedApkoYAML, packageID, versionStr)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to create linked image APKO for image %s: %w", img.ImageID, err))
 			continue
@@ -1215,7 +1215,7 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 }
 
 // createLinkedImageAPKO creates an image_apko and image_apko_version for a linked image.
-func createLinkedImageAPKO(ctx context.Context, imageID, gitRemote, apkoFilePath, gitTag, commitSHA, ociTag, apkoYAML, packageID, pinnedVersion string) (string, error) {
+func createLinkedImageAPKO(ctx context.Context, imageID, gitRemote, apkoFilePath, gitTag, commitSHA string, imageTags []string, apkoYAML, packageID, pinnedVersion string) (string, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -1235,10 +1235,30 @@ func createLinkedImageAPKO(ctx context.Context, imageID, gitRemote, apkoFilePath
 	}
 	defer tx.Rollback(ctx)
 
+	imageTags = deduplicateImageTags(imageTags)
+	if len(imageTags) == 0 {
+		return "", fmt.Errorf("at least one image tag is required")
+	}
+
+	// A tag identifies only one APKO file for an image. Reassign requested tags
+	// atomically before creating their new owner.
+	_, err = tx.Exec(ctx, `
+		UPDATE image_apko
+		SET tags = ARRAY(
+			SELECT existing_tag
+			FROM unnest(tags) AS existing_tag
+			WHERE NOT (existing_tag = ANY($2::text[]))
+		), updated_at = NOW()
+		WHERE image_id = $1 AND tags && $2::text[]
+	`, imageID, imageTags)
+	if err != nil {
+		return "", fmt.Errorf("remove reassigned tags from existing APKOs: %w", err)
+	}
+
 	_, err = tx.Exec(ctx, `
 		INSERT INTO image_apko (id, image_id, name, tags, created_at, updated_at, git_remote, git_tag, apko_file_path)
 		VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7)
-	`, apkoID, imageID, ociTag, []string{ociTag}, gitRemote, gitTag, apkoFilePath)
+	`, apkoID, imageID, imageTags[0], imageTags, gitRemote, gitTag, apkoFilePath)
 	if err != nil {
 		return "", fmt.Errorf("insert image_apko: %w", err)
 	}
@@ -3951,11 +3971,6 @@ func queueImageBuildForAPKO(ctx context.Context, apkoID string) error {
 		return fmt.Errorf("failed to create image build for APKO %s: %w", apkoID, err)
 	}
 
-	// Update build status to queued
-	if err := image.UpdateImageBuildStatus(ctx, imageBuild.ID, imagetypes.ImageBuildStatusQueued); err != nil {
-		logger.Warn("failed to update image build status to queued", zap.Error(err))
-	}
-
 	// Assign VM using the shared helper
 	vmID, workDir, err := assignVMForImageBuild(ctx, imageBuild.ID)
 	if err != nil {
@@ -3990,6 +4005,13 @@ func queueImageBuildForAPKO(ctx context.Context, apkoID string) error {
 			logger.Warn("failed to update image build status to failed", zap.Error(statusErr))
 		}
 		return fmt.Errorf("failed to enqueue build_image_with_vm_assigned event: %w", err)
+	}
+
+	// Only advertise the build as queued after executable work exists. The
+	// conditional update avoids moving it backwards if a fast worker has
+	// already advanced the status.
+	if err := image.UpdateImageBuildStatusIfCurrent(ctx, imageBuild.ID, imagetypes.ImageBuildStatusPending, imagetypes.ImageBuildStatusQueued); err != nil {
+		logger.Warn("failed to update image build status to queued", zap.Error(err))
 	}
 
 	logger.Info("Queued image build for APKO",
