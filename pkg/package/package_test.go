@@ -409,6 +409,17 @@ test:
 `,
 			wantErr: false,
 		},
+		{
+			name: "reject prerelease version",
+			melangeYAML: `package:
+  name: example
+  version: "1.0.0"
+  epoch: 0
+`,
+			version: "2.19.5-rc.1+k8s-1.36",
+			commit:  "64fdc52855eb284c402ff7680a3b23bd0a0b6582",
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

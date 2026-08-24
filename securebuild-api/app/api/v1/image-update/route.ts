@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!semver.valid(tag) || semver.prerelease(tag) !== null) {
+    if (!semver.valid(tag)) {
       return NextResponse.json(
         { error: `Tag '${tag}' is not a valid semantic version.` },
         { status: 400 }

@@ -101,6 +101,14 @@ describe('POST /api/v1/package-update', () => {
       expect(data.error).toContain('not a valid semantic version');
     });
 
+    it('POST accepts a git tag with prerelease and build metadata', async () => {
+      const res = await env.client.post('/api/v1/package-update', {
+        package_family_name: 'go',
+        tag: '1.24.13-rc.1+k8s-1.35',
+      });
+      expect(res.status).toBe(202);
+    });
+
     it('POST with missing package_family_name returns 400', async () => {
       const res = await env.client.post('/api/v1/package-update', {
         tag: '1.24.13',

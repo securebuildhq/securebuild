@@ -349,8 +349,19 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 
 // pinCorePackageForImage finds the core package for an image by looking up package families
 // with the same git_remote, then pins the package version in the APKO YAML.
-// Returns the pinned YAML, package ID, and pinned version string.
+// The package record is looked up by the full semantic version from the tag, while
+// the APK pin uses only major.minor.patch to match the version emitted by Melange.
+// Returns the pinned YAML, package ID, and Melange package version string.
 func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, apkoYAML, tag string) (string, string, string, error) {
+	version, err := semver.NewVersion(tag)
+	if err != nil {
+		return apkoYAML, "", "", fmt.Errorf("parse git tag %q as semver: %w", tag, err)
+	}
+	melangeVersion, err := gitspec.VersionFromTag(tag)
+	if err != nil {
+		return apkoYAML, "", "", fmt.Errorf("derive package pin from git tag: %w", err)
+	}
+
 	// Find package families with the same git_remote
 	rows, err := conn.Query(ctx, `
 		SELECT id, name, package_name_template, image_tag_template
@@ -389,14 +400,8 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 	var pinnedVersion string
 
 	for _, fi := range families {
-		// Parse the tag as semver to get major/minor for the package name
-		v, err := semver.NewVersion(tag)
-		if err != nil {
-			continue
-		}
-
 		// Generate the exact package name from the template
-		packageName := package_family.GeneratePackageName(fi.PackageNameTemplate, fi.Name, int(v.Major()), int(v.Minor()))
+		packageName := package_family.GeneratePackageName(fi.PackageNameTemplate, fi.Name, int(version.Major()), int(version.Minor()))
 
 		// Find the package by exact name and version matching the tag
 		var pkgID string
@@ -412,7 +417,7 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 			  AND p.parent_id IS NULL
 			ORDER BY pv.apk_release DESC
 			LIMIT 1
-		`, packageName, v.String()).Scan(&pkgID, &pkgName, &pkgVersion)
+		`, packageName, version.String()).Scan(&pkgID, &pkgName, &pkgVersion)
 
 		if err != nil {
 			if err == pgx.ErrNoRows {
@@ -449,7 +454,7 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 		}
 
 		packageID = pkgID
-		pinnedVersion = pkgVersion
+		pinnedVersion = melangeVersion
 	}
 
 	if packageID == "" {

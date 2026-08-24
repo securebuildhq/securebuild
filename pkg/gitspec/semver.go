@@ -58,16 +58,14 @@ func OverrideVersionAndEpochInMelange(melangeYAML string, gitTag string, epoch i
 	return strings.Join(lines, "\n"), versionStr, nil
 }
 
-// VersionFromTag parses a git tag as semver and returns the canonical version string.
+// VersionFromTag parses a git tag as semver and returns only its major, minor, and
+// patch components, suitable for use as a Melange package version.
 func VersionFromTag(gitTag string) (string, error) {
 	v, err := semver.NewVersion(gitTag)
 	if err != nil {
 		return "", fmt.Errorf("parse git tag %q as semver: %w", gitTag, err)
 	}
-	if v.Prerelease() != "" {
-		return "", fmt.Errorf("pre-release tags are not supported (tag=%q)", gitTag)
-	}
-	return v.String(), nil
+	return fmt.Sprintf("%d.%d.%d", v.Major(), v.Minor(), v.Patch()), nil
 }
 
 // IsSemverTag returns true if the given string is a valid semver tag (with optional v prefix).

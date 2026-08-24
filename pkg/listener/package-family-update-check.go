@@ -383,14 +383,12 @@ func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Clien
 		return fmt.Errorf("failed to list tags from %s: %w", gitRemote, err)
 	}
 
-	// Parse and filter tags: only semver, no pre-release
+	// Parse and filter tags: only semver. Git-linked versions may contain
+	// prerelease or build metadata; their Melange version is normalized later.
 	var semverTags []*semver.Version
 	for _, tag := range tags {
 		v, err := semver.NewVersion(tag)
 		if err != nil {
-			continue
-		}
-		if v.Prerelease() != "" {
 			continue
 		}
 		semverTags = append(semverTags, v)
@@ -568,10 +566,6 @@ func performGitLinkedUpdateCheckForTag(ctx context.Context, githubClient *github
 	if err != nil {
 		return NewNonRetryableError(fmt.Errorf("tag '%s' is not a valid semantic version: %w", tag, err))
 	}
-	if v.Prerelease() != "" {
-		return NewNonRetryableError(fmt.Errorf("tag '%s' has pre-release components, which are not supported", tag))
-	}
-
 	versionStr := v.Original()
 	tagStr := versionStr
 
@@ -747,8 +741,14 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 	// Determine the package name from the template
 	packageName := package_family.GeneratePackageName(pf.PackageNameTemplate, pf.Name, int(version.Major()), int(version.Minor()))
 
-	// Override name, version, and epoch in the melange YAML from the git tag
-	overriddenYAML, versionStr, err := gitspec.OverrideVersionAndEpochInMelange(specContent.Content, gitTag, 0, packageName)
+	// Preserve the full semantic version for the package record, but pass only the
+	// major, minor, and patch components to Melange.
+	versionStr := version.String()
+	melangeVersion, err := gitspec.VersionFromTag(gitTag)
+	if err != nil {
+		return nil, fmt.Errorf("derive melange version: %w", err)
+	}
+	overriddenYAML, _, err := gitspec.OverrideVersionAndEpochInMelange(specContent.Content, melangeVersion, 0, packageName)
 	if err != nil {
 		return nil, fmt.Errorf("override name/version/epoch: %w", err)
 	}
@@ -983,7 +983,11 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 
 	// Override name, version, and epoch in the melange YAML from the git tag
 	versionStr := version.String()
-	overriddenYAML, _, err := gitspec.OverrideVersionAndEpochInMelange(specContent.Content, gitTag, newEpoch, packageName)
+	melangeVersion, err := gitspec.VersionFromTag(gitTag)
+	if err != nil {
+		return nil, fmt.Errorf("derive melange version: %w", err)
+	}
+	overriddenYAML, _, err := gitspec.OverrideVersionAndEpochInMelange(specContent.Content, melangeVersion, newEpoch, packageName)
 	if err != nil {
 		return nil, fmt.Errorf("override name/version/epoch: %w", err)
 	}
@@ -1078,6 +1082,11 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 // If the image is linked to git, it pulls the APKO spec from the repo. Otherwise, it uses
 // the existing clone logic.
 func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, gitTag, gitRemote, melangeFilePath string, packageID, packageName, versionStr string) ([]*ImageAPKOInfo, error) {
+	melangeVersion, err := gitspec.VersionFromTag(gitTag)
+	if err != nil {
+		return nil, fmt.Errorf("derive package pin from git tag: %w", err)
+	}
+
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -1183,7 +1192,7 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 		}
 
 		// Pin the core package to the correct version in the APKO YAML
-		pinnedApkoYAML, err := pinCorePackageInApkoYAML(apkoSpec.Content, possibleNames, versionStr, true)
+		pinnedApkoYAML, err := pinCorePackageInApkoYAML(apkoSpec.Content, possibleNames, melangeVersion, true)
 		if err != nil {
 			logger.Warn("failed to pin core package in APKO YAML, using as-is",
 				zap.String("image_id", img.ImageID),
@@ -1199,7 +1208,7 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 		ociTag := package_family.GenerateImageTag(template, gitTag)
 
 		// Create the image_apko and image_apko_version
-		apkoID, err := createLinkedImageAPKO(ctx, img.ImageID, img.GitRemote, img.ApkoFilePath.String, gitTag, apkoSpec.CommitSHA, []string{ociTag}, pinnedApkoYAML, packageID, versionStr)
+		apkoID, err := createLinkedImageAPKO(ctx, img.ImageID, img.GitRemote, img.ApkoFilePath.String, gitTag, apkoSpec.CommitSHA, []string{ociTag}, pinnedApkoYAML, packageID, melangeVersion)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to create linked image APKO for image %s: %w", img.ImageID, err))
 			continue
