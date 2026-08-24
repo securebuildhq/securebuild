@@ -467,8 +467,11 @@ func performGitLinkedUpdateCheck(ctx context.Context, githubClient *github.Clien
 	// Determine which tags are new or re-tagged
 	var updateResults []*UpdateResult
 	for _, v := range filteredTags {
-		versionStr := v.String()
 		tagStr := v.Original()
+		versionStr, err := gitspec.VersionFromTag(tagStr)
+		if err != nil {
+			continue
+		}
 
 		// Skip if version already exists and tag hasn't been re-assigned
 		if existingVersionSet[versionStr] {
@@ -741,9 +744,6 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 	// Determine the package name from the template
 	packageName := package_family.GeneratePackageName(pf.PackageNameTemplate, pf.Name, int(version.Major()), int(version.Minor()))
 
-	// Preserve the full semantic version for the package record, but pass only the
-	// major, minor, and patch components to Melange.
-	versionStr := version.String()
 	melangeVersion, err := gitspec.VersionFromTag(gitTag)
 	if err != nil {
 		return nil, fmt.Errorf("derive melange version: %w", err)
@@ -752,6 +752,7 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 	if err != nil {
 		return nil, fmt.Errorf("override name/version/epoch: %w", err)
 	}
+	versionStr := melangeVersion
 
 	// Check if the package already exists
 	conn := persistence.MustGetPooledPostgresSession(ctx)
@@ -970,9 +971,13 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 
 	// Calculate new apk_release
 	var maxEpoch sql.NullInt32
+	melangeVersion, err := gitspec.VersionFromTag(gitTag)
+	if err != nil {
+		return nil, fmt.Errorf("derive melange version: %w", err)
+	}
 	err = conn.QueryRow(ctx,
 		`SELECT MAX(apk_release) FROM package_version WHERE package_id = $1 AND version = $2`,
-		packageID, version.String()).Scan(&maxEpoch)
+		packageID, melangeVersion).Scan(&maxEpoch)
 	if err != nil {
 		return nil, fmt.Errorf("get max apk_release: %w", err)
 	}
@@ -982,15 +987,11 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 	}
 
 	// Override name, version, and epoch in the melange YAML from the git tag
-	versionStr := version.String()
-	melangeVersion, err := gitspec.VersionFromTag(gitTag)
-	if err != nil {
-		return nil, fmt.Errorf("derive melange version: %w", err)
-	}
 	overriddenYAML, _, err := gitspec.OverrideVersionAndEpochInMelange(specContent.Content, melangeVersion, newEpoch, packageName)
 	if err != nil {
 		return nil, fmt.Errorf("override name/version/epoch: %w", err)
 	}
+	versionStr := melangeVersion
 
 	now := time.Now()
 	newVersionID, err := securerandom.Hex(32)
