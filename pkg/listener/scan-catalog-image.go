@@ -208,10 +208,10 @@ func updateCatalogScanResults(ctx context.Context, catalogImageID string, standa
 			continue
 		}
 
-		// Get alternate scan result from last_image_scan table
+		// Get alternate scan result from latest image_scan record
 		alternateScanResult := ""
 		if alternateImageName != "" {
-			_, alternateScanResult, err = image.GetFixedCVEsFromLastScan(ctx, alternateImageName, imageTag, arch, standardScanResult)
+			_, alternateScanResult, err = image.GetFixedCVEsFromLatestScan(ctx, alternateImageName, imageTag, arch, standardScanResult)
 			if err != nil {
 				logger.Warn("failed to get alternate scan result",
 					zap.String("catalogImageID", catalogImageID),
