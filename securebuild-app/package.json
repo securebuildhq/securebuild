@@ -120,7 +120,7 @@
     "tailwindcss": "^4.1.18",
     "testcontainers": "^11.13.0",
     "ts-jest": "^29.4.6",
-    "typescript": "5.9.3"
+    "typescript": "6.0.3"
   },
   "overrides": {
     "dompurify": "^3.4.0",
