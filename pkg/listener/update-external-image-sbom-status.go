@@ -237,6 +237,7 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 	// Process results locally from the extracted tar.
 	var dirsToCleanup []string
 	successByDigest := make(map[string]bool)
+	failureByDigest := make(map[string]error)
 
 	for _, r := range results {
 		spdxJSON := ""
@@ -253,9 +254,8 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 
 		if r.exitCode == 0 {
 			if strings.TrimSpace(spdxJSON) == "" {
-				recordSBOMFailure(ctx, r.digest,
-					externalimage.NewScanFailureError(externalimage.ErrNoSBOMDataAvailable, "syft produced empty SBOM output"),
-					false, 1, MaxRetryAttempts)
+				failureByDigest[r.digest] = externalimage.NewScanFailureError(
+					externalimage.ErrNoSBOMDataAvailable, "syft produced empty SBOM output")
 				logger.Warn("syft SBOM output is empty",
 					zap.String("digest", r.digest),
 					zap.String("platform", r.platform))
@@ -264,7 +264,7 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 					zap.String("digest", r.digest),
 					zap.String("platform", r.platform),
 					zap.Error(err))
-				recordSBOMFailure(ctx, r.digest, err, false, 1, MaxRetryAttempts)
+				failureByDigest[r.digest] = err
 			} else {
 				successByDigest[r.digest] = true
 			}
@@ -274,17 +274,18 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 			if data, err := os.ReadFile(stderrLocalPath); err == nil {
 				stderr = strings.TrimRight(string(data), "\n\r")
 			}
-			msg := fmt.Sprintf("syft exited with code %d", r.exitCode)
-			if stderr != "" {
-				msg = fmt.Sprintf("syft exited with code %d: %s", r.exitCode, stderr)
+			failure, skipped := classifySbomDownloadFailure(r.exitCode, stderr)
+			if skipped {
+				logger.Info("image does not provide architecture, skipping SBOM",
+					zap.String("digest", r.digest),
+					zap.String("platform", r.platform))
+			} else {
+				failureByDigest[r.digest] = failure
+				logger.Warn("SBOM download failed",
+					zap.String("digest", r.digest),
+					zap.String("platform", r.platform),
+					zap.Int("exitCode", r.exitCode))
 			}
-			recordSBOMFailure(ctx, r.digest,
-				externalimage.NewScanFailureError(externalimage.ErrFetchSBOM, msg),
-				false, 1, MaxRetryAttempts)
-			logger.Warn("SBOM download failed",
-				zap.String("digest", r.digest),
-				zap.String("platform", r.platform),
-				zap.Int("exitCode", r.exitCode))
 		}
 	}
 
@@ -316,6 +317,14 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 					}
 				}
 			}
+		} else {
+			failure := failureByDigest[dd.Metadata.Digest]
+			if failure == nil {
+				failure = externalimage.NewScanFailureError(
+					externalimage.ErrNoSBOMDataAvailable,
+					"image does not provide any supported architecture")
+			}
+			recordSBOMFailure(ctx, dd.Metadata.Digest, failure, false, 1, MaxRetryAttempts)
 		}
 
 		cache.RemoveDownload(vm.ID, dd.Metadata.Digest)
@@ -409,6 +418,7 @@ func processSbomDownloadDir(ctx context.Context, cache *sbom.SbomDownloadCapacit
 
 	allDone := len(dd.ArchStatuses) > 0
 	successCount := 0
+	var downloadFailure error
 
 	for platform, status := range dd.ArchStatuses {
 		if status.Done {
@@ -431,13 +441,16 @@ func processSbomDownloadDir(ctx context.Context, cache *sbom.SbomDownloadCapacit
 							zap.String("digest", digest),
 							zap.String("platform", platform),
 							zap.Error(err))
-						recordSBOMFailure(ctx, digest, err, false, 1, MaxRetryAttempts)
+						downloadFailure = err
 					}
 				} else {
 					successCount++
 				}
 			} else {
-				handleFailedSbomDownload(ctx, runner, dd.WorkDir, digest, platform, exitCode)
+				failure, skipped := readSbomDownloadFailure(ctx, runner, dd.WorkDir, digest, platform, exitCode)
+				if !skipped {
+					downloadFailure = failure
+				}
 			}
 		} else {
 			age := time.Since(dd.Metadata.CreatedAt)
@@ -449,7 +462,8 @@ func processSbomDownloadDir(ctx context.Context, cache *sbom.SbomDownloadCapacit
 					zap.Duration("timeout", sbom.SbomDownloadTimeout))
 				killSyftProcess(ctx, runner, dd.WorkDir, platform)
 				writeSbomExitCode(ctx, runner, dd.WorkDir, platform, 124)
-				handleFailedSbomDownload(ctx, runner, dd.WorkDir, digest, platform, 124)
+				failure, _ := readSbomDownloadFailure(ctx, runner, dd.WorkDir, digest, platform, 124)
+				downloadFailure = failure
 				status.Done = true
 				status.ExitCode = "124"
 			} else {
@@ -482,6 +496,13 @@ func processSbomDownloadDir(ctx context.Context, cache *sbom.SbomDownloadCapacit
 					}
 				}
 			}
+		} else {
+			if downloadFailure == nil {
+				downloadFailure = externalimage.NewScanFailureError(
+					externalimage.ErrNoSBOMDataAvailable,
+					"image does not provide any supported architecture")
+			}
+			recordSBOMFailure(ctx, digest, downloadFailure, false, 1, MaxRetryAttempts)
 		}
 
 		cleanupSbomDownloadDir(ctx, runner, dd.WorkDir)
@@ -520,8 +541,10 @@ func handleSuccessfulSbomDownload(ctx context.Context, runner buildbackend.Runne
 	return storeBuilderSbomResult(ctx, digest, platform, spdxJSON, syftJSON)
 }
 
-// handleFailedSbomDownload reads the syft stderr and records the failure.
-func handleFailedSbomDownload(ctx context.Context, runner buildbackend.Runner, workDir, digest, platform string, exitCode int) {
+// readSbomDownloadFailure reads and classifies a failed Syft result. Missing
+// architectures are skipped because images are not required to provide every
+// platform requested by the downloader.
+func readSbomDownloadFailure(ctx context.Context, runner buildbackend.Runner, workDir, digest, platform string, exitCode int) (error, bool) {
 	span, ctx := telemetry.StartSpan(ctx, "listener.handle_failed_sbom_download")
 	defer span.Finish()
 
@@ -531,19 +554,41 @@ func handleFailedSbomDownload(ctx context.Context, runner buildbackend.Runner, w
 		stderr = strings.TrimRight(content, "\n\r")
 	}
 
-	msg := fmt.Sprintf("syft exited with code %d", exitCode)
-	if stderr != "" {
-		msg = fmt.Sprintf("syft exited with code %d: %s", exitCode, stderr)
+	failure, skipped := classifySbomDownloadFailure(exitCode, stderr)
+	if skipped {
+		logger.Info("image does not provide architecture, skipping SBOM",
+			zap.String("digest", digest),
+			zap.String("platform", platform))
+		return nil, true
 	}
-
-	recordSBOMFailure(ctx, digest,
-		externalimage.NewScanFailureError(externalimage.ErrFetchSBOM, msg),
-		false, 1, MaxRetryAttempts)
 
 	logger.Warn("SBOM download failed",
 		zap.String("digest", digest),
 		zap.String("platform", platform),
 		zap.Int("exitCode", exitCode))
+	return failure, false
+}
+
+func classifySbomDownloadFailure(exitCode int, stderr string) (error, bool) {
+	message := strings.ToLower(stderr)
+	patterns := []string{
+		"does not match user specified platform",
+		"no match for platform in manifest",
+		"no image found for platform",
+		"could not find image for platform",
+		"no child with platform",
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(message, pattern) {
+			return nil, true
+		}
+	}
+
+	msg := fmt.Sprintf("syft exited with code %d", exitCode)
+	if stderr != "" {
+		msg = fmt.Sprintf("syft exited with code %d: %s", exitCode, stderr)
+	}
+	return externalimage.NewScanFailureError(externalimage.ErrFetchSBOM, msg), false
 }
 
 // killSyftProcess reads the syft PID file and kills the syft process.
