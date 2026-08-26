@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/securebuildhq/securebuild/pkg/builder/types"
 	executiontypes "github.com/securebuildhq/securebuild/pkg/execution/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
@@ -139,39 +140,15 @@ func handleVMCleanup(ctx context.Context, machineID, taskID, taskType, status, m
 }
 
 // ReleaseMachine releases a machine after a build completes.
-// For CMX: calls Replicated API to delete the VM and removes from machine_pool.
-// For local/static: only removes the machine_assignment row (machine stays in pool).
+// Pooled machines remain in machine_pool and become available when their assignment
+// is removed. On-demand CMX machines remain one-shot because pool acquisition
+// intentionally excludes them.
 func ReleaseMachine(ctx context.Context, machineID, taskType, taskID, machineType, workDir, reason string) error {
 	switch machineType {
 	case "local", "static":
-		// For static: delete remote work dir before releasing (local uses RemoveAll below).
-		if machineType == "static" && workDir != "" {
+		if machineType == "static" {
 			if vm, err := GetBuilderVM(ctx, machineID); err == nil {
-				if client, err := GetSSHClient(ctx, vm); err == nil {
-					escaped := strings.ReplaceAll(workDir, "'", "'\\''")
-					cmd := "rm -rf '" + escaped + "'"
-					stdoutCh := make(chan string)
-					stderrCh := make(chan string)
-					var wg sync.WaitGroup
-					wg.Add(2)
-					go func() {
-						defer wg.Done()
-						for range stdoutCh {
-						}
-					}()
-					go func() {
-						defer wg.Done()
-						for range stderrCh {
-						}
-					}()
-					if runErr := RunCommand(ctx, client.Client, machineID, cmd, stdoutCh, stderrCh); runErr != nil {
-						logger.Warn("failed to delete remote work dir",
-							zap.String("machineID", machineID),
-							zap.String("workDir", workDir),
-							zap.Error(runErr))
-					}
-					client.Close()
-				}
+				_ = cleanupRemoteWorkDir(ctx, vm, workDir)
 			}
 		}
 
@@ -197,10 +174,101 @@ func ReleaseMachine(ctx context.Context, machineID, taskType, taskID, machineTyp
 			zap.String("reason", reason))
 		return nil
 
+	case "cmx", "":
+		vm, err := GetBuilderVM(ctx, machineID)
+		if err != nil {
+			return fmt.Errorf("failed to get CMX machine before release: %w", err)
+		}
+		if vm.IsOnDemand {
+			return DeleteVMWithReason(ctx, machineID, reason)
+		}
+
+		if err := cleanupRemoteWorkDir(ctx, vm, workDir); err != nil {
+			logger.Warn("retiring CMX machine after work dir cleanup failed",
+				zap.String("machineID", machineID),
+				zap.String("workDir", workDir),
+				zap.Error(err))
+			if deleteErr := DeleteVMWithReason(ctx, machineID, TerminationReasonError); deleteErr != nil {
+				return fmt.Errorf("failed to clean CMX machine: %v; failed to retire it: %w", err, deleteErr)
+			}
+			return nil
+		}
+		if err := DeleteMachineAssignment(ctx, machineID, taskType, taskID); err != nil {
+			return fmt.Errorf("failed to delete machine assignment: %w", err)
+		}
+
+		logger.Info("released machine assignment",
+			zap.String("machineID", machineID),
+			zap.String("taskType", taskType),
+			zap.String("taskID", taskID),
+			zap.String("machineType", machineType),
+			zap.String("reason", reason))
+		return nil
+
 	default:
-		// CMX: full VM deletion (Replicated API + machine_pool row)
-		return DeleteVMWithReason(ctx, machineID, reason)
+		return fmt.Errorf("unsupported machine type %q", machineType)
 	}
+}
+
+func cleanupRemoteWorkDir(ctx context.Context, vm types.BuilderVM, workDir string) error {
+	if workDir == "" {
+		return nil
+	}
+
+	client, err := GetSSHClient(ctx, vm)
+	if err != nil {
+		logger.Warn("failed to connect for remote work dir cleanup",
+			zap.String("machineID", vm.ID),
+			zap.String("workDir", workDir),
+			zap.Error(err))
+		return err
+	}
+	defer client.Close()
+
+	escaped := strings.ReplaceAll(workDir, "'", "'\\''")
+	cmd := "rm -rf '" + escaped + "'"
+	stdoutCh := make(chan string)
+	stderrCh := make(chan string)
+	drainDone := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case _, ok := <-stdoutCh:
+				if !ok {
+					return
+				}
+			case <-drainDone:
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case _, ok := <-stderrCh:
+				if !ok {
+					return
+				}
+			case <-drainDone:
+				return
+			}
+		}
+	}()
+	err = RunCommand(ctx, client.Client, vm.ID, cmd, stdoutCh, stderrCh)
+	close(drainDone)
+	wg.Wait()
+	if err != nil {
+		logger.Warn("failed to delete remote work dir",
+			zap.String("machineID", vm.ID),
+			zap.String("workDir", workDir),
+			zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 func cleanupOrphanedVMs(ctx context.Context, conn *pgxpool.Conn) error {
