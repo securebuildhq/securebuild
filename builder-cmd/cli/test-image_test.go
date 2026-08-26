@@ -1,11 +1,43 @@
 package cli
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestExecuteImageTestPipelineLoadsReusablePipelineFromBuildWorkDir(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	pipelineDir := filepath.Join(workDir, imagePipelineDir)
+	pipelinePath := filepath.Join(pipelineDir, "test", "compare-images.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(pipelinePath), 0o755))
+	require.NoError(t, os.WriteFile(pipelinePath, []byte(`
+name: Compare images
+pipeline:
+  - name: success
+    runs: ":"
+`), 0o644))
+
+	testConfig := &ImageTestConfig{Pipeline: []ImageTestStep{{
+		Uses: "test/compare-images",
+	}}}
+
+	require.NoError(t, executeImageTestPipeline(
+		context.Background(),
+		testConfig,
+		pipelineDir,
+		"image:latest-arm64",
+		"alpine/kubectl:1.34.2",
+		"arm64",
+		1,
+	))
+}
 
 func TestResolveInputs(t *testing.T) {
 	t.Parallel()

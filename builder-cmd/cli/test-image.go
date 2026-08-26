@@ -31,6 +31,8 @@ type ImageTestConfig struct {
 	Pipeline []ImageTestStep `yaml:"pipeline"`
 }
 
+const imagePipelineDir = "pipelines/images"
+
 // ImageTestStep represents a single step in the test pipeline
 // Either Uses (for reusable pipeline) or Runs (for custom script) must be set
 // If Name is not provided and Uses is set, the pipeline path will be used as the name
@@ -243,8 +245,9 @@ func executeImageTestForArchitecture(ctx context.Context, config *ImageBuildConf
 	}
 
 	// Execute each step in the test pipeline
+	pipelineDir := filepath.Join(config.WorkDir, imagePipelineDir)
 	for i, step := range testDef.Test.Pipeline {
-		if err := executeImageTestPipeline(ctx, &ImageTestConfig{Pipeline: []ImageTestStep{step}}, ourImageName, referenceImage, arch, i+1); err != nil {
+		if err := executeImageTestPipeline(ctx, &ImageTestConfig{Pipeline: []ImageTestStep{step}}, pipelineDir, ourImageName, referenceImage, arch, i+1); err != nil {
 			// If no step name is provided, use the uses pipeline path as step
 			// name as a best effort.
 			stepName := step.Name
@@ -261,7 +264,7 @@ func executeImageTestForArchitecture(ctx context.Context, config *ImageBuildConf
 
 // executeImageTestPipeline executes an image test pipeline
 // System variables (ourImage, refImage, arch) are provided to template context, not as environment variables
-func executeImageTestPipeline(ctx context.Context, testConfig *ImageTestConfig, ourImage, refImage, arch string, stepNumber int) error {
+func executeImageTestPipeline(ctx context.Context, testConfig *ImageTestConfig, pipelineDir, ourImage, refImage, arch string, stepNumber int) error {
 	// Start with base system environment
 	cmdEnv := os.Environ()
 
@@ -270,7 +273,7 @@ func executeImageTestPipeline(ctx context.Context, testConfig *ImageTestConfig, 
 	// inputs are resolved from the pipeline's input definitions and the provided 'with:' values
 	emptyInputs := make(map[string]string)
 	for _, step := range testConfig.Pipeline {
-		if err := executePipelineStep(ctx, step, cmdEnv, emptyInputs, ourImage, refImage, arch, stepNumber); err != nil {
+		if err := executePipelineStep(ctx, step, cmdEnv, emptyInputs, pipelineDir, ourImage, refImage, arch, stepNumber); err != nil {
 			return err
 		}
 	}
@@ -419,7 +422,7 @@ func resolveInputs(pipelineInputs map[string]PipelineInput, providedInputs map[s
 // executePipelineStep executes a single pipeline step with proper resource management
 // inputs contains the resolved input values that will be substituted in scripts
 // ourImage, refImage, and arch are system variables available to all templates
-func executePipelineStep(ctx context.Context, step ImageTestStep, cmdEnv []string, inputs map[string]string, ourImage, refImage, arch string, stepNumber int) error {
+func executePipelineStep(ctx context.Context, step ImageTestStep, cmdEnv []string, inputs map[string]string, pipelineDir, ourImage, refImage, arch string, stepNumber int) error {
 	// Validate that exactly one of Uses or Runs is set
 	if (step.Uses == "" && step.Runs == "") || (step.Uses != "" && step.Runs != "") {
 		stepName := step.Name
@@ -456,7 +459,7 @@ func executePipelineStep(ctx context.Context, step ImageTestStep, cmdEnv []strin
 		}
 
 		// Load and execute reusable pipeline
-		pipelinePath := filepath.Join("/home/builder/pipelines/images", step.Uses+".yaml")
+		pipelinePath := filepath.Join(pipelineDir, step.Uses+".yaml")
 		pipelineYAML, err := os.ReadFile(pipelinePath)
 		if err != nil {
 			return fmt.Errorf("failed to load image test pipeline %s: %w", step.Uses, err)
@@ -480,7 +483,7 @@ func executePipelineStep(ctx context.Context, step ImageTestStep, cmdEnv []strin
 		// Recursively execute all steps in the loaded pipeline with resolved inputs
 		// Pass the step's environment (which may have overrides) to nested steps
 		for _, nestedStep := range pipelineDef.Pipeline {
-			if err := executePipelineStep(ctx, nestedStep, stepEnv, resolvedInputs, ourImage, refImage, arch, stepNumber); err != nil {
+			if err := executePipelineStep(ctx, nestedStep, stepEnv, resolvedInputs, pipelineDir, ourImage, refImage, arch, stepNumber); err != nil {
 				return err
 			}
 		}
