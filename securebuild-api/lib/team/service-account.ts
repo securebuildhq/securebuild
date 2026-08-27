@@ -341,7 +341,7 @@ export const findServiceAccountWithValue = traceFunction(
         await updateServiceAccountLastActive(result.serviceAccount.id);
         result.serviceAccount.lastUsedAt = new Date(); // Update in returned object
 
-        activeSpan?.setTag("lookup.method", "sha256");
+        activeSpan?.setAttribute("lookup.method", "sha256");
         return result;
       } catch (err) {
         if (!(err instanceof ServiceAccountNotFoundError)) {
@@ -359,7 +359,7 @@ export const findServiceAccountWithValue = traceFunction(
         await updateServiceAccountLastActive(result.serviceAccount.id);
         result.serviceAccount.lastUsedAt = new Date(); // Update in returned object
 
-        activeSpan?.setTag("lookup.method", "bcrypt");
+        activeSpan?.setAttribute("lookup.method", "bcrypt");
         return result;
       } catch (err) {
         if (!(err instanceof ServiceAccountNotFoundError)) {

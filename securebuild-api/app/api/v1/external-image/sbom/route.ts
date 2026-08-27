@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
 
       const { teamId } = authResult
 
-      span?.setTag('context.team_id', teamId)
+      span?.setAttribute('context.team_id', teamId)
 
       const { searchParams } = new URL(request.url)
 
@@ -48,8 +48,8 @@ export async function GET(request: NextRequest) {
       const digests = searchParams.getAll('digest') // Single or multiple digests
       const imageURLs = searchParams.getAll('image_url') // Single or multiple image URLs
 
-      span?.setTag('context.digests.length', digests.length)
-      span?.setTag('context.image_urls.length', imageURLs.length)
+      span?.setAttribute('context.digests.length', digests.length)
+      span?.setAttribute('context.image_urls.length', imageURLs.length)
 
       // Validate parameters
       const hasInputs = digests.length > 0 || imageURLs.length > 0
@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
       return await handleMultipleImages(teamId, digests, imageURLs)
     } catch (error) {
       console.error('Error retrieving SBOM:', error)
-      span?.setTag('error', error as Error)
+      span?.setAttribute('error.message', error instanceof Error ? error.message : String(error))
       return NextResponse.json(
         { error: 'Failed to retrieve SBOM' },
         { status: 500 }

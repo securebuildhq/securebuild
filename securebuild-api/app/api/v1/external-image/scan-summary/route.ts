@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
       const { teamId } = authResult
 
-      span?.setTag('context.team_id', teamId)
+      span?.setAttribute('context.team_id', teamId)
 
       const { searchParams } = new URL(request.url)
 
@@ -96,9 +96,9 @@ export async function POST(request: NextRequest) {
       const inputDigests = Array.isArray(requestBody.digests) ? requestBody.digests : []
       const inputImages = Array.isArray(requestBody.images) ? requestBody.images : []
 
-      span?.setTag('context.arch', dbArch)
-      span?.setTag('context.digests.length', inputDigests.length)
-      span?.setTag('context.images.length', inputImages.length)
+      span?.setAttribute('context.arch', dbArch)
+      span?.setAttribute('context.digests.length', inputDigests.length)
+      span?.setAttribute('context.images.length', inputImages.length)
 
       if (inputDigests.length === 0 && inputImages.length === 0) {
         return NextResponse.json({ error: 'Missing required parameters. Provide digests and/or images' }, { status: 400 })
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
       return response
     } catch (error) {
       console.error('Error retrieving scan summaries:', error)
-      span?.setTag('error', error as Error)
+      span?.setAttribute('error.message', error instanceof Error ? error.message : String(error))
       return NextResponse.json(
         { error: 'Failed to retrieve scan summaries' },
         { status: 500 }

@@ -1,10 +1,16 @@
 import type { Tracer, Span, init as ddTraceInit } from 'dd-trace';
 import type { IncomingMessage } from 'http';
 
+const telemetryBackend = String(process.env.TELEMETRY_BACKEND || '').toLowerCase().trim();
 const rawFlag = String(process.env.DD_ENABLED || '').toLowerCase();
-const isEnabled = rawFlag === 'true' || rawFlag === '1';
+const isEnabled = telemetryBackend === 'datadog' || telemetryBackend === 'dd' ||
+  (telemetryBackend === '' && (rawFlag === 'true' || rawFlag === '1'));
 
 process.env.DD_TRACE_ENABLED = isEnabled ? '1' : '0';
+// Application tracing uses @opentelemetry/api for both backends. In Datadog
+// mode, enable dd-trace's OTel bridge before loading the tracer so those spans
+// are backed by Datadog rather than the API's default no-op provider.
+process.env.DD_TRACE_OTEL_ENABLED = isEnabled ? 'true' : 'false';
 
 let tracer: Tracer | null = null;
 
@@ -42,6 +48,9 @@ if (isEnabled) {
       profiling: false,
       startupLogs: false,
     }) as Tracer;
+
+    const provider = new ddTrace.TracerProvider();
+    provider.register();
 
     // Disable low-level network instrumentation for localhost connections
     tracer.use('dns', false);
