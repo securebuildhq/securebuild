@@ -1,12 +1,13 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
-    // Only load tracer if Datadog is actually enabled
-    const rawFlag = String(process.env.DD_ENABLED || '').toLowerCase();
-    const isEnabled = rawFlag === 'true' || rawFlag === '1';
+    const { resolveTelemetryBackend } = await import('./lib/observability/backend');
 
-    if (isEnabled) {
-      // Load the tracer only when explicitly enabled
+    const backend = resolveTelemetryBackend();
+
+    if (backend === 'datadog') {
       await import('./datadog/tracer');
+    } else if (backend === 'otlp') {
+      await import('./otel/instrumentation');
     }
   }
 }

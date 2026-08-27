@@ -1,4 +1,7 @@
-import type { Span, Tracer } from 'dd-trace';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
+import type { Span } from '@opentelemetry/api';
+
+export type { Span };
 
 type Tags = Record<string, unknown>;
 
@@ -20,45 +23,12 @@ type TracedFunction<T extends (...args: any[]) => any> = (
 function applyTags(span?: Span, tags?: Tags) {
   if (!span || !tags) return;
   for (const [key, value] of Object.entries(tags)) {
-    span.setTag(key, value as any);
-  }
-}
-
-// Lazy-load tracer only when tracing is enabled
-// Using undefined to distinguish between "not loaded yet" and "loaded but null"
-let tracerCache: Tracer | null | undefined = undefined;
-
-function getTracer(): Tracer | null {
-  // Return cached result if already loaded (prevents race conditions and multiple initializations)
-  if (tracerCache !== undefined) {
-    return tracerCache;
-  }
-
-  // Check if tracing is enabled at runtime (consistent with datadog/tracer.ts and instrumentation.ts)
-  const rawFlag = String(process.env.DD_ENABLED || '').toLowerCase();
-  const isEnabled = rawFlag === 'true' || rawFlag === '1';
-
-  if (!isEnabled) {
-    tracerCache = null;
-    return null;
-  }
-
-  // Lazy load the tracer module only when needed
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const tracerModule = require('@/datadog/tracer');
-    const tracer = tracerModule.default || tracerModule;
-
-    if (tracer && typeof (tracer as any).trace === 'function') {
-      tracerCache = tracer as Tracer;
-      return tracerCache;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      span.setAttribute(key, value);
+    } else if (value !== null && value !== undefined) {
+      span.setAttribute(key, String(value));
     }
-  } catch (err) {
-    console.warn('Failed to load tracer:', err);
   }
-
-  tracerCache = null;
-  return null;
 }
 
 /**
@@ -66,12 +36,7 @@ function getTracer(): Tracer | null {
  * This can be used to pass span context to database calls.
  */
 export function getActiveSpan(): Span | undefined {
-  const activeTracer = getTracer();
-  if (!activeTracer || !activeTracer.scope) {
-    return undefined;
-  }
-  const active = activeTracer.scope().active();
-  return active || undefined;
+  return trace.getActiveSpan();
 }
 
 export async function withTrace<T>(
@@ -79,23 +44,18 @@ export async function withTrace<T>(
   fn: (span?: Span) => Promise<T> | T,
   options?: TraceOptions,
 ): Promise<T> {
-  const activeTracer = getTracer();
-  if (!activeTracer) {
-    return fn(undefined);
-  }
-
-  return activeTracer.trace(name, { resource: options?.resource }, async (span?: Span) => {
-    if (span) {
-      span.setTag('component', 'application');
-      applyTags(span, options?.tags);
-    }
+  return trace.getTracer('securebuild-api').startActiveSpan(name, async (span: Span) => {
+    span.setAttribute('component', 'application');
+    if (options?.resource) span.setAttribute('resource.name', options.resource);
+    applyTags(span, options?.tags);
     try {
       const result = await fn(span);
+      span.end();
       return result;
     } catch (error) {
-      if (span) {
-        span.setTag('error', error as any);
-      }
+      span.recordException(error as Error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: String(error) });
+      span.end();
       throw error;
     }
   });
@@ -137,7 +97,7 @@ export function traceServerAction<T extends (...args: any[]) => any>(
     const baseTags = options?.getTags?.(...args);
     return withTrace(spanName, async (span) => {
       if (span) {
-        span.setTag('component', 'server-action');
+        span.setAttribute('component', 'server-action');
       }
       applyTags(span, baseTags);
       const result = await fn(...args);
