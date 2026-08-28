@@ -345,7 +345,11 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 		INSERT INTO external_image_scan (digest, arch, parsed_results, created_at, status, scan_status_message, updated_at, scan_completed_at, scan_attempted_at, scan_status_updated_at, is_in_object_store)
 		VALUES ($1, $2, $3, $4, $5, $6, $4, $4, $4, $4, $7)
 		ON CONFLICT (digest, arch) DO UPDATE
-		SET parsed_results = $3,
+		SET parsed_results = CASE
+		        WHEN EXCLUDED.status = 'succeeded' AND NULLIF(EXCLUDED.parsed_results, '') IS NOT NULL
+		          THEN EXCLUDED.parsed_results
+		        ELSE external_image_scan.parsed_results
+		    END,
 		    status = $5,
 		    scan_status_message = $6,
 		    updated_at = $4,

@@ -140,6 +140,21 @@ func TestExternalImageScanStatusTransitions(t *testing.T) {
 		assert.Equal(t, "succeeded", scanStatus.Status)
 		assert.NotNil(t, scanStatus.ScanCompletedAt, "Scan completed timestamp should be set")
 		assert.NotEmpty(t, scanStatus.ParsedResults, "Parsed results should be set")
+		storedParsedResults := *scanStatus.ParsedResults
+
+		// A later status-only update must preserve the last successful counts.
+		err = externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
+			Digest:            testDigest,
+			Arch:              "x86_64",
+			Status:            externalimage.ScanStatusFailed,
+			ScanStatusMessage: "test failure after successful scan",
+		})
+		require.NoError(t, err)
+
+		scanStatuses = getScanStatuses(t, ctx, testDigest)
+		require.Len(t, scanStatuses, 1)
+		require.NotNil(t, scanStatuses[0].ParsedResults)
+		assert.Equal(t, storedParsedResults, *scanStatuses[0].ParsedResults)
 
 		// Verify SBOM status remains succeeded
 		sbomStatuses = getSBOMStatuses(t, ctx, testDigest)

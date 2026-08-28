@@ -1,4 +1,4 @@
-import { getBatchDigestsForTags, getBatchExternalImageScans, type ImageRefTag, type BatchScanResult } from "@/lib/externalimage/externalimage"
+import { getBatchDigestsForTags, getBatchExternalImageScanSummaries, type ImageRefTag, type BatchScanSummaryResult } from "@/lib/externalimage/externalimage"
 import { parseImageRef } from "@/lib/externalimage/registry"
 import { NextRequest, NextResponse } from "next/server"
 import { findServiceAccountWithValue } from "@/lib/team/service-account"
@@ -168,13 +168,13 @@ const batchListScanSummaries = traceFunction('api.external_image.scan_summary.ba
 
   // Step 4: Get scan results for all digests (team ownership validated via JOIN)
   const scanResults = allDigests.size > 0
-    ? await getBatchExternalImageScans(teamId, [...allDigests], arch, 'parsed')
-    : new Map<string, BatchScanResult>()
+    ? await getBatchExternalImageScanSummaries(teamId, [...allDigests], arch)
+    : new Map<string, BatchScanSummaryResult>()
 
   // Step 5: Build the results array
   for (const input of [...inputDigests, ...inputImages]) {
     const digest = inputToDigestMap.get(input) || null;
-    let scanData: BatchScanResult | null = null;
+    let scanData: BatchScanSummaryResult | null = null;
     if (digest) {
       scanData = scanResults.get(digest) || null;
       if (!scanData?.hasAccess) {
@@ -183,10 +183,10 @@ const batchListScanSummaries = traceFunction('api.external_image.scan_summary.ba
     }
 
     let parsedResult: SeverityCounts | null = null
-    if (scanData?.scanResult) {
+    if (scanData?.parsedResults) {
       try {
-        const details = JSON.parse(scanData.scanResult) as ImageScanResultDetails
-        parsedResult = details?.counts || emptyCounts()
+        const stored = JSON.parse(scanData.parsedResults) as SeverityCounts | ImageScanResultDetails
+        parsedResult = 'counts' in stored ? stored.counts : stored
       } catch (error) {
         console.error(`Failed to parse scan result for input ${input}:`, error)
         // Continue with null result instead of failing the entire request

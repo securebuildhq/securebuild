@@ -826,6 +826,18 @@ export interface BatchScanResult {
   sbomStatusUpdatedAt: string | null;
 }
 
+export interface BatchScanSummaryResult {
+  digest: string;
+  parsedResults: string | null;
+  scanCompletedAt: string | null;
+  digestFirstSeenAt: string | null;
+  imageSizeBytes: number;
+  hasAccess: boolean;
+  scanStatus: string | null;
+  scanStatusMessage: string | null;
+  scanStatusUpdatedAt: string | null;
+}
+
 export interface BatchSbomResult {
   digest: string;
   arch: string | null;
@@ -1012,6 +1024,79 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
       'args.format': format,
     })
   })
+
+/**
+ * Batch query for the small vulnerability-count summaries stored in
+ * external_image_scan.parsed_results. Unlike getBatchExternalImageScans, this
+ * does not fetch or decompress detailed scan blobs from object storage.
+ */
+export const getBatchExternalImageScanSummaries = traceFunction('lib.externalimage.getBatchExternalImageScanSummaries', async (
+  teamId: string,
+  digests: string[],
+  arch: string,
+): Promise<Map<string, BatchScanSummaryResult>> => {
+  const db = getDB(await getParam("DB_URI"))
+
+  if (digests.length === 0) {
+    return new Map()
+  }
+
+  const query = `
+    SELECT
+      requested.digest,
+      escan.parsed_results,
+      escan.scan_completed_at,
+      esbom.created_at AS digest_first_seen_at,
+      esbom.image_size_bytes,
+      escan.status AS scan_status,
+      escan.scan_status_message,
+      escan.scan_status_updated_at,
+      (owned.digest IS NOT NULL) AS has_access
+    FROM unnest($2::text[]) AS requested(digest)
+      LEFT JOIN (
+        SELECT DISTINCT etag.digest
+        FROM external_image_tag etag
+          INNER JOIN external_image_team eteam
+            ON eteam.team_id = $1
+            AND eteam.registry = etag.registry
+            AND eteam.image_name = etag.image_name
+            AND eteam.image_tag = etag.image_tag
+        WHERE etag.digest = ANY($2)
+      ) owned ON owned.digest = requested.digest
+      LEFT JOIN external_image_scan escan
+        ON escan.digest = requested.digest
+        AND escan.arch = $3
+        AND owned.digest IS NOT NULL
+      LEFT JOIN external_image_sbom esbom
+        ON esbom.digest = escan.digest
+        AND esbom.arch = escan.arch
+  `
+
+  const queryResult = await db.query(query, [teamId, digests, arch])
+  const resultMap = new Map<string, BatchScanSummaryResult>()
+
+  for (const row of queryResult.rows) {
+    resultMap.set(row.digest, {
+      digest: row.digest,
+      parsedResults: row.parsed_results,
+      scanCompletedAt: row.scan_completed_at,
+      digestFirstSeenAt: row.digest_first_seen_at,
+      imageSizeBytes: parseInt(row.image_size_bytes || '0'),
+      hasAccess: row.has_access,
+      scanStatus: row.scan_status,
+      scanStatusMessage: row.scan_status_message,
+      scanStatusUpdatedAt: row.scan_status_updated_at,
+    })
+  }
+
+  return resultMap
+}, {
+  getTags: (teamId: string, digests: string[], arch: string) => ({
+    'args.team_id': teamId,
+    'args.digests.length': digests.length,
+    'args.arch': arch,
+  })
+})
 
 /**
  * Batch query to get SBOM data for multiple image digests.
