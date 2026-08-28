@@ -3,6 +3,7 @@ import { setupTestEnvironment, TestEnvironment } from '../../../fixtures/environ
 import { HttpClient } from '../../../fixtures/http-client';
 
 const VALID_SCAN_STATUSES = new Set(['queued', 'running', 'succeeded', 'failed']);
+const SUMMARY_ONLY_DIGEST = 'sha256:summary123456789012345678901234567890123456789012345678901234';
 
 /**
  * Integration tests for the read endpoints (scan, scan-summary, sbom).
@@ -99,40 +100,26 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
     });
 
     it('POST /scan-summary {digests} returns counts', async () => {
-      // Summary counts live in PostgreSQL and must not depend on the detailed
-      // result being available in object storage.
-      await env.dbPool.query(
-        `UPDATE external_image_scan SET is_in_object_store = false WHERE digest = $1`,
-        [digest()],
-      );
+      const res = await env.client.post('/api/v1/external-image/scan-summary', {
+        digests: [SUMMARY_ONLY_DIGEST],
+      });
+      expect(res.status).toBe(200);
 
-      try {
-        const res = await env.client.post('/api/v1/external-image/scan-summary', {
-          digests: [digest()],
-        });
-        expect(res.status).toBe(200);
+      const data = res.data as Record<string, unknown>[];
+      expect(Array.isArray(data)).toBe(true);
+      expect(data.length).toBe(1);
 
-        const data = res.data as Record<string, unknown>[];
-        expect(Array.isArray(data)).toBe(true);
-        expect(data.length).toBe(1);
+      const entry = data[0];
+      expect(entry.input).toBe(SUMMARY_ONLY_DIGEST);
+      expect(entry.not_found).toBe(false);
+      const counts = entry.counts as Record<string, unknown>;
+      expect(counts.critical).toBe(2);
+      expect(counts.high).toBe(3);
+      expect(counts.medium).toBe(4);
+      expect(counts.low).toBe(5);
+      expect(counts.total).toBe(14);
 
-        const entry = data[0];
-        expect(entry.input).toBe(digest());
-        expect(entry.not_found).toBe(false);
-        const counts = entry.counts as Record<string, unknown>;
-        expect(counts.critical).toBe(0);
-        expect(counts.high).toBe(1);
-        expect(counts.medium).toBe(0);
-        expect(counts.low).toBe(0);
-        expect(counts.total).toBe(1);
-
-        expect(res.headers.get('X-SecureBuild-Result_Count')).toBe('1');
-      } finally {
-        await env.dbPool.query(
-          `UPDATE external_image_scan SET is_in_object_store = true WHERE digest = $1`,
-          [digest()],
-        );
-      }
+      expect(res.headers.get('X-SecureBuild-Result_Count')).toBe('1');
     });
 
     it('serves the previous scan result while a rescan is queued', async () => {

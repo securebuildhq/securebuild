@@ -163,6 +163,63 @@ func TestExternalImageScanStatusTransitions(t *testing.T) {
 	})
 }
 
+func TestMigrateScanStatusColumn(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	err = testutil.ApplySchemaHero(ctx, testDB.ConnStr, filepath.Join(projectRoot, "db", "schema", "tables"), false)
+	require.NoError(t, err)
+
+	ctx, err = param.Init(param.InitSourceEnvironment, map[string]string{"DB_URI": testDB.ConnStr})
+	require.NoError(t, err)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	_, err = conn.Exec(ctx, `
+		INSERT INTO external_image_scan
+		  (digest, arch, parsed_results, created_at, status, scan_status_message, scan_status_updated_at)
+		VALUES
+		  ('legacy-success', 'x86_64', '{"total":1}', NOW(), 'queued', NULL, NULL),
+		  ('legacy-failure', 'x86_64', '', NOW(), 'queued', 'scan failed', NULL),
+		  ('modern-rescan', 'x86_64', '{"total":1}', NOW(), 'queued', NULL, NOW()),
+		  ('false-success', 'x86_64', '', NOW(), 'succeeded', 'scan failed', NOW())
+	`)
+	require.NoError(t, err)
+
+	require.NoError(t, externalimage.MigrateScanStatusColumn(ctx))
+
+	rows, err := conn.Query(ctx, `
+		SELECT digest, status
+		FROM external_image_scan
+		WHERE digest = ANY($1::text[])
+	`, []string{"legacy-success", "legacy-failure", "modern-rescan", "false-success"})
+	require.NoError(t, err)
+	defer rows.Close()
+
+	statuses := map[string]string{}
+	for rows.Next() {
+		var digest, status string
+		require.NoError(t, rows.Scan(&digest, &status))
+		statuses[digest] = status
+	}
+	require.NoError(t, rows.Err())
+
+	assert.Equal(t, "succeeded", statuses["legacy-success"])
+	assert.Equal(t, "failed", statuses["legacy-failure"])
+	assert.Equal(t, "queued", statuses["modern-rescan"])
+	assert.Equal(t, "failed", statuses["false-success"])
+}
+
 // TestExternalImageScanFailure tests the failure state transition
 func TestExternalImageScanFailure(t *testing.T) {
 	if testing.Short() {
@@ -250,6 +307,7 @@ func TestExternalImageScanFailure(t *testing.T) {
 		scanStatus := scanStatuses[0]
 		assert.Equal(t, "failed", scanStatus.Status)
 		assert.NotNil(t, scanStatus.ScanStatusMessage)
+		assert.Nil(t, scanStatus.ParsedResults, "A failed scan without prior results should store NULL counts")
 		assert.NotNil(t, scanStatus.ScanCompletedAt, "Completion timestamp should be set even on failure")
 
 		// Verify SBOM status remains succeeded

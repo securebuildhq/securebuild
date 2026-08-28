@@ -829,6 +829,7 @@ export interface BatchScanResult {
 export interface BatchScanSummaryResult {
   digest: string;
   parsedResults: string | null;
+  isInObjectStore: boolean;
   scanCompletedAt: string | null;
   digestFirstSeenAt: string | null;
   imageSizeBytes: number;
@@ -1045,6 +1046,7 @@ export const getBatchExternalImageScanSummaries = traceFunction('lib.externalima
     SELECT
       requested.digest,
       escan.parsed_results,
+      escan.is_in_object_store,
       escan.scan_completed_at,
       esbom.created_at AS digest_first_seen_at,
       esbom.image_size_bytes,
@@ -1079,6 +1081,7 @@ export const getBatchExternalImageScanSummaries = traceFunction('lib.externalima
     resultMap.set(row.digest, {
       digest: row.digest,
       parsedResults: row.parsed_results,
+      isInObjectStore: row.is_in_object_store === true,
       scanCompletedAt: row.scan_completed_at,
       digestFirstSeenAt: row.digest_first_seen_at,
       imageSizeBytes: parseInt(row.image_size_bytes || '0'),

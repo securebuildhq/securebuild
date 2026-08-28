@@ -1,4 +1,4 @@
-import { getBatchDigestsForTags, getBatchExternalImageScanSummaries, type ImageRefTag, type BatchScanSummaryResult } from "@/lib/externalimage/externalimage"
+import { getBatchDigestsForTags, getBatchExternalImageScans, getBatchExternalImageScanSummaries, type ImageRefTag, type BatchScanResult, type BatchScanSummaryResult } from "@/lib/externalimage/externalimage"
 import { parseImageRef } from "@/lib/externalimage/registry"
 import { NextRequest, NextResponse } from "next/server"
 import { findServiceAccountWithValue } from "@/lib/team/service-account"
@@ -171,6 +171,16 @@ const batchListScanSummaries = traceFunction('api.external_image.scan_summary.ba
     ? await getBatchExternalImageScanSummaries(teamId, [...allDigests], arch)
     : new Map<string, BatchScanSummaryResult>()
 
+  // Older successful rows may not have compact counts in parsed_results. Keep
+  // the existing API behavior for those rows by falling back to the detailed
+  // object-store result, while avoiding blob reads for the normal path.
+  const fallbackDigests = [...scanResults.values()]
+    .filter(result => result.hasAccess && !result.parsedResults && result.isInObjectStore)
+    .map(result => result.digest)
+  const fallbackResults = fallbackDigests.length > 0
+    ? await getBatchExternalImageScans(teamId, fallbackDigests, arch, 'parsed')
+    : new Map<string, BatchScanResult>()
+
   // Step 5: Build the results array
   for (const input of [...inputDigests, ...inputImages]) {
     const digest = inputToDigestMap.get(input) || null;
@@ -183,9 +193,10 @@ const batchListScanSummaries = traceFunction('api.external_image.scan_summary.ba
     }
 
     let parsedResult: SeverityCounts | null = null
-    if (scanData?.parsedResults) {
+    const storedResult = scanData?.parsedResults || (digest ? fallbackResults.get(digest)?.scanResult : null)
+    if (storedResult) {
       try {
-        const stored = JSON.parse(scanData.parsedResults) as SeverityCounts | ImageScanResultDetails
+        const stored = JSON.parse(storedResult) as SeverityCounts | ImageScanResultDetails
         parsedResult = 'counts' in stored ? stored.counts : stored
       } catch (error) {
         console.error(`Failed to parse scan result for input ${input}:`, error)
