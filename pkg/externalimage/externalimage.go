@@ -343,9 +343,13 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 	// Step 2: Write metadata to DB. Blob content lives only in object storage.
 	query := `
 		INSERT INTO external_image_scan (digest, arch, parsed_results, created_at, status, scan_status_message, updated_at, scan_completed_at, scan_attempted_at, scan_status_updated_at, is_in_object_store)
-		VALUES ($1, $2, $3, $4, $5, $6, $4, $4, $4, $4, $7)
+		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $4, $4, $4, $4, $7)
 		ON CONFLICT (digest, arch) DO UPDATE
-		SET parsed_results = $3,
+		SET parsed_results = CASE
+		        WHEN EXCLUDED.status = 'succeeded' AND NULLIF(EXCLUDED.parsed_results, '') IS NOT NULL
+		          THEN EXCLUDED.parsed_results
+		        ELSE external_image_scan.parsed_results
+		    END,
 		    status = $5,
 		    scan_status_message = $6,
 		    updated_at = $4,
@@ -676,23 +680,34 @@ func GetExternalImageCredentials(ctx context.Context, teamID string, registry st
 	return username.String, clearPassword, nil
 }
 
-// MigrateScanStatusColumn migrates existing external_image_scan rows to have the correct
-// status value based on their data. This is needed because when the status column was added,
-// existing rows received the default value 'queued' even if they had completed scans.
-// This function is idempotent - if no rows match, it updates nothing.
+// MigrateScanStatusColumn migrates legacy external_image_scan rows and repairs
+// rows that an older version of this migration incorrectly marked succeeded.
+// Legacy rows are identified by a NULL scan_status_updated_at; current writers
+// always populate that column, including for legitimate queued rescans that
+// retain results from a previous successful scan.
 func MigrateScanStatusColumn(ctx context.Context) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	// Quick check: are there any rows that need migration?
-	// These are rows with status='queued' that have scan data (parsed_results or scan_status_message),
-	// indicating they completed but weren't migrated to the new status values.
+	// Quick check for either an unmigrated legacy row or a false success created
+	// when the old migration treated an empty parsed_results string as data.
 	var needsMigration bool
 	checkQuery := `
 		SELECT EXISTS (
 			SELECT 1 FROM external_image_scan
-			WHERE status = 'queued'
-			  AND (parsed_results IS NOT NULL OR scan_status_message IS NOT NULL)
+			WHERE (
+			        status = 'queued'
+			        AND scan_status_updated_at IS NULL
+			        AND (
+			          NULLIF(BTRIM(parsed_results), '') IS NOT NULL
+			          OR NULLIF(BTRIM(scan_status_message), '') IS NOT NULL
+			        )
+			      )
+			   OR (
+			        status = 'succeeded'
+			        AND NULLIF(BTRIM(parsed_results), '') IS NULL
+			        AND NULLIF(BTRIM(scan_status_message), '') IS NOT NULL
+			      )
 			LIMIT 1
 		)
 	`
@@ -705,19 +720,34 @@ func MigrateScanStatusColumn(ctx context.Context) error {
 		return nil
 	}
 
-	// Migrate rows: parsed_results -> 'succeeded', scan_status_message -> 'failed'
+	// Migrate legacy rows with real counts to succeeded and legacy rows with an
+	// error message to failed. Also repair false successes produced by the old
+	// empty-string check.
 	query := `
 		UPDATE external_image_scan
 		SET status = CASE
-		        WHEN parsed_results IS NOT NULL THEN 'succeeded'
-		        WHEN scan_status_message IS NOT NULL THEN 'failed'
+		        WHEN status = 'succeeded' THEN 'failed'
+		        WHEN NULLIF(BTRIM(parsed_results), '') IS NOT NULL THEN 'succeeded'
+		        WHEN NULLIF(BTRIM(scan_status_message), '') IS NOT NULL THEN 'failed'
 		    END,
 		    scan_status_updated_at = CASE
-		        WHEN parsed_results IS NOT NULL THEN COALESCE(scan_completed_at, updated_at, created_at)
-		        WHEN scan_status_message IS NOT NULL THEN COALESCE(updated_at, created_at)
+		        WHEN status = 'succeeded' THEN COALESCE(scan_status_updated_at, updated_at, created_at)
+		        WHEN NULLIF(BTRIM(parsed_results), '') IS NOT NULL THEN COALESCE(scan_completed_at, updated_at, created_at)
+		        WHEN NULLIF(BTRIM(scan_status_message), '') IS NOT NULL THEN COALESCE(updated_at, created_at)
 		    END
-		WHERE status = 'queued'
-		  AND (parsed_results IS NOT NULL OR scan_status_message IS NOT NULL)
+		WHERE (
+		        status = 'queued'
+		        AND scan_status_updated_at IS NULL
+		        AND (
+		          NULLIF(BTRIM(parsed_results), '') IS NOT NULL
+		          OR NULLIF(BTRIM(scan_status_message), '') IS NOT NULL
+		        )
+		      )
+		   OR (
+		        status = 'succeeded'
+		        AND NULLIF(BTRIM(parsed_results), '') IS NULL
+		        AND NULLIF(BTRIM(scan_status_message), '') IS NOT NULL
+		      )
 	`
 	result, err := conn.Exec(ctx, query)
 	if err != nil {

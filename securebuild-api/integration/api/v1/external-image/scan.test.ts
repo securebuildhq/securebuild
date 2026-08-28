@@ -3,6 +3,7 @@ import { setupTestEnvironment, TestEnvironment } from '../../../fixtures/environ
 import { HttpClient } from '../../../fixtures/http-client';
 
 const VALID_SCAN_STATUSES = new Set(['queued', 'running', 'succeeded', 'failed']);
+const SUMMARY_ONLY_DIGEST = 'sha256:summary123456789012345678901234567890123456789012345678901234';
 
 /**
  * Integration tests for the read endpoints (scan, scan-summary, sbom).
@@ -100,7 +101,7 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
 
     it('POST /scan-summary {digests} returns counts', async () => {
       const res = await env.client.post('/api/v1/external-image/scan-summary', {
-        digests: [digest()],
+        digests: [SUMMARY_ONLY_DIGEST],
       });
       expect(res.status).toBe(200);
 
@@ -109,14 +110,14 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(data.length).toBe(1);
 
       const entry = data[0];
-      expect(entry.input).toBe(digest());
+      expect(entry.input).toBe(SUMMARY_ONLY_DIGEST);
       expect(entry.not_found).toBe(false);
       const counts = entry.counts as Record<string, unknown>;
-      expect(typeof counts.critical).toBe('number');
-      expect(typeof counts.high).toBe('number');
-      expect(typeof counts.medium).toBe('number');
-      expect(typeof counts.low).toBe('number');
-      expect(typeof counts.total).toBe('number');
+      expect(counts.critical).toBe(2);
+      expect(counts.high).toBe(3);
+      expect(counts.medium).toBe(4);
+      expect(counts.low).toBe(5);
+      expect(counts.total).toBe(14);
 
       expect(res.headers.get('X-SecureBuild-Result_Count')).toBe('1');
     });

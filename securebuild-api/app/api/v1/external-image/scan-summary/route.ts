@@ -1,4 +1,4 @@
-import { getBatchDigestsForTags, getBatchExternalImageScans, type ImageRefTag, type BatchScanResult } from "@/lib/externalimage/externalimage"
+import { getBatchDigestsForTags, getBatchExternalImageScans, getBatchExternalImageScanSummaries, type ImageRefTag, type BatchScanResult, type BatchScanSummaryResult } from "@/lib/externalimage/externalimage"
 import { parseImageRef } from "@/lib/externalimage/registry"
 import { NextRequest, NextResponse } from "next/server"
 import { findServiceAccountWithValue } from "@/lib/team/service-account"
@@ -168,13 +168,23 @@ const batchListScanSummaries = traceFunction('api.external_image.scan_summary.ba
 
   // Step 4: Get scan results for all digests (team ownership validated via JOIN)
   const scanResults = allDigests.size > 0
-    ? await getBatchExternalImageScans(teamId, [...allDigests], arch, 'parsed')
+    ? await getBatchExternalImageScanSummaries(teamId, [...allDigests], arch)
+    : new Map<string, BatchScanSummaryResult>()
+
+  // Older successful rows may not have compact counts in parsed_results. Keep
+  // the existing API behavior for those rows by falling back to the detailed
+  // object-store result, while avoiding blob reads for the normal path.
+  const fallbackDigests = [...scanResults.values()]
+    .filter(result => result.hasAccess && !result.parsedResults && result.isInObjectStore)
+    .map(result => result.digest)
+  const fallbackResults = fallbackDigests.length > 0
+    ? await getBatchExternalImageScans(teamId, fallbackDigests, arch, 'parsed')
     : new Map<string, BatchScanResult>()
 
   // Step 5: Build the results array
   for (const input of [...inputDigests, ...inputImages]) {
     const digest = inputToDigestMap.get(input) || null;
-    let scanData: BatchScanResult | null = null;
+    let scanData: BatchScanSummaryResult | null = null;
     if (digest) {
       scanData = scanResults.get(digest) || null;
       if (!scanData?.hasAccess) {
@@ -183,10 +193,11 @@ const batchListScanSummaries = traceFunction('api.external_image.scan_summary.ba
     }
 
     let parsedResult: SeverityCounts | null = null
-    if (scanData?.scanResult) {
+    const storedResult = scanData?.parsedResults || (digest ? fallbackResults.get(digest)?.scanResult : null)
+    if (storedResult) {
       try {
-        const details = JSON.parse(scanData.scanResult) as ImageScanResultDetails
-        parsedResult = details?.counts || emptyCounts()
+        const stored = JSON.parse(storedResult) as SeverityCounts | ImageScanResultDetails
+        parsedResult = 'counts' in stored ? stored.counts : stored
       } catch (error) {
         console.error(`Failed to parse scan result for input ${input}:`, error)
         // Continue with null result instead of failing the entire request

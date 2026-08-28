@@ -4,6 +4,33 @@ requires:
   - external-image-sbom
 seedData:
   rows:
+    # Dedicated database-only fixture for scan-summary tests. It deliberately
+    # has no object-store blob so the test cannot pass via the fallback path.
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:summary123456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: parsed_results
+          value:
+            str: '{"critical":2,"high":3,"medium":4,"low":5,"total":14,"fixable":1}'
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: scan_completed_at
+          value:
+            str: "2024-01-01T00:05:00Z"
+        - column: scan_status_updated_at
+          value:
+            str: "2024-01-01T00:05:00Z"
+        - column: is_in_object_store
+          value:
+            str: "false"
     - columns:
         - column: digest
           value:
