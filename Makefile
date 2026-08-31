@@ -177,6 +177,22 @@ run-autoimg: build-autoimg
 build-securebuild-cli:
 	go build -ldflags "$(BUILD_LDFLAGS)" -o bin/securebuild securebuild-cmd/main.go
 
+.PHONY: build-securebuild-cli-nix
+build-securebuild-cli-nix:
+	nix build path:.#securebuild
+
+.PHONY: run-securebuild-cli-nix
+run-securebuild-cli-nix:
+	nix run path:.#securebuild -- $(ARGS)
+
+.PHONY: build-securebuild-cli-image-nix
+build-securebuild-cli-image-nix:
+	nix run path:.#securebuild -- local image
+
+.PHONY: check-securebuild-cli-nix
+check-securebuild-cli-nix:
+	nix run path:.#securebuild -- local check
+
 # Cross-compiled securebuild-cli binaries for release (linux/amd64 and linux/arm64).
 # Set VERSION and GIT_SHA in CI (e.g. VERSION=1.2.3 GIT_SHA=abc1234 make build-securebuild-cli-release-amd64).
 .PHONY: build-securebuild-cli-release
