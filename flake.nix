@@ -13,7 +13,126 @@
         x86_64-linux = f "x86_64-linux";
         aarch64-linux = f "aarch64-linux";
       };
+      securebuildCliGoMod = builtins.toFile "securebuild-cli.go.mod" ''
+        module github.com/securebuildhq/securebuild
+
+        go 1.25.5
+
+        require (
+          github.com/spf13/cobra v1.10.2
+          github.com/spf13/viper v1.21.0
+          github.com/stretchr/testify v1.11.1
+        )
+
+        require (
+          github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+          github.com/fsnotify/fsnotify v1.9.0 // indirect
+          github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+          github.com/inconshreveable/mousetrap v1.1.0 // indirect
+          github.com/pelletier/go-toml/v2 v2.3.1 // indirect
+          github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+          github.com/sagikazarmark/locafero v0.11.0 // indirect
+          github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
+          github.com/spf13/afero v1.15.0 // indirect
+          github.com/spf13/cast v1.10.0 // indirect
+          github.com/spf13/pflag v1.0.10 // indirect
+          github.com/subosito/gotenv v1.6.0 // indirect
+          go.yaml.in/yaml/v3 v3.0.4 // indirect
+          golang.org/x/sys v0.45.0 // indirect
+          golang.org/x/text v0.37.0 // indirect
+          gopkg.in/yaml.v3 v3.0.1 // indirect
+        )
+      '';
+      mkSecurebuild = pkgs:
+        pkgs.buildGoModule {
+          pname = "securebuild";
+          version = self.shortRev or self.dirtyShortRev or "dev";
+
+          # Keep the derivation focused on the public CLI. The repository also
+          # contains services and web applications that are not part of this
+          # artifact.
+          src = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            filter = path: type:
+              let
+                relative = pkgs.lib.removePrefix (toString ./. + "/") (toString path);
+              in
+                relative == ""
+                || relative == "go.mod"
+                || relative == "go.sum"
+                || relative == "securebuild-cmd"
+                || pkgs.lib.hasPrefix "securebuild-cmd/" relative;
+          };
+
+          subPackages = [ "securebuild-cmd" ];
+          env.CGO_ENABLED = 0;
+          ldflags = [ "-s" "-w" ];
+
+          checkPhase = ''
+            runHook preCheck
+            go test ./securebuild-cmd/...
+            runHook postCheck
+          '';
+
+          # The service-level module has hundreds of dependencies that are not
+          # reachable from this client. Use the CLI-specific module graph and
+          # the compiler supplied by the locked nixpkgs revision.
+          postPatch = ''
+            cp ${securebuildCliGoMod} go.mod
+          '';
+
+          vendorHash = "sha256-UIZAc9g1LbKd2qODHciFS5xNyh7Antq+HDjtU7B0mOQ=";
+
+          postInstall = ''
+            mv "$out/bin/securebuild-cmd" "$out/bin/securebuild"
+          '';
+
+          meta = {
+            description = "SecureBuild CLI for local and remote builds";
+            mainProgram = "securebuild";
+          };
+        };
     in {
+      packages = forAllSystems (system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          securebuild = mkSecurebuild pkgs;
+        in
+          {
+            inherit securebuild;
+            default = securebuild;
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+            # This image is assembled directly from Nix store closures. There
+            # is intentionally no base image, Dockerfile, Alpine, or apk step.
+            securebuild-image = pkgs.dockerTools.buildLayeredImage {
+              name = "securebuild-cli";
+              tag = "nix";
+              contents = [ securebuild pkgs.cacert ];
+              config = {
+                Entrypoint = [ "/bin/securebuild" ];
+                Env = [ "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt" ];
+                Labels = {
+                  "org.opencontainers.image.title" = "SecureBuild CLI";
+                  "org.opencontainers.image.description" = "SecureBuild CLI assembled directly from a Nix closure";
+                };
+              };
+            };
+          });
+
+      checks = forAllSystems (system: {
+        # buildGoModule's checkPhase runs the securebuild-cmd test suite.
+        securebuild-cli = self.packages.${system}.securebuild;
+      });
+
+      apps = forAllSystems (system: {
+        securebuild = {
+          type = "app";
+          program = "${self.packages.${system}.securebuild}/bin/securebuild";
+        };
+        default = self.apps.${system}.securebuild;
+      });
+
       devShells = forAllSystems (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
