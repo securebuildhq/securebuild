@@ -15,6 +15,7 @@ import (
 	"github.com/securebuildhq/securebuild/builder-cmd/cli"
 	"github.com/securebuildhq/securebuild/integration/testutil"
 	"github.com/securebuildhq/securebuild/pkg/apk"
+	sbexecution "github.com/securebuildhq/securebuild/pkg/execution"
 	"github.com/securebuildhq/securebuild/pkg/listener"
 	sbpackage "github.com/securebuildhq/securebuild/pkg/package"
 	"github.com/securebuildhq/securebuild/pkg/param"
@@ -120,6 +121,10 @@ func TestAPKProxyHappyPath(t *testing.T) {
 		testPublishPackage(ctx, t, minioStorage, proxy, arch, apkFilename)
 	})
 
+	t.Run("Track publication readiness", func(t *testing.T) {
+		testPublicationReadinessAccounting(ctx, t, testDB)
+	})
+
 	t.Run("Withdraw package", func(t *testing.T) {
 		testWithdrawPackage(ctx, t, testDB, proxy, arch, apkFilename, pkgID, pkgVersionID)
 	})
@@ -149,6 +154,10 @@ func testPublishPackage(ctx context.Context, t *testing.T, minioStorage *testuti
 	err = uploadAPK(ctx, minioStorage, apkPath, arch, apkFilename)
 	require.NoError(t, err)
 
+	indexedAt, err := sbexecution.GetExecutionIndexedAt(ctx, "test-execution-id", arch)
+	require.NoError(t, err)
+	require.Nil(t, indexedAt, "execution must not be repository-ready before APKINDEX is uploaded")
+
 	// Call HandleAddApk to process the pkginfo and generate APKINDEX
 	fmt.Println("Calling HandleAddApk to generate APKINDEX...")
 	_, err = listener.HandleAddApk(ctx, arch)
@@ -170,6 +179,10 @@ func testPublishPackage(ctx context.Context, t *testing.T, minioStorage *testuti
 	// Verify APKINDEX contains our package
 	require.Contains(t, indexContent, "test-package", "APKINDEX should contain test-package")
 	fmt.Println("APKINDEX contains the package")
+
+	indexedAt, err = sbexecution.GetExecutionIndexedAt(ctx, "test-execution-id", arch)
+	require.NoError(t, err)
+	require.NotNil(t, indexedAt, "execution should become repository-ready after APKINDEX is uploaded")
 
 	// Verify package is accessible through proxy
 	fmt.Println("Verifying package is accessible through proxy...")
@@ -202,6 +215,45 @@ func testPublishPackage(ctx context.Context, t *testing.T, minioStorage *testuti
 	require.Equal(t, "hello world from test package\n", testFileContent)
 
 	fmt.Println("Package published successfully and is accessible with correct contents")
+}
+
+func testPublicationReadinessAccounting(ctx context.Context, t *testing.T, testDB *testutil.TestDatabase) {
+	const executionID = "test-publication-accounting-execution"
+	_, err := testDB.Pool.Exec(ctx, `
+		INSERT INTO execution (id, created_at, package_id, package_version_id, version_label, status)
+		VALUES ($1, NOW(), 'test-package-id', 'test-package-version-id', '1.0.0-r0', 'publishing')
+	`, executionID)
+	require.NoError(t, err)
+
+	err = sbexecution.RecordAPKIndexed(ctx, executionID, "x86_64", "test-package-1.0.0-r0.apk", 2)
+	require.NoError(t, err)
+	indexedAt, err := sbexecution.GetExecutionIndexedAt(ctx, executionID, "x86_64")
+	require.NoError(t, err)
+	require.Nil(t, indexedAt, "one of two expected APKs must not make the architecture ready")
+
+	// Reprocessing an event after an acknowledgement/delete failure must not
+	// count the same APK twice.
+	err = sbexecution.RecordAPKIndexed(ctx, executionID, "x86_64", "test-package-1.0.0-r0.apk", 2)
+	require.NoError(t, err)
+	indexedAt, err = sbexecution.GetExecutionIndexedAt(ctx, executionID, "x86_64")
+	require.NoError(t, err)
+	require.Nil(t, indexedAt, "duplicate APK acknowledgement must be idempotent")
+
+	err = sbexecution.RecordAPKIndexed(ctx, executionID, "x86_64", "test-subpackage-1.0.0-r0.apk", 2)
+	require.NoError(t, err)
+	indexedAt, err = sbexecution.GetExecutionIndexedAt(ctx, executionID, "x86_64")
+	require.NoError(t, err)
+	require.NotNil(t, indexedAt, "all expected x86_64 APKs should make that architecture ready")
+
+	aarch64IndexedAt, err := sbexecution.GetExecutionIndexedAt(ctx, executionID, "aarch64")
+	require.NoError(t, err)
+	require.Nil(t, aarch64IndexedAt, "architectures must be tracked independently")
+
+	err = sbexecution.RecordAPKIndexed(ctx, executionID, "aarch64", "test-package-1.0.0-r0.apk", 1)
+	require.NoError(t, err)
+	aarch64IndexedAt, err = sbexecution.GetExecutionIndexedAt(ctx, executionID, "aarch64")
+	require.NoError(t, err)
+	require.NotNil(t, aarch64IndexedAt, "aarch64 should become ready from its own APK acknowledgement")
 }
 
 // testWithdrawPackage removes a package from the database and R2 storage, then verifies it's no longer accessible

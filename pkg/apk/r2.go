@@ -13,10 +13,11 @@ import (
 )
 
 type ApkPublishedEvent struct {
-	PKGInfo     map[string]string
-	ExecutionID string
-	APKFilename string
-	Arch        string
+	PKGInfo          map[string]string
+	ExecutionID      string
+	APKFilename      string
+	Arch             string
+	ExpectedAPKCount int
 }
 
 func AddAPKToCatalogTable(ctx context.Context, apkFilename string, arch string, indexContent map[string]string) error {

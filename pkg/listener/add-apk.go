@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/securebuildhq/securebuild/pkg/apk"
 	"github.com/securebuildhq/securebuild/pkg/dynamicparam"
+	"github.com/securebuildhq/securebuild/pkg/execution"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
@@ -167,6 +168,21 @@ func HandleAddApk(ctx context.Context, arch string) (bool, error) {
 
 	if err := apk.UploadAPKIndex(ctx, currentAPKIndexFile, arch); err != nil {
 		return hasMore, fmt.Errorf("failed to upload apk index: %w", err)
+	}
+
+	// A package is consumable only after the index containing it has been
+	// uploaded. Record each APK after that boundary; RecordAPKIndexed marks the
+	// architecture ready once all APKs produced by the execution are present.
+	for _, apkPublishedEvent := range apkPublishedEvents {
+		expectedAPKCount := apkPublishedEvent.ExpectedAPKCount
+		if expectedAPKCount < 1 {
+			// Events produced during a rolling upgrade do not contain the count.
+			// Preserve compatibility for those already in the publication queue.
+			expectedAPKCount = 1
+		}
+		if err := execution.RecordAPKIndexed(ctx, apkPublishedEvent.ExecutionID, arch, apkPublishedEvent.APKFilename, expectedAPKCount); err != nil {
+			return hasMore, fmt.Errorf("failed to record indexed APK %s: %w", apkPublishedEvent.APKFilename, err)
+		}
 	}
 
 	keysToDelete := []string{}

@@ -64,6 +64,112 @@ func GetExecutionBuildStatusUpdatedAt(ctx context.Context, executionID string, a
 	return &updatedAt.Time, nil
 }
 
+// GetExecutionIndexedAt returns when all APKs produced by an execution for an
+// architecture were successfully written to that architecture's APK index.
+func GetExecutionIndexedAt(ctx context.Context, executionID string, arch string) (*time.Time, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	var query string
+	switch arch {
+	case "x86_64":
+		query = `SELECT x86_64_indexed_at FROM execution WHERE id = $1`
+	case "aarch64":
+		query = `SELECT aarch64_indexed_at FROM execution WHERE id = $1`
+	default:
+		return nil, fmt.Errorf("invalid architecture: %s", arch)
+	}
+
+	var indexedAt sql.NullTime
+	if err := conn.QueryRow(ctx, query, executionID).Scan(&indexedAt); err != nil {
+		return nil, err
+	}
+	if !indexedAt.Valid {
+		return nil, nil
+	}
+
+	return &indexedAt.Time, nil
+}
+
+// RecordAPKIndexed records one APK only after the updated APKINDEX has been
+// uploaded. The filename array makes retries idempotent, while the expected
+// count prevents an execution with subpackages from becoming ready early.
+func RecordAPKIndexed(ctx context.Context, executionID string, arch string, apkFilename string, expectedAPKCount int) error {
+	if expectedAPKCount < 1 {
+		return fmt.Errorf("expected APK count must be positive")
+	}
+
+	var recordQuery string
+	var finalizeQuery string
+	switch arch {
+	case "x86_64":
+		recordQuery = `
+			UPDATE execution
+			SET x86_64_indexed_apks = CASE
+					WHEN NOT ($2 = ANY(x86_64_indexed_apks)) THEN array_append(x86_64_indexed_apks, $2)
+					ELSE x86_64_indexed_apks
+				END,
+				x86_64_expected_apk_count = GREATEST(x86_64_expected_apk_count, $3)
+			WHERE id = $1
+		`
+		finalizeQuery = `
+			UPDATE execution
+			SET x86_64_indexed_at = COALESCE(x86_64_indexed_at, NOW())
+			WHERE id = $1
+			  AND x86_64_expected_apk_count > 0
+			  AND cardinality(x86_64_indexed_apks) >= x86_64_expected_apk_count
+		`
+	case "aarch64":
+		recordQuery = `
+			UPDATE execution
+			SET aarch64_indexed_apks = CASE
+					WHEN NOT ($2 = ANY(aarch64_indexed_apks)) THEN array_append(aarch64_indexed_apks, $2)
+					ELSE aarch64_indexed_apks
+				END,
+				aarch64_expected_apk_count = GREATEST(aarch64_expected_apk_count, $3)
+			WHERE id = $1
+		`
+		finalizeQuery = `
+			UPDATE execution
+			SET aarch64_indexed_at = COALESCE(aarch64_indexed_at, NOW())
+			WHERE id = $1
+			  AND aarch64_expected_apk_count > 0
+			  AND cardinality(aarch64_indexed_apks) >= aarch64_expected_apk_count
+		`
+	default:
+		return fmt.Errorf("invalid architecture: %s", arch)
+	}
+
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin recording indexed APK: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx, recordQuery, executionID, apkFilename, expectedAPKCount)
+	if err != nil {
+		return fmt.Errorf("record indexed APK: %w", err)
+	}
+
+	// Some administrative uploads are not associated with an execution. They
+	// should still be indexed, but there is no build readiness state to update.
+	if result.RowsAffected() == 0 {
+		return tx.Commit(ctx)
+	}
+
+	if _, err := tx.Exec(ctx, finalizeQuery, executionID); err != nil {
+		return fmt.Errorf("finalize APK index readiness: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit indexed APK: %w", err)
+	}
+	return nil
+}
+
 func SetArchStatus(ctx context.Context, executionID string, arch string, status string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
@@ -345,6 +451,25 @@ func UpdateExecutionStatus(ctx context.Context, executionID string, status types
 		return err
 	}
 
+	return nil
+}
+
+// UpdateExecutionOverallStatus updates only the aggregate execution state.
+// It is used while an execution waits for repository publication so the
+// builder-reported per-architecture success states remain intact.
+func UpdateExecutionOverallStatus(ctx context.Context, executionID string, status types.ExecutionStatus) error {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	query := `
+		UPDATE execution
+		SET status = $1
+		WHERE id = $2 AND status <> 'failed'
+	`
+
+	if _, err := conn.Exec(ctx, query, status, executionID); err != nil {
+		return err
+	}
 	return nil
 }
 

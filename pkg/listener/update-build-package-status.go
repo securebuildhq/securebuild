@@ -35,6 +35,16 @@ const (
 	StatusFileTimeout = 60 * time.Second
 )
 
+func packageExecutionReadyForSuccess(x86Assigned bool, x86Status string, x86Indexed bool, aarch64Assigned bool, aarch64Status string, aarch64Indexed bool) bool {
+	if !x86Assigned && !aarch64Assigned {
+		return false
+	}
+
+	x86Ready := !x86Assigned || (x86Status == "success" && x86Indexed)
+	aarch64Ready := !aarch64Assigned || (aarch64Status == "success" && aarch64Indexed)
+	return x86Ready && aarch64Ready
+}
+
 func StartBuildPackageStatusChecker(ctx context.Context) error {
 	for {
 		if err := handleUpdateBuildPackageStatus(ctx, `{}`); err != nil {
@@ -271,10 +281,44 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 		}
 	}
 
-	// All assigned arches must be success. Unassigned arch (no VM for that arch) counts as done.
-	x86Done := x86BuilderID == "" || updatedX86BuildStatus == "success"
-	aarch64Done := aarch64BuilderID == "" || updatedAarch64BuildStatus == "success"
-	if x86Done && aarch64Done && (x86BuilderID != "" || aarch64BuilderID != "") {
+	// Builder success means the APK files and publication events were uploaded.
+	// Downstream builds must wait until StartAddAPK has also uploaded an index
+	// containing every APK produced for each assigned architecture.
+	x86BuildDone := x86BuilderID == "" || updatedX86BuildStatus == "success"
+	aarch64BuildDone := aarch64BuilderID == "" || updatedAarch64BuildStatus == "success"
+	if x86BuildDone && aarch64BuildDone && (x86BuilderID != "" || aarch64BuilderID != "") {
+		x86Indexed := x86BuilderID == ""
+		if x86BuilderID != "" {
+			indexedAt, err := execution.GetExecutionIndexedAt(ctx, executionID, "x86_64")
+			if err != nil {
+				return fmt.Errorf("failed to get x86_64 index readiness: %w", err)
+			}
+			x86Indexed = indexedAt != nil
+		}
+
+		aarch64Indexed := aarch64BuilderID == ""
+		if aarch64BuilderID != "" {
+			indexedAt, err := execution.GetExecutionIndexedAt(ctx, executionID, "aarch64")
+			if err != nil {
+				return fmt.Errorf("failed to get aarch64 index readiness: %w", err)
+			}
+			aarch64Indexed = indexedAt != nil
+		}
+
+		if !packageExecutionReadyForSuccess(
+			x86BuilderID != "", updatedX86BuildStatus, x86Indexed,
+			aarch64BuilderID != "", updatedAarch64BuildStatus, aarch64Indexed,
+		) {
+			logger.Debug("package build complete; waiting for APK index publication",
+				zap.String("executionID", executionID),
+				zap.Bool("x86_64Indexed", x86Indexed),
+				zap.Bool("aarch64Indexed", aarch64Indexed))
+			if err := execution.UpdateExecutionOverallStatus(ctx, executionID, executiontypes.ExecutionStatusPublishing); err != nil {
+				return fmt.Errorf("failed to set execution publishing status: %w", err)
+			}
+			return nil
+		}
+
 		if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusSuccess); err != nil {
 			return fmt.Errorf("failed to set execution status: %w", err)
 		}

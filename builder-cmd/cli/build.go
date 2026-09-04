@@ -289,7 +289,7 @@ exit $MELANGE_TEST_EXIT_CODE;
 	for _, apkFilename := range apkFilenames {
 		logToFile(publishingLogFile, fmt.Sprintf("uploading %s to r2", apkFilename))
 
-		if err := UploadAPK(ctx, apkFilename, arch, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, publishingLogFile, executionID, zoneID, cachePurgeToken); err != nil {
+		if err := UploadAPK(ctx, apkFilename, arch, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, publishingLogFile, executionID, zoneID, cachePurgeToken, len(apkFilenames)); err != nil {
 			WriteStatus(statusFile, types.ImageBuildStatusFailed)
 			logToFile(publishingLogFile, fmt.Sprintf("failed to upload apk: %s", err))
 			return fmt.Errorf("failed to upload apk: %w", err)
@@ -330,7 +330,7 @@ func logToFile(filename string, message string) {
 	}
 }
 
-func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoFilename string, executionID string) error {
+func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoFilename string, executionID string, expectedAPKCount int) error {
 	// Try optimized extraction first
 	apkMeta, err := apk.ExtractAPKMetadataOptimized(apkFilename)
 	if err != nil {
@@ -344,10 +344,11 @@ func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoF
 	}
 
 	apkPublishedEvent := ApkPublishedEvent{
-		PKGInfo:     apkMeta,
-		ExecutionID: string(executionID),
-		APKFilename: filepath.Base(apkFilename),
-		Arch:        arch,
+		PKGInfo:          apkMeta,
+		ExecutionID:      string(executionID),
+		APKFilename:      filepath.Base(apkFilename),
+		Arch:             arch,
+		ExpectedAPKCount: expectedAPKCount,
 	}
 
 	b, err := json.Marshal(apkPublishedEvent)
@@ -387,13 +388,19 @@ func listAPKs(ctx context.Context, outputDir string) ([]string, error) {
 }
 
 type ApkPublishedEvent struct {
-	PKGInfo     map[string]string
-	ExecutionID string
-	APKFilename string
-	Arch        string
+	PKGInfo          map[string]string
+	ExecutionID      string
+	APKFilename      string
+	Arch             string
+	ExpectedAPKCount int
 }
 
-func UploadAPK(ctx context.Context, apkFilename string, arch string, bucketName string, accessKeyID string, secretAccessKey string, endpoint string, region string, directory string, publishingLogFile string, executionID string, cfZoneID string, cfCachePurgeToken string) error {
+func UploadAPK(ctx context.Context, apkFilename string, arch string, bucketName string, accessKeyID string, secretAccessKey string, endpoint string, region string, directory string, publishingLogFile string, executionID string, cfZoneID string, cfCachePurgeToken string, expectedAPKCounts ...int) error {
+	expectedAPKCount := 1
+	if len(expectedAPKCounts) > 0 && expectedAPKCounts[0] > 0 {
+		expectedAPKCount = expectedAPKCounts[0]
+	}
+
 	logToFile(publishingLogFile, fmt.Sprintf("in uploadAPK: uploading %s to r2", apkFilename))
 	apkKey := filepath.Join(directory, arch, filepath.Base(apkFilename))
 	if err := UploadFileToR2WithRetries(ctx, apkFilename, bucketName, apkKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, cfZoneID, cfCachePurgeToken); err != nil {
@@ -409,7 +416,7 @@ func UploadAPK(ctx context.Context, apkFilename string, arch string, bucketName 
 	defer os.Remove(pkgInfoFile.Name()) // Clean up temp file
 
 	logToFile(publishingLogFile, fmt.Sprintf("writing pkg info for %s", apkFilename))
-	if err := writePkgInfo(ctx, apkFilename, arch, pkgInfoFile.Name(), executionID); err != nil {
+	if err := writePkgInfo(ctx, apkFilename, arch, pkgInfoFile.Name(), executionID, expectedAPKCount); err != nil {
 		return fmt.Errorf("failed to write pkg info: %w", err)
 	}
 	logToFile(publishingLogFile, fmt.Sprintf("wrote pkg info for %s", apkFilename))
