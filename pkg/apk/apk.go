@@ -121,7 +121,6 @@ func AddAPKToIndex(ctx context.Context, apkMeta map[string]string, pathToIndexTa
 	newVersionStr := fmt.Sprintf("%s-r%s", apkMeta["pkgver"], apkMeta["pkgrel"])
 
 	filtered := make([]map[string]string, 0, len(apkIndex.Packages))
-	versionAlreadyExists := false
 	for _, pkg := range apkIndex.Packages {
 		if pkg["P"] == name {
 			// The V field in APKINDEX might already include -rX suffix
@@ -136,15 +135,13 @@ func AddAPKToIndex(ctx context.Context, apkMeta map[string]string, pathToIndexTa
 			}
 
 			if existingVersionStr == newVersionStr {
-				// This exact version already exists, skip adding
-				versionAlreadyExists = true
+				// Replace the existing entry. A retry can publish a different
+				// artifact at the same name/version, so retaining its old checksum
+				// would make APKINDEX disagree with the canonical APK object.
+				continue
 			}
 		}
 		filtered = append(filtered, pkg)
-	}
-
-	if versionAlreadyExists {
-		return pathToIndexTarGz, nil
 	}
 
 	apkIndex.Packages = append(filtered, indexMeta)

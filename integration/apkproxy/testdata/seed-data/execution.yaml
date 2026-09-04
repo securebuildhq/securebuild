@@ -1,0 +1,28 @@
+database: securebuild
+name: execution
+requires:
+  - package_version
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-execution-id"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: package_id
+          value:
+            str: "test-package-id"
+        - column: package_version_id
+          value:
+            str: "test-package-version-id"
+        - column: version_label
+          value:
+            str: "1.0.0-r0"
+        - column: status
+          value:
+            str: "publishing"
+        - column: repository_publication_required
+          value:
+            str: "true"

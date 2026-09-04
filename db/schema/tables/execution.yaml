@@ -37,6 +37,11 @@ schema:
           notNull: true
       - name: status
         type: text
+      - name: repository_publication_required
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"
 
       - name: x86_64_build_stdout
         type: text
@@ -55,6 +60,8 @@ schema:
 
       - name: x86_64_publish_output
         type: text
+      - name: x86_64_repository_verified_at
+        type: timestamp with time zone
 
       - name: aarch64_build_stdout
         type: text
@@ -73,6 +80,8 @@ schema:
 
       - name: aarch64_publish_output
         type: text
+      - name: aarch64_repository_verified_at
+        type: timestamp with time zone
 
 
       - name: x86_64_status
@@ -93,4 +102,3 @@ schema:
         type: text
       - name: cause_id
         type: text
-

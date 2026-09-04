@@ -64,6 +64,88 @@ func GetExecutionBuildStatusUpdatedAt(ctx context.Context, executionID string, a
 	return &updatedAt.Time, nil
 }
 
+// GetExecutionRepositoryVerifiedAt returns when the public repository was
+// verified to contain the execution's complete publication manifest.
+func GetExecutionRepositoryVerifiedAt(ctx context.Context, executionID string, arch string) (*time.Time, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	var query string
+	switch arch {
+	case "x86_64":
+		query = `SELECT x86_64_repository_verified_at FROM execution WHERE id = $1`
+	case "aarch64":
+		query = `SELECT aarch64_repository_verified_at FROM execution WHERE id = $1`
+	default:
+		return nil, fmt.Errorf("invalid architecture: %s", arch)
+	}
+
+	var verifiedAt sql.NullTime
+	if err := conn.QueryRow(ctx, query, executionID).Scan(&verifiedAt); err != nil {
+		return nil, err
+	}
+	if !verifiedAt.Valid {
+		return nil, nil
+	}
+
+	return &verifiedAt.Time, nil
+}
+
+// MarkExecutionRepositoryVerified records the final publication boundary. It
+// must only be called after the public APKINDEX and every APK in the manifest
+// have been fetched and verified.
+func MarkExecutionRepositoryVerified(ctx context.Context, executionID string, arch string) error {
+	var query string
+	switch arch {
+	case "x86_64":
+		query = `UPDATE execution SET x86_64_repository_verified_at = COALESCE(x86_64_repository_verified_at, NOW()) WHERE id = $1`
+	case "aarch64":
+		query = `UPDATE execution SET aarch64_repository_verified_at = COALESCE(aarch64_repository_verified_at, NOW()) WHERE id = $1`
+	default:
+		return fmt.Errorf("invalid architecture: %s", arch)
+	}
+
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+	_, err := conn.Exec(ctx, query, executionID)
+	return err
+}
+
+func ExecutionRequiresRepositoryPublication(ctx context.Context, executionID string) (bool, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	var required bool
+	if err := conn.QueryRow(ctx, `SELECT repository_publication_required FROM execution WHERE id = $1`, executionID).Scan(&required); err != nil {
+		return false, err
+	}
+	return required, nil
+}
+
+// IsLatestExecutionForPackageVersion prevents a stale manifest from an older
+// retry from overwriting the artifact selected by a newer execution.
+func IsLatestExecutionForPackageVersion(ctx context.Context, executionID string) (bool, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	var latest bool
+	err := conn.QueryRow(ctx, `
+		SELECT NOT EXISTS (
+			SELECT 1
+			FROM execution newer
+			WHERE newer.package_version_id = current.package_version_id
+			  AND (newer.created_at, newer.id) > (current.created_at, current.id)
+			  AND newer.status NOT IN ('failed', 'vm_deleted')
+		)
+		FROM execution current
+		WHERE current.id = $1
+	`, executionID).Scan(&latest)
+	if err != nil {
+		return false, err
+	}
+	return latest, nil
+}
+
 func SetArchStatus(ctx context.Context, executionID string, arch string, status string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
@@ -314,8 +396,8 @@ func CreateExecution(ctx context.Context, packageID string, pkgVersion *sbpackag
 	)
 
 	query := `
-		INSERT INTO execution (id, package_id, package_version_id, version_label, status, created_at, use_root, cause, cause_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO execution (id, package_id, package_version_id, version_label, status, created_at, use_root, cause, cause_id, repository_publication_required)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
 		RETURNING id, created_at
 	`
 
@@ -328,6 +410,62 @@ func CreateExecution(ctx context.Context, packageID string, pkgVersion *sbpackag
 	}
 
 	return &execution, nil
+}
+
+// CreateExecutionIfNoActive serializes creation by package version so two
+// queue deliveries cannot publish different bytes for the same APK coordinate
+// at the same time. The bool reports whether this call created the execution.
+func CreateExecutionIfNoActive(ctx context.Context, packageID string, pkgVersion *sbpackagetypes.PackageVersion, cause string, causeID string) (*types.Execution, bool, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("begin execution creation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, pkgVersion.ID); err != nil {
+		return nil, false, fmt.Errorf("lock package version execution: %w", err)
+	}
+
+	var existing types.Execution
+	err = tx.QueryRow(ctx, `
+		SELECT id, created_at, status
+		FROM execution
+		WHERE package_version_id = $1
+		  AND status NOT IN ('success', 'failed', 'vm_deleted')
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, pkgVersion.ID).Scan(&existing.ID, &existing.CreatedAt, &existing.Status)
+	if err == nil {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, fmt.Errorf("commit existing execution lookup: %w", err)
+		}
+		return &existing, false, nil
+	}
+	if err != pgx.ErrNoRows {
+		return nil, false, fmt.Errorf("find active execution: %w", err)
+	}
+
+	id, err := securerandom.Hex(24)
+	if err != nil {
+		return nil, false, err
+	}
+	createdAt := time.Now().UTC()
+	var created types.Execution
+	err = tx.QueryRow(ctx, `
+		INSERT INTO execution (id, package_id, package_version_id, version_label, status, created_at, use_root, cause, cause_id, repository_publication_required)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+		RETURNING id, created_at, status
+	`, id, packageID, pkgVersion.ID, pkgVersion.Version, types.ExecutionStatusPending, createdAt, pkgVersion.UseRoot, cause, causeID).Scan(&created.ID, &created.CreatedAt, &created.Status)
+	if err != nil {
+		return nil, false, fmt.Errorf("insert execution: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, fmt.Errorf("commit execution creation: %w", err)
+	}
+	return &created, true, nil
 }
 
 func UpdateExecutionStatus(ctx context.Context, executionID string, status types.ExecutionStatus) error {
@@ -345,6 +483,25 @@ func UpdateExecutionStatus(ctx context.Context, executionID string, status types
 		return err
 	}
 
+	return nil
+}
+
+// UpdateExecutionOverallStatus updates only the aggregate execution state.
+// It is used while an execution waits for repository publication so the
+// builder-reported per-architecture success states remain intact.
+func UpdateExecutionOverallStatus(ctx context.Context, executionID string, status types.ExecutionStatus) error {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	query := `
+		UPDATE execution
+		SET status = $1
+		WHERE id = $2 AND status <> 'failed'
+	`
+
+	if _, err := conn.Exec(ctx, query, status, executionID); err != nil {
+		return err
+	}
 	return nil
 }
 

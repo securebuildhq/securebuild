@@ -285,17 +285,29 @@ exit $MELANGE_TEST_EXIT_CODE;
 	}
 	executionID := string(executionIDBytes)
 
-	// upload all packages to r2 and write the index content to disk
+	// Stage every package first. The manifest is uploaded last and is the single
+	// atomic signal that the complete architecture output is ready to publish.
+	artifacts := make([]APKPublicationArtifact, 0, len(apkFilenames))
 	for _, apkFilename := range apkFilenames {
 		logToFile(publishingLogFile, fmt.Sprintf("uploading %s to r2", apkFilename))
 
-		if err := UploadAPK(ctx, apkFilename, arch, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, publishingLogFile, executionID, zoneID, cachePurgeToken); err != nil {
+		artifact, err := StageAPK(ctx, apkFilename, arch, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, publishingLogFile, executionID)
+		if err != nil {
 			WriteStatus(statusFile, types.ImageBuildStatusFailed)
 			logToFile(publishingLogFile, fmt.Sprintf("failed to upload apk: %s", err))
 			return fmt.Errorf("failed to upload apk: %w", err)
 		}
+		artifacts = append(artifacts, artifact)
 
 		logToFile(publishingLogFile, fmt.Sprintf("uploaded %s to r2", apkFilename))
+	}
+	if err := UploadAPKManifest(ctx, APKPublicationManifest{
+		ExecutionID: executionID,
+		Arch:        arch,
+		Artifacts:   artifacts,
+	}, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, publishingLogFile); err != nil {
+		WriteStatus(statusFile, types.ImageBuildStatusFailed)
+		return fmt.Errorf("failed to upload APK publication manifest: %w", err)
 	}
 
 	logToFile(publishingLogFile, "all packages uploaded to r2")
@@ -330,7 +342,7 @@ func logToFile(filename string, message string) {
 	}
 }
 
-func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoFilename string, executionID string) error {
+func extractPublicationArtifact(apkFilename, arch, stagedAPKKey string) (APKPublicationArtifact, error) {
 	// Try optimized extraction first
 	apkMeta, err := apk.ExtractAPKMetadataOptimized(apkFilename)
 	if err != nil {
@@ -338,27 +350,67 @@ func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoF
 		logger.Warnf("Optimized APK metadata extraction failed for %s, trying fallback method: %v", apkFilename, err)
 		apkMeta, err = apk.ExtractAPKMetadata(apkFilename)
 		if err != nil {
-			return fmt.Errorf("failed to extract apk metadata (both optimized and fallback methods failed): %w", err)
+			return APKPublicationArtifact{}, fmt.Errorf("failed to extract apk metadata (both optimized and fallback methods failed): %w", err)
 		}
 		logger.Infof("Successfully extracted APK metadata using fallback method for %s", apkFilename)
 	}
 
-	apkPublishedEvent := ApkPublishedEvent{
-		PKGInfo:     apkMeta,
-		ExecutionID: string(executionID),
-		APKFilename: filepath.Base(apkFilename),
-		Arch:        arch,
-	}
+	return APKPublicationArtifact{
+		PKGInfo:      apkMeta,
+		APKFilename:  filepath.Base(apkFilename),
+		Arch:         arch,
+		StagedAPKKey: stagedAPKKey,
+	}, nil
+}
 
-	b, err := json.Marshal(apkPublishedEvent)
+type APKPublicationArtifact struct {
+	PKGInfo      map[string]string `json:"pkgInfo"`
+	APKFilename  string            `json:"apkFilename"`
+	Arch         string            `json:"arch"`
+	StagedAPKKey string            `json:"stagedAPKKey"`
+}
+
+type APKPublicationManifest struct {
+	ExecutionID string                   `json:"executionId"`
+	Arch        string                   `json:"arch"`
+	Artifacts   []APKPublicationArtifact `json:"artifacts"`
+}
+
+func StageAPK(ctx context.Context, apkFilename string, arch string, bucketName string, accessKeyID string, secretAccessKey string, endpoint string, region string, directory string, publishingLogFile string, executionID string) (APKPublicationArtifact, error) {
+	logToFile(publishingLogFile, fmt.Sprintf("staging %s in r2", apkFilename))
+	stagedAPKKey := filepath.Join(arch, "staging", executionID, filepath.Base(apkFilename))
+	fullStagedKey := filepath.Join(directory, stagedAPKKey)
+	if err := UploadFileToR2WithRetries(ctx, apkFilename, bucketName, fullStagedKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, "", ""); err != nil {
+		return APKPublicationArtifact{}, fmt.Errorf("failed to stage apk: %w", err)
+	}
+	artifact, err := extractPublicationArtifact(apkFilename, arch, stagedAPKKey)
 	if err != nil {
-		return fmt.Errorf("failed to marshal apk metadata: %w", err)
+		return APKPublicationArtifact{}, err
 	}
+	return artifact, nil
+}
 
-	if err := os.WriteFile(pkgInfoFilename, b, 0o644); err != nil {
-		return fmt.Errorf("failed to write pkg info file: %w", err)
+func UploadAPKManifest(ctx context.Context, manifest APKPublicationManifest, bucketName string, accessKeyID string, secretAccessKey string, endpoint string, region string, directory string, publishingLogFile string) error {
+	if manifest.ExecutionID == "" || manifest.Arch == "" || len(manifest.Artifacts) == 0 {
+		return fmt.Errorf("publication manifest must include execution, architecture, and at least one artifact")
 	}
-
+	b, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal publication manifest: %w", err)
+	}
+	manifestFile, err := os.CreateTemp("", "apk-publication-manifest-*.json")
+	if err != nil {
+		return fmt.Errorf("failed to create publication manifest: %w", err)
+	}
+	manifestFile.Close()
+	defer os.Remove(manifestFile.Name())
+	if err := os.WriteFile(manifestFile.Name(), b, 0o644); err != nil {
+		return fmt.Errorf("failed to write publication manifest: %w", err)
+	}
+	manifestKey := filepath.Join(directory, manifest.Arch, "publication-manifests", manifest.ExecutionID+".json")
+	if err := UploadFileToR2WithRetries(ctx, manifestFile.Name(), bucketName, manifestKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, "", ""); err != nil {
+		return fmt.Errorf("failed to upload publication manifest: %w", err)
+	}
 	return nil
 }
 
@@ -386,42 +438,53 @@ func listAPKs(ctx context.Context, outputDir string) ([]string, error) {
 	return apkFiles, nil
 }
 
-type ApkPublishedEvent struct {
-	PKGInfo     map[string]string
-	ExecutionID string
-	APKFilename string
-	Arch        string
+// UploadAPK remains as a single-artifact convenience for callers outside the
+// build loop. Production builds use StageAPK for every output and then upload
+// exactly one complete manifest.
+func UploadAPK(ctx context.Context, apkFilename string, arch string, bucketName string, accessKeyID string, secretAccessKey string, endpoint string, region string, directory string, publishingLogFile string, executionID string, cfZoneID string, cfCachePurgeToken string, expectedAPKCounts ...int) error {
+	_ = cfZoneID
+	_ = cfCachePurgeToken
+	_ = expectedAPKCounts
+	artifact, err := StageAPK(ctx, apkFilename, arch, bucketName, accessKeyID, secretAccessKey, endpoint, region, directory, publishingLogFile, executionID)
+	if err != nil {
+		return err
+	}
+	return UploadAPKManifest(ctx, APKPublicationManifest{ExecutionID: executionID, Arch: arch, Artifacts: []APKPublicationArtifact{artifact}}, bucketName, accessKeyID, secretAccessKey, endpoint, region, directory, publishingLogFile)
 }
 
-func UploadAPK(ctx context.Context, apkFilename string, arch string, bucketName string, accessKeyID string, secretAccessKey string, endpoint string, region string, directory string, publishingLogFile string, executionID string, cfZoneID string, cfCachePurgeToken string) error {
-	logToFile(publishingLogFile, fmt.Sprintf("in uploadAPK: uploading %s to r2", apkFilename))
-	apkKey := filepath.Join(directory, arch, filepath.Base(apkFilename))
-	if err := UploadFileToR2WithRetries(ctx, apkFilename, bucketName, apkKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, cfZoneID, cfCachePurgeToken); err != nil {
-		return fmt.Errorf("failed to upload apk: %w", err)
-	}
-	logToFile(publishingLogFile, fmt.Sprintf("uploaded %s to r2", apkFilename))
+func copyObjectInR2(ctx context.Context, bucketName string, sourceKey string, destinationKey string, accessKeyID string, secretAccessKey string, endpoint string, region string) error {
+	customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, _ ...interface{}) (aws.Endpoint, error) {
+		return aws.Endpoint{
+			URL:               endpoint,
+			SigningRegion:     region,
+			HostnameImmutable: true,
+		}, nil
+	})
 
-	pkgInfoFile, err := os.CreateTemp("", "pkginfo-*.json")
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion(region),
+		config.WithEndpointResolverWithOptions(customResolver),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, "")),
+	)
 	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
+		return fmt.Errorf("failed to load AWS config: %w", err)
 	}
-	defer pkgInfoFile.Close()
-	defer os.Remove(pkgInfoFile.Name()) // Clean up temp file
 
-	logToFile(publishingLogFile, fmt.Sprintf("writing pkg info for %s", apkFilename))
-	if err := writePkgInfo(ctx, apkFilename, arch, pkgInfoFile.Name(), executionID); err != nil {
-		return fmt.Errorf("failed to write pkg info: %w", err)
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		if os.Getenv("R2_USE_PATH_STYLE") == "true" {
+			o.UsePathStyle = true
+		}
+	})
+
+	_, err = s3Client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(bucketName),
+		CopySource: aws.String(fmt.Sprintf("%s/%s", bucketName, sourceKey)),
+		Key:        aws.String(destinationKey),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to copy object from %s to %s: %w", sourceKey, destinationKey, err)
 	}
-	logToFile(publishingLogFile, fmt.Sprintf("wrote pkg info for %s", apkFilename))
 
-	logToFile(publishingLogFile, fmt.Sprintf("uploading pkg info for %s to r2", apkFilename))
-	metadataKey := filepath.Join(directory, arch, fmt.Sprintf("executions/%s.json", filepath.Base(apkFilename)))
-	if err := UploadFileToR2WithRetries(ctx, pkgInfoFile.Name(), bucketName, metadataKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, cfZoneID, cfCachePurgeToken); err != nil {
-		return fmt.Errorf("failed to upload pkg info: %w", err)
-	}
-	logToFile(publishingLogFile, fmt.Sprintf("uploaded pkg info for %s to r2", apkFilename))
-
-	logger.Infof("Successfully uploaded %s to R2 bucket %s", apkFilename, bucketName)
 	return nil
 }
 

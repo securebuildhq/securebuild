@@ -35,6 +35,20 @@ const (
 	StatusFileTimeout = 60 * time.Second
 )
 
+func packageExecutionReadyForSuccess(x86Assigned bool, x86Status string, x86RepositoryVerified bool, aarch64Assigned bool, aarch64Status string, aarch64RepositoryVerified bool) bool {
+	if !x86Assigned && !aarch64Assigned {
+		return false
+	}
+
+	x86Ready := !x86Assigned || (x86Status == "success" && x86RepositoryVerified)
+	aarch64Ready := !aarch64Assigned || (aarch64Status == "success" && aarch64RepositoryVerified)
+	return x86Ready && aarch64Ready
+}
+
+func repositoryPublicationTimedOut(now time.Time, statusUpdatedAt *time.Time, verifiedAt *time.Time) bool {
+	return verifiedAt == nil && statusUpdatedAt != nil && now.Sub(*statusUpdatedAt) > DefaultPublishingTimeout
+}
+
 func StartBuildPackageStatusChecker(ctx context.Context) error {
 	for {
 		if err := handleUpdateBuildPackageStatus(ctx, `{}`); err != nil {
@@ -271,11 +285,81 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 		}
 	}
 
-	// All assigned arches must be success. Unassigned arch (no VM for that arch) counts as done.
-	x86Done := x86BuilderID == "" || updatedX86BuildStatus == "success"
-	aarch64Done := aarch64BuilderID == "" || updatedAarch64BuildStatus == "success"
-	if x86Done && aarch64Done && (x86BuilderID != "" || aarch64BuilderID != "") {
-		if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusSuccess); err != nil {
+	repositoryPublicationRequired, err := execution.ExecutionRequiresRepositoryPublication(ctx, executionID)
+	if err != nil {
+		return fmt.Errorf("get repository publication requirement: %w", err)
+	}
+
+	var x86VerifiedAt *time.Time
+	if repositoryPublicationRequired && x86BuilderID != "" && updatedX86BuildStatus == "success" {
+		x86VerifiedAt, err = execution.GetExecutionRepositoryVerifiedAt(ctx, executionID, "x86_64")
+		if err != nil {
+			return fmt.Errorf("failed to get x86_64 repository verification: %w", err)
+		}
+		x86StatusUpdatedAt, err := execution.GetExecutionBuildStatusUpdatedAt(ctx, executionID, "x86_64")
+		if err != nil {
+			return fmt.Errorf("failed to get x86_64 build status updated at: %w", err)
+		}
+		if repositoryPublicationTimedOut(time.Now(), x86StatusUpdatedAt, x86VerifiedAt) {
+			logger.Warn("EXECUTION FAILED: x86_64 repository publication timeout exceeded",
+				zap.String("executionID", executionID),
+				zap.String("arch", "x86_64"),
+				zap.Time("lastStatusUpdatedAt", *x86StatusUpdatedAt),
+				zap.Duration("timeout", DefaultPublishingTimeout))
+			if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusFailed); err != nil {
+				return fmt.Errorf("failed to update execution status: %w", err)
+			}
+			return nil
+		}
+	}
+
+	var aarch64VerifiedAt *time.Time
+	if repositoryPublicationRequired && aarch64BuilderID != "" && updatedAarch64BuildStatus == "success" {
+		aarch64VerifiedAt, err = execution.GetExecutionRepositoryVerifiedAt(ctx, executionID, "aarch64")
+		if err != nil {
+			return fmt.Errorf("failed to get aarch64 repository verification: %w", err)
+		}
+		aarch64StatusUpdatedAt, err := execution.GetExecutionBuildStatusUpdatedAt(ctx, executionID, "aarch64")
+		if err != nil {
+			return fmt.Errorf("failed to get aarch64 build status updated at: %w", err)
+		}
+		if repositoryPublicationTimedOut(time.Now(), aarch64StatusUpdatedAt, aarch64VerifiedAt) {
+			logger.Warn("EXECUTION FAILED: aarch64 repository publication timeout exceeded",
+				zap.String("executionID", executionID),
+				zap.String("arch", "aarch64"),
+				zap.Time("lastStatusUpdatedAt", *aarch64StatusUpdatedAt),
+				zap.Duration("timeout", DefaultPublishingTimeout))
+			if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusFailed); err != nil {
+				return fmt.Errorf("failed to update execution status: %w", err)
+			}
+			return nil
+		}
+	}
+
+	// Builder success means the APK files and publication events were uploaded.
+	// Downstream builds must wait until StartAddAPK has also uploaded an index
+	// containing every APK produced for each assigned architecture.
+	x86BuildDone := x86BuilderID == "" || updatedX86BuildStatus == "success"
+	aarch64BuildDone := aarch64BuilderID == "" || updatedAarch64BuildStatus == "success"
+	if x86BuildDone && aarch64BuildDone && (x86BuilderID != "" || aarch64BuilderID != "") {
+		x86RepositoryVerified := !repositoryPublicationRequired || x86BuilderID == "" || x86VerifiedAt != nil
+		aarch64RepositoryVerified := !repositoryPublicationRequired || aarch64BuilderID == "" || aarch64VerifiedAt != nil
+
+		if !packageExecutionReadyForSuccess(
+			x86BuilderID != "", updatedX86BuildStatus, x86RepositoryVerified,
+			aarch64BuilderID != "", updatedAarch64BuildStatus, aarch64RepositoryVerified,
+		) {
+			logger.Debug("package build complete; waiting for APK index publication",
+				zap.String("executionID", executionID),
+				zap.Bool("x86_64RepositoryVerified", x86RepositoryVerified),
+				zap.Bool("aarch64RepositoryVerified", aarch64RepositoryVerified))
+			if err := execution.UpdateExecutionOverallStatus(ctx, executionID, executiontypes.ExecutionStatusPublishing); err != nil {
+				return fmt.Errorf("failed to set execution publishing status: %w", err)
+			}
+			return nil
+		}
+
+		if err := execution.UpdateExecutionOverallStatus(ctx, executionID, executiontypes.ExecutionStatusSuccess); err != nil {
 			return fmt.Errorf("failed to set execution status: %w", err)
 		}
 
@@ -392,7 +476,7 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 	}
 
 	if updatedX86BuildStatus == "testing" || updatedAarch64BuildStatus == "testing" {
-		if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusTesting); err != nil {
+		if err := execution.UpdateExecutionOverallStatus(ctx, executionID, executiontypes.ExecutionStatusTesting); err != nil {
 			return fmt.Errorf("failed to set execution status: %w", err)
 		}
 
@@ -400,7 +484,7 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 	}
 
 	if updatedX86BuildStatus == "publishing" || updatedAarch64BuildStatus == "publishing" {
-		if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusPublishing); err != nil {
+		if err := execution.UpdateExecutionOverallStatus(ctx, executionID, executiontypes.ExecutionStatusPublishing); err != nil {
 			return fmt.Errorf("failed to set execution status: %w", err)
 		}
 
