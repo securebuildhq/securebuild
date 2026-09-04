@@ -32,7 +32,13 @@ func cleanupFinishedVMs(ctx context.Context) error {
 
 	// Use machine_assignment joined to machine_pool (for type) and execution/image_build (for status)
 	query := `
-		select ma.machine_id, ma.assigned_task_id, ma.assigned_task_type, ma.work_dir, e.status, mp.type
+	select ma.machine_id, ma.assigned_task_id, ma.assigned_task_type, ma.work_dir,
+		case
+			when mp.architecture in ('x86_64', 'amd64') then coalesce(e.x86_64_status, e.status)
+			when mp.architecture in ('aarch64', 'arm64') then coalesce(e.aarch64_status, e.status)
+			else e.status
+		end as status,
+		mp.type
 		from machine_assignment ma
 		inner join execution e on ma.assigned_task_id = e.id
 		inner join machine_pool mp on ma.machine_id = mp.id

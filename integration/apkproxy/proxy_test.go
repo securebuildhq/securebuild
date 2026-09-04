@@ -125,6 +125,14 @@ func TestAPKProxyHappyPath(t *testing.T) {
 		testPublicationReadinessAccounting(ctx, t, testDB)
 	})
 
+	t.Run("Publish overlapping executions", func(t *testing.T) {
+		testOverlappingExecutionPublication(ctx, t, testDB, minioStorage, arch, apkFilename)
+	})
+
+	t.Run("Do not acknowledge legacy event", func(t *testing.T) {
+		testLegacyPublicationEvent(ctx, t, testDB, minioStorage, arch, apkFilename)
+	})
+
 	t.Run("Withdraw package", func(t *testing.T) {
 		testWithdrawPackage(ctx, t, testDB, proxy, arch, apkFilename, pkgID, pkgVersionID)
 	})
@@ -158,6 +166,14 @@ func testPublishPackage(ctx context.Context, t *testing.T, minioStorage *testuti
 	require.NoError(t, err)
 	require.Nil(t, indexedAt, "execution must not be repository-ready before APKINDEX is uploaded")
 
+	// The builder also writes the canonical object before emitting the event so
+	// an older indexer remains compatible during a rolling deployment.
+	pkgURL := fmt.Sprintf("http://%s/%s/%s", proxy.Address, arch, apkFilename)
+	resp, err := http.Get(pkgURL)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
 	// Call HandleAddApk to process the pkginfo and generate APKINDEX
 	fmt.Println("Calling HandleAddApk to generate APKINDEX...")
 	_, err = listener.HandleAddApk(ctx, arch)
@@ -166,7 +182,7 @@ func testPublishPackage(ctx context.Context, t *testing.T, minioStorage *testuti
 	// Verify APKINDEX is accessible and contains the package
 	fmt.Println("Verifying APKINDEX contains the package...")
 	indexURL := fmt.Sprintf("http://%s/%s/APKINDEX.tar.gz", proxy.Address, arch)
-	resp, err := http.Get(indexURL)
+	resp, err = http.Get(indexURL)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -186,7 +202,6 @@ func testPublishPackage(ctx context.Context, t *testing.T, minioStorage *testuti
 
 	// Verify package is accessible through proxy
 	fmt.Println("Verifying package is accessible through proxy...")
-	pkgURL := fmt.Sprintf("http://%s/%s/%s", proxy.Address, arch, apkFilename)
 	resp, err = http.Get(pkgURL)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -254,6 +269,66 @@ func testPublicationReadinessAccounting(ctx context.Context, t *testing.T, testD
 	aarch64IndexedAt, err = sbexecution.GetExecutionIndexedAt(ctx, executionID, "aarch64")
 	require.NoError(t, err)
 	require.NotNil(t, aarch64IndexedAt, "aarch64 should become ready from its own APK acknowledgement")
+}
+
+func testOverlappingExecutionPublication(ctx context.Context, t *testing.T, testDB *testutil.TestDatabase, minioStorage *testutil.MinIOStorage, arch string, apkFilename string) {
+	executionIDs := []string{"test-overlap-execution-a", "test-overlap-execution-b"}
+	for _, executionID := range executionIDs {
+		_, err := testDB.Pool.Exec(ctx, `
+			INSERT INTO execution (id, created_at, package_id, package_version_id, version_label, status)
+			VALUES ($1, NOW(), 'test-package-id', 'test-package-version-id', '1.0.0-r0', 'publishing')
+		`, executionID)
+		require.NoError(t, err)
+	}
+
+	apkPath, err := createMinimalAPK()
+	require.NoError(t, err)
+	defer os.Remove(apkPath)
+
+	for _, executionID := range executionIDs {
+		err := uploadAPKForExecution(ctx, minioStorage, apkPath, arch, apkFilename, executionID, 1)
+		require.NoError(t, err)
+	}
+
+	events, _, err := apk.ListUploadedAPKsInExecutionBucket(ctx, arch)
+	require.NoError(t, err)
+	require.Len(t, events, 2, "overlapping executions must retain separate publication events")
+
+	seenExecutions := map[string]bool{}
+	for _, event := range events {
+		seenExecutions[event.ExecutionID] = true
+	}
+	for _, executionID := range executionIDs {
+		require.True(t, seenExecutions[executionID], "missing publication event for %s", executionID)
+	}
+
+	_, err = listener.HandleAddApk(ctx, arch)
+	require.NoError(t, err)
+	for _, executionID := range executionIDs {
+		indexedAt, err := sbexecution.GetExecutionIndexedAt(ctx, executionID, arch)
+		require.NoError(t, err)
+		require.NotNil(t, indexedAt, "overlapping execution %s should be acknowledged", executionID)
+	}
+}
+
+func testLegacyPublicationEvent(ctx context.Context, t *testing.T, testDB *testutil.TestDatabase, minioStorage *testutil.MinIOStorage, arch string, apkFilename string) {
+	const executionID = "test-legacy-publication-execution"
+	_, err := testDB.Pool.Exec(ctx, `
+		INSERT INTO execution (id, created_at, package_id, package_version_id, version_label, status)
+		VALUES ($1, NOW(), 'test-package-id', 'test-package-version-id', '1.0.0-r0', 'publishing')
+	`, executionID)
+	require.NoError(t, err)
+
+	apkPath, err := createMinimalAPK()
+	require.NoError(t, err)
+	defer os.Remove(apkPath)
+	require.NoError(t, uploadAPKForExecution(ctx, minioStorage, apkPath, arch, apkFilename, executionID, 0))
+
+	_, err = listener.HandleAddApk(ctx, arch)
+	require.NoError(t, err)
+	indexedAt, err := sbexecution.GetExecutionIndexedAt(ctx, executionID, arch)
+	require.NoError(t, err)
+	require.Nil(t, indexedAt, "legacy event without an expected APK count must not release the execution")
 }
 
 // testWithdrawPackage removes a package from the database and R2 storage, then verifies it's no longer accessible
@@ -344,6 +419,10 @@ func testWithdrawPackage(ctx context.Context, t *testing.T, testDB *testutil.Tes
 // UploadAPK uploads an APK file using the production cli.UploadAPK function from builder-cmd
 // This uploads both the APK file and creates the pkginfo JSON in the executions folder
 func uploadAPK(ctx context.Context, m *testutil.MinIOStorage, apkPath, arch, filename string) error {
+	return uploadAPKForExecution(ctx, m, apkPath, arch, filename, "test-execution-id")
+}
+
+func uploadAPKForExecution(ctx context.Context, m *testutil.MinIOStorage, apkPath, arch, filename, executionID string, expectedAPKCounts ...int) error {
 	// Create a temporary log file for the upload function
 	logFile, err := os.CreateTemp("", "apk-upload-*.log")
 	if err != nil {
@@ -378,8 +457,8 @@ func uploadAPK(ctx context.Context, m *testutil.MinIOStorage, apkPath, arch, fil
 	dstFile.Close()
 
 	// Call the production UploadAPK function with the renamed temp file
-	// This uploads the APK AND creates the pkginfo JSON in the executions folder
-	// Pass "test-execution-id" directly as the executionID parameter
+	// This uploads the APK to execution-scoped staging and creates the
+	// corresponding publication event.
 	err = cli.UploadAPK(
 		ctx,
 		tmpApkPath,
@@ -391,9 +470,10 @@ func uploadAPK(ctx context.Context, m *testutil.MinIOStorage, apkPath, arch, fil
 		"auto", // region
 		"",     // directory (empty = root of bucket)
 		logFile.Name(),
-		"test-execution-id", // executionID
-		"",                  // zoneID
-		"",                  // cachePurgeToken
+		executionID,
+		"", // zoneID
+		"", // cachePurgeToken
+		expectedAPKCounts...,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upload APK: %w", err)

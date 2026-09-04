@@ -45,6 +45,10 @@ func packageExecutionReadyForSuccess(x86Assigned bool, x86Status string, x86Inde
 	return x86Ready && aarch64Ready
 }
 
+func repositoryPublicationTimedOut(now time.Time, statusUpdatedAt *time.Time, indexedAt *time.Time) bool {
+	return indexedAt == nil && statusUpdatedAt != nil && now.Sub(*statusUpdatedAt) > DefaultPublishingTimeout
+}
+
 func StartBuildPackageStatusChecker(ctx context.Context) error {
 	for {
 		if err := handleUpdateBuildPackageStatus(ctx, `{}`); err != nil {
@@ -281,29 +285,60 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 		}
 	}
 
+	var x86IndexedAt *time.Time
+	if x86BuilderID != "" && updatedX86BuildStatus == "success" {
+		x86IndexedAt, err = execution.GetExecutionIndexedAt(ctx, executionID, "x86_64")
+		if err != nil {
+			return fmt.Errorf("failed to get x86_64 index readiness: %w", err)
+		}
+		x86StatusUpdatedAt, err := execution.GetExecutionBuildStatusUpdatedAt(ctx, executionID, "x86_64")
+		if err != nil {
+			return fmt.Errorf("failed to get x86_64 build status updated at: %w", err)
+		}
+		if repositoryPublicationTimedOut(time.Now(), x86StatusUpdatedAt, x86IndexedAt) {
+			logger.Warn("EXECUTION FAILED: x86_64 APK index publication timeout exceeded",
+				zap.String("executionID", executionID),
+				zap.String("arch", "x86_64"),
+				zap.Time("lastStatusUpdatedAt", *x86StatusUpdatedAt),
+				zap.Duration("timeout", DefaultPublishingTimeout))
+			if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusFailed); err != nil {
+				return fmt.Errorf("failed to update execution status: %w", err)
+			}
+			return nil
+		}
+	}
+
+	var aarch64IndexedAt *time.Time
+	if aarch64BuilderID != "" && updatedAarch64BuildStatus == "success" {
+		aarch64IndexedAt, err = execution.GetExecutionIndexedAt(ctx, executionID, "aarch64")
+		if err != nil {
+			return fmt.Errorf("failed to get aarch64 index readiness: %w", err)
+		}
+		aarch64StatusUpdatedAt, err := execution.GetExecutionBuildStatusUpdatedAt(ctx, executionID, "aarch64")
+		if err != nil {
+			return fmt.Errorf("failed to get aarch64 build status updated at: %w", err)
+		}
+		if repositoryPublicationTimedOut(time.Now(), aarch64StatusUpdatedAt, aarch64IndexedAt) {
+			logger.Warn("EXECUTION FAILED: aarch64 APK index publication timeout exceeded",
+				zap.String("executionID", executionID),
+				zap.String("arch", "aarch64"),
+				zap.Time("lastStatusUpdatedAt", *aarch64StatusUpdatedAt),
+				zap.Duration("timeout", DefaultPublishingTimeout))
+			if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusFailed); err != nil {
+				return fmt.Errorf("failed to update execution status: %w", err)
+			}
+			return nil
+		}
+	}
+
 	// Builder success means the APK files and publication events were uploaded.
 	// Downstream builds must wait until StartAddAPK has also uploaded an index
 	// containing every APK produced for each assigned architecture.
 	x86BuildDone := x86BuilderID == "" || updatedX86BuildStatus == "success"
 	aarch64BuildDone := aarch64BuilderID == "" || updatedAarch64BuildStatus == "success"
 	if x86BuildDone && aarch64BuildDone && (x86BuilderID != "" || aarch64BuilderID != "") {
-		x86Indexed := x86BuilderID == ""
-		if x86BuilderID != "" {
-			indexedAt, err := execution.GetExecutionIndexedAt(ctx, executionID, "x86_64")
-			if err != nil {
-				return fmt.Errorf("failed to get x86_64 index readiness: %w", err)
-			}
-			x86Indexed = indexedAt != nil
-		}
-
-		aarch64Indexed := aarch64BuilderID == ""
-		if aarch64BuilderID != "" {
-			indexedAt, err := execution.GetExecutionIndexedAt(ctx, executionID, "aarch64")
-			if err != nil {
-				return fmt.Errorf("failed to get aarch64 index readiness: %w", err)
-			}
-			aarch64Indexed = indexedAt != nil
-		}
+		x86Indexed := x86BuilderID == "" || x86IndexedAt != nil
+		aarch64Indexed := aarch64BuilderID == "" || aarch64IndexedAt != nil
 
 		if !packageExecutionReadyForSuccess(
 			x86BuilderID != "", updatedX86BuildStatus, x86Indexed,

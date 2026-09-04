@@ -330,7 +330,7 @@ func logToFile(filename string, message string) {
 	}
 }
 
-func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoFilename string, executionID string, expectedAPKCount int) error {
+func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoFilename string, executionID string, expectedAPKCount int, stagedAPKKey string) error {
 	// Try optimized extraction first
 	apkMeta, err := apk.ExtractAPKMetadataOptimized(apkFilename)
 	if err != nil {
@@ -349,6 +349,7 @@ func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoF
 		APKFilename:      filepath.Base(apkFilename),
 		Arch:             arch,
 		ExpectedAPKCount: expectedAPKCount,
+		StagedAPKKey:     stagedAPKKey,
 	}
 
 	b, err := json.Marshal(apkPublishedEvent)
@@ -393,20 +394,35 @@ type ApkPublishedEvent struct {
 	APKFilename      string
 	Arch             string
 	ExpectedAPKCount int
+	StagedAPKKey     string
 }
 
 func UploadAPK(ctx context.Context, apkFilename string, arch string, bucketName string, accessKeyID string, secretAccessKey string, endpoint string, region string, directory string, publishingLogFile string, executionID string, cfZoneID string, cfCachePurgeToken string, expectedAPKCounts ...int) error {
 	expectedAPKCount := 1
-	if len(expectedAPKCounts) > 0 && expectedAPKCounts[0] > 0 {
+	if len(expectedAPKCounts) > 0 {
 		expectedAPKCount = expectedAPKCounts[0]
 	}
 
 	logToFile(publishingLogFile, fmt.Sprintf("in uploadAPK: uploading %s to r2", apkFilename))
-	apkKey := filepath.Join(directory, arch, filepath.Base(apkFilename))
-	if err := UploadFileToR2WithRetries(ctx, apkFilename, bucketName, apkKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, cfZoneID, cfCachePurgeToken); err != nil {
+	stagedAPKKey := filepath.Join(arch, "staging", executionID, filepath.Base(apkFilename))
+	apkKey := filepath.Join(directory, stagedAPKKey)
+	if err := UploadFileToR2WithRetries(ctx, apkFilename, bucketName, apkKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, "", ""); err != nil {
 		return fmt.Errorf("failed to upload apk: %w", err)
 	}
 	logToFile(publishingLogFile, fmt.Sprintf("uploaded %s to r2", apkFilename))
+
+	// Keep publishing the canonical object before the event so older indexers
+	// remain compatible during rollout. New indexers copy the execution-scoped
+	// staged object again immediately before updating APKINDEX, which prevents
+	// overlapping executions from pairing an index entry with the wrong APK.
+	canonicalAPKKey := filepath.Join(directory, arch, filepath.Base(apkFilename))
+	if err := copyObjectInR2(ctx, bucketName, apkKey, canonicalAPKKey, accessKeyID, secretAccessKey, endpoint, region); err != nil {
+		return fmt.Errorf("failed to publish canonical apk: %w", err)
+	}
+	canonicalAPKURL := fmt.Sprintf("%s/%s", strings.TrimRight(param.GetParam(ctx).ApkRepository, "/"), canonicalAPKKey)
+	if err := cloudflare.PurgeCache(ctx, cfZoneID, cfCachePurgeToken, []string{canonicalAPKURL}); err != nil {
+		logToFile(publishingLogFile, fmt.Sprintf("warning: failed to purge cloudflare cache for %s: %s", canonicalAPKURL, err))
+	}
 
 	pkgInfoFile, err := os.CreateTemp("", "pkginfo-*.json")
 	if err != nil {
@@ -416,19 +432,55 @@ func UploadAPK(ctx context.Context, apkFilename string, arch string, bucketName 
 	defer os.Remove(pkgInfoFile.Name()) // Clean up temp file
 
 	logToFile(publishingLogFile, fmt.Sprintf("writing pkg info for %s", apkFilename))
-	if err := writePkgInfo(ctx, apkFilename, arch, pkgInfoFile.Name(), executionID, expectedAPKCount); err != nil {
+	if err := writePkgInfo(ctx, apkFilename, arch, pkgInfoFile.Name(), executionID, expectedAPKCount, stagedAPKKey); err != nil {
 		return fmt.Errorf("failed to write pkg info: %w", err)
 	}
 	logToFile(publishingLogFile, fmt.Sprintf("wrote pkg info for %s", apkFilename))
 
 	logToFile(publishingLogFile, fmt.Sprintf("uploading pkg info for %s to r2", apkFilename))
-	metadataKey := filepath.Join(directory, arch, fmt.Sprintf("executions/%s.json", filepath.Base(apkFilename)))
-	if err := UploadFileToR2WithRetries(ctx, pkgInfoFile.Name(), bucketName, metadataKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, cfZoneID, cfCachePurgeToken); err != nil {
+	metadataKey := filepath.Join(directory, arch, "executions", executionID, fmt.Sprintf("%s.json", filepath.Base(apkFilename)))
+	if err := UploadFileToR2WithRetries(ctx, pkgInfoFile.Name(), bucketName, metadataKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, "", ""); err != nil {
 		return fmt.Errorf("failed to upload pkg info: %w", err)
 	}
 	logToFile(publishingLogFile, fmt.Sprintf("uploaded pkg info for %s to r2", apkFilename))
 
 	logger.Infof("Successfully uploaded %s to R2 bucket %s", apkFilename, bucketName)
+	return nil
+}
+
+func copyObjectInR2(ctx context.Context, bucketName string, sourceKey string, destinationKey string, accessKeyID string, secretAccessKey string, endpoint string, region string) error {
+	customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, _ ...interface{}) (aws.Endpoint, error) {
+		return aws.Endpoint{
+			URL:               endpoint,
+			SigningRegion:     region,
+			HostnameImmutable: true,
+		}, nil
+	})
+
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion(region),
+		config.WithEndpointResolverWithOptions(customResolver),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, "")),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		if os.Getenv("R2_USE_PATH_STYLE") == "true" {
+			o.UsePathStyle = true
+		}
+	})
+
+	_, err = s3Client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(bucketName),
+		CopySource: aws.String(fmt.Sprintf("%s/%s", bucketName, sourceKey)),
+		Key:        aws.String(destinationKey),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to copy object from %s to %s: %w", sourceKey, destinationKey, err)
+	}
+
 	return nil
 }
 

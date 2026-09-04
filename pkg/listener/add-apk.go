@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/securebuildhq/securebuild/pkg/apk"
+	"github.com/securebuildhq/securebuild/pkg/cloudflare"
 	"github.com/securebuildhq/securebuild/pkg/dynamicparam"
 	"github.com/securebuildhq/securebuild/pkg/execution"
 	"github.com/securebuildhq/securebuild/pkg/logger"
@@ -144,8 +147,18 @@ func HandleAddApk(ctx context.Context, arch string) (bool, error) {
 		}
 	}()
 
-	for _, apkPublishedEvent := range apkPublishedEvents {
+	eventKeys := make([]string, 0, len(apkPublishedEvents))
+	for key := range apkPublishedEvents {
+		eventKeys = append(eventKeys, key)
+	}
+	sort.Strings(eventKeys)
+
+	for _, eventKey := range eventKeys {
+		apkPublishedEvent := apkPublishedEvents[eventKey]
 		logger.Debug("processing apk published event", zap.String("apk_filename", apkPublishedEvent.APKFilename))
+		if err := apk.PromoteStagedAPK(ctx, apkPublishedEvent.StagedAPKKey, apkPublishedEvent.APKFilename, arch); err != nil {
+			return hasMore, fmt.Errorf("failed to promote staged APK: %w", err)
+		}
 		updatedAPKIndexFile, err := apk.AddAPKToIndex(ctx, apkPublishedEvent.PKGInfo, currentAPKIndexFile)
 		if err != nil {
 			return hasMore, fmt.Errorf("failed to add apk to index: %w", err)
@@ -170,15 +183,33 @@ func HandleAddApk(ctx context.Context, arch string) (bool, error) {
 		return hasMore, fmt.Errorf("failed to upload apk index: %w", err)
 	}
 
+	urlsToPurge := []string{fmt.Sprintf("%s/%s/APKINDEX.tar.gz", strings.TrimRight(param.GetParam(ctx).ApkRepository, "/"), arch)}
+	seenURLs := map[string]struct{}{}
+	for _, apkPublishedEvent := range apkPublishedEvents {
+		url := fmt.Sprintf("%s/%s/%s", strings.TrimRight(param.GetParam(ctx).ApkRepository, "/"), arch, apkPublishedEvent.APKFilename)
+		if _, ok := seenURLs[url]; !ok {
+			seenURLs[url] = struct{}{}
+			urlsToPurge = append(urlsToPurge, url)
+		}
+	}
+	if err := cloudflare.PurgeCache(ctx, param.GetParam(ctx).CloudflareZoneID, param.GetParam(ctx).CloudflareCachePurgeToken, urlsToPurge); err != nil {
+		logger.Warn("failed to purge published APK cache", zap.String("arch", arch), zap.Error(err))
+	}
+
 	// A package is consumable only after the index containing it has been
 	// uploaded. Record each APK after that boundary; RecordAPKIndexed marks the
 	// architecture ready once all APKs produced by the execution are present.
 	for _, apkPublishedEvent := range apkPublishedEvents {
 		expectedAPKCount := apkPublishedEvent.ExpectedAPKCount
 		if expectedAPKCount < 1 {
-			// Events produced during a rolling upgrade do not contain the count.
-			// Preserve compatibility for those already in the publication queue.
-			expectedAPKCount = 1
+			// There is no safe way to infer how many APKs an older builder
+			// produced. Publish the artifact, but leave the execution gated so a
+			// partial legacy batch cannot release downstream builds early.
+			logger.Warn("legacy APK publication event cannot acknowledge execution readiness",
+				zap.String("executionID", apkPublishedEvent.ExecutionID),
+				zap.String("arch", arch),
+				zap.String("apkFilename", apkPublishedEvent.APKFilename))
+			continue
 		}
 		if err := execution.RecordAPKIndexed(ctx, apkPublishedEvent.ExecutionID, arch, apkPublishedEvent.APKFilename, expectedAPKCount); err != nil {
 			return hasMore, fmt.Errorf("failed to record indexed APK %s: %w", apkPublishedEvent.APKFilename, err)
@@ -188,6 +219,11 @@ func HandleAddApk(ctx context.Context, arch string) (bool, error) {
 	keysToDelete := []string{}
 	for key := range apkPublishedEvents {
 		keysToDelete = append(keysToDelete, key)
+	}
+	for _, apkPublishedEvent := range apkPublishedEvents {
+		if apkPublishedEvent.StagedAPKKey != "" {
+			keysToDelete = append(keysToDelete, apkPublishedEvent.StagedAPKKey)
+		}
 	}
 
 	if err := apk.DeletePublishedEventsFromR2(ctx, keysToDelete); err != nil {

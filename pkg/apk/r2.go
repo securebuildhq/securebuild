@@ -18,6 +18,27 @@ type ApkPublishedEvent struct {
 	APKFilename      string
 	Arch             string
 	ExpectedAPKCount int
+	StagedAPKKey     string
+}
+
+// PromoteStagedAPK copies the execution-scoped artifact to the canonical
+// repository path. The indexer calls this before publishing metadata from the
+// same event, keeping the canonical APK and APKINDEX entry paired.
+func PromoteStagedAPK(ctx context.Context, stagedAPKKey string, apkFilename string, arch string) error {
+	if stagedAPKKey == "" {
+		return nil
+	}
+
+	r2Client, err := storage.NewR2Client(ctx, param.GetParam(ctx).R2BucketName)
+	if err != nil {
+		return fmt.Errorf("create R2 client: %w", err)
+	}
+
+	canonicalKey := fmt.Sprintf("%s/%s", arch, apkFilename)
+	if err := r2Client.CopyObject(ctx, stagedAPKKey, canonicalKey); err != nil {
+		return fmt.Errorf("promote staged APK %s to %s: %w", stagedAPKKey, canonicalKey, err)
+	}
+	return nil
 }
 
 func AddAPKToCatalogTable(ctx context.Context, apkFilename string, arch string, indexContent map[string]string) error {
