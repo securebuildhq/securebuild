@@ -20,6 +20,7 @@ import (
 	sbpackage "github.com/securebuildhq/securebuild/pkg/package"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
+	sbstorage "github.com/securebuildhq/securebuild/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,6 +125,10 @@ func TestAPKProxyHappyPath(t *testing.T) {
 
 	t.Run("Publish complete multi-APK manifest", func(t *testing.T) {
 		testCompleteManifestIsAtomic(ctx, t, testDB, minioStorage, proxy, arch)
+	})
+
+	t.Run("Failed manifest does not block architecture", func(t *testing.T) {
+		testFailedManifestDoesNotBlock(ctx, t, testDB, minioStorage, arch)
 	})
 
 	t.Run("Retry failed public verification", func(t *testing.T) {
@@ -237,6 +242,89 @@ func testCompleteManifestIsAtomic(ctx context.Context, t *testing.T, testDB *tes
 	require.NoError(t, err)
 	require.Contains(t, indexContent, "P:test-package")
 	require.Contains(t, indexContent, "P:test-subpackage")
+}
+
+func testFailedManifestDoesNotBlock(ctx context.Context, t *testing.T, testDB *testutil.TestDatabase, minioStorage *testutil.MinIOStorage, arch string) {
+	const poisonExecutionID = "100-poison-manifest"
+	const healthyExecutionID = "200-healthy-manifest"
+	_, err := testDB.Pool.Exec(ctx, `
+		INSERT INTO package (id, name, created_at) VALUES
+			('poison-package-id', 'poison-package', NOW()),
+			('healthy-package-id', 'healthy-package', NOW())
+	`)
+	require.NoError(t, err)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO package_version (id, package_id, version, apk_release, created_at) VALUES
+			('poison-version-id', 'poison-package-id', '1.0.0', 0, NOW()),
+			('healthy-version-id', 'healthy-package-id', '1.0.0', 0, NOW())
+	`)
+	require.NoError(t, err)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO execution (id, created_at, package_id, package_version_id, version_label, status, repository_publication_required) VALUES
+			($1, NOW(), 'poison-package-id', 'poison-version-id', '1.0.0-r0', 'publishing', true),
+			($2, NOW(), 'healthy-package-id', 'healthy-version-id', '1.0.0-r0', 'publishing', true)
+	`, poisonExecutionID, healthyExecutionID)
+	require.NoError(t, err)
+
+	r2Client, err := sbstorage.NewR2Client(ctx, minioStorage.BucketName)
+	require.NoError(t, err)
+	require.NoError(t, r2Client.PutObject(ctx, arch+"/publication-manifests/000-malformed.json", bytes.NewReader([]byte("{"))))
+
+	poisonAPK, err := createMinimalAPKForPackage("poison-package")
+	require.NoError(t, err)
+	defer os.Remove(poisonAPK)
+	poisonMetadata, err := apk.ExtractAPKMetadataOptimized(poisonAPK)
+	require.NoError(t, err)
+	uploadPublicationManifest(ctx, t, minioStorage, cli.APKPublicationManifest{
+		ExecutionID: poisonExecutionID,
+		Arch:        arch,
+		Artifacts: []cli.APKPublicationArtifact{{
+			PKGInfo:      poisonMetadata,
+			APKFilename:  "poison-package-1.0.0-r0.apk",
+			Arch:         arch,
+			StagedAPKKey: arch + "/staging/" + poisonExecutionID + "/poison-package-1.0.0-r0.apk",
+		}},
+	})
+
+	healthyAPK, err := createMinimalAPKForPackage("healthy-package")
+	require.NoError(t, err)
+	defer os.Remove(healthyAPK)
+	require.NoError(t, uploadAPKForExecution(ctx, minioStorage, healthyAPK, arch, "healthy-package-1.0.0-r0.apk", healthyExecutionID))
+
+	_, err = listener.HandleAddApk(ctx, arch)
+	require.Error(t, err, "the batch should report the malformed and failed manifests")
+	healthyVerifiedAt, err := sbexecution.GetExecutionRepositoryVerifiedAt(ctx, healthyExecutionID, arch)
+	require.NoError(t, err)
+	require.NotNil(t, healthyVerifiedAt, "a failed earlier manifest must not starve a healthy execution")
+	poisonVerifiedAt, err := sbexecution.GetExecutionRepositoryVerifiedAt(ctx, poisonExecutionID, arch)
+	require.NoError(t, err)
+	require.Nil(t, poisonVerifiedAt)
+
+	active, _, err := apk.ListPublicationManifests(ctx, arch)
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	_, poisonRemains := active[arch+"/publication-manifests/"+poisonExecutionID+".json"]
+	require.True(t, poisonRemains, "transient publication failures must remain retryable")
+	quarantined, err := r2Client.ListObjects(ctx, arch+"/failed-publication-manifests", 10)
+	require.NoError(t, err)
+	require.Len(t, quarantined.Contents, 1, "malformed markers must leave the active queue")
+
+	_, err = testDB.Pool.Exec(ctx, `UPDATE execution SET status = 'failed' WHERE id = $1`, poisonExecutionID)
+	require.NoError(t, err)
+	_, err = listener.HandleAddApk(ctx, arch)
+	require.NoError(t, err)
+	active, _, err = apk.ListPublicationManifests(ctx, arch)
+	require.NoError(t, err)
+	require.Empty(t, active, "terminal executions must not leave permanent retry markers")
+}
+
+func uploadPublicationManifest(ctx context.Context, t *testing.T, storage *testutil.MinIOStorage, manifest cli.APKPublicationManifest) {
+	t.Helper()
+	logFile, err := os.CreateTemp("", "apk-manifest-*.log")
+	require.NoError(t, err)
+	logFile.Close()
+	defer os.Remove(logFile.Name())
+	require.NoError(t, cli.UploadAPKManifest(ctx, manifest, storage.BucketName, storage.AccessKey, storage.SecretKey, storage.Endpoint, "auto", "", logFile.Name()))
 }
 
 func stageAPKForExecution(ctx context.Context, t *testing.T, storage *testutil.MinIOStorage, sourcePath, arch, filename, executionID string) cli.APKPublicationArtifact {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -36,7 +37,16 @@ type PublicationManifest struct {
 	Artifacts   []PublicationArtifact `json:"artifacts"`
 }
 
-func ListPublicationManifests(ctx context.Context, arch string) (map[string]PublicationManifest, bool, error) {
+type PublicationManifestItem struct {
+	Key           string
+	Manifest      PublicationManifest
+	Err           error
+	Quarantinable bool
+}
+
+// ListPublicationManifestItems isolates object-level failures so one corrupt
+// marker cannot prevent valid manifests in the same listing from being read.
+func ListPublicationManifestItems(ctx context.Context, arch string) ([]PublicationManifestItem, bool, error) {
 	r2Client, err := storage.NewR2Client(ctx, param.GetParam(ctx).R2BucketName)
 	if err != nil {
 		return nil, false, fmt.Errorf("create R2 client: %w", err)
@@ -46,40 +56,87 @@ func ListPublicationManifests(ctx context.Context, arch string) (map[string]Publ
 		return nil, false, fmt.Errorf("list publication manifests: %w", err)
 	}
 	hasMore := result.IsTruncated != nil && *result.IsTruncated
-	manifests := make(map[string]PublicationManifest, len(result.Contents))
+	items := make([]PublicationManifestItem, 0, len(result.Contents))
 	for _, object := range result.Contents {
 		if object.Key == nil {
 			continue
 		}
+		item := PublicationManifestItem{Key: *object.Key}
 		body, err := r2Client.GetObjectData(ctx, *object.Key)
 		if err != nil {
-			return nil, hasMore, fmt.Errorf("read publication manifest %s: %w", *object.Key, err)
+			item.Err = fmt.Errorf("read publication manifest %s: %w", *object.Key, err)
+			items = append(items, item)
+			continue
 		}
 		var manifest PublicationManifest
 		if err := json.Unmarshal(body, &manifest); err != nil {
-			return nil, hasMore, fmt.Errorf("decode publication manifest %s: %w", *object.Key, err)
+			item.Err = fmt.Errorf("decode publication manifest %s: %w", *object.Key, err)
+			item.Quarantinable = true
+			items = append(items, item)
+			continue
 		}
-		if manifest.ExecutionID == "" || manifest.Arch != arch || len(manifest.Artifacts) == 0 {
-			return nil, hasMore, fmt.Errorf("invalid publication manifest %s", *object.Key)
+		if err := validatePublicationManifest(manifest, arch); err != nil {
+			item.Err = fmt.Errorf("invalid publication manifest %s: %w", *object.Key, err)
+			item.Quarantinable = true
+			items = append(items, item)
+			continue
 		}
-		coordinates := map[string]struct{}{}
-		for _, artifact := range manifest.Artifacts {
-			if artifact.Arch != arch || artifact.APKFilename == "" || artifact.StagedAPKKey == "" || len(artifact.PKGInfo) == 0 {
-				return nil, hasMore, fmt.Errorf("invalid artifact in publication manifest %s", *object.Key)
-			}
-			expectedPrefix := fmt.Sprintf("%s/staging/%s/", arch, manifest.ExecutionID)
-			if !strings.HasPrefix(artifact.StagedAPKKey, expectedPrefix) || !strings.HasSuffix(artifact.StagedAPKKey, "/"+artifact.APKFilename) {
-				return nil, hasMore, fmt.Errorf("artifact outside execution staging prefix in publication manifest %s", *object.Key)
-			}
-			coordinate := artifact.PKGInfo["pkgname"] + "\x00" + artifact.PKGInfo["pkgver"] + "\x00" + artifact.PKGInfo["pkgrel"]
-			if _, exists := coordinates[coordinate]; exists {
-				return nil, hasMore, fmt.Errorf("duplicate package coordinate in publication manifest %s", *object.Key)
-			}
-			coordinates[coordinate] = struct{}{}
+		item.Manifest = manifest
+		items = append(items, item)
+	}
+	return items, hasMore, nil
+}
+
+func validatePublicationManifest(manifest PublicationManifest, arch string) error {
+	if manifest.ExecutionID == "" || manifest.Arch != arch || len(manifest.Artifacts) == 0 {
+		return fmt.Errorf("missing execution, architecture, or artifacts")
+	}
+	coordinates := map[string]struct{}{}
+	for _, artifact := range manifest.Artifacts {
+		if artifact.Arch != arch || artifact.APKFilename == "" || artifact.StagedAPKKey == "" || len(artifact.PKGInfo) == 0 {
+			return fmt.Errorf("artifact is incomplete")
 		}
-		manifests[*object.Key] = manifest
+		expectedPrefix := fmt.Sprintf("%s/staging/%s/", arch, manifest.ExecutionID)
+		if !strings.HasPrefix(artifact.StagedAPKKey, expectedPrefix) || !strings.HasSuffix(artifact.StagedAPKKey, "/"+artifact.APKFilename) {
+			return fmt.Errorf("artifact is outside its execution staging prefix")
+		}
+		coordinate := artifact.PKGInfo["pkgname"] + "\x00" + artifact.PKGInfo["pkgver"] + "\x00" + artifact.PKGInfo["pkgrel"]
+		if _, exists := coordinates[coordinate]; exists {
+			return fmt.Errorf("duplicate package coordinate")
+		}
+		coordinates[coordinate] = struct{}{}
+	}
+	return nil
+}
+
+func ListPublicationManifests(ctx context.Context, arch string) (map[string]PublicationManifest, bool, error) {
+	items, hasMore, err := ListPublicationManifestItems(ctx, arch)
+	if err != nil {
+		return nil, hasMore, err
+	}
+	manifests := make(map[string]PublicationManifest, len(items))
+	for _, item := range items {
+		if item.Err != nil {
+			return nil, hasMore, item.Err
+		}
+		manifests[item.Key] = item.Manifest
 	}
 	return manifests, hasMore, nil
+}
+
+func QuarantinePublicationManifest(ctx context.Context, arch, key string) error {
+	r2Client, err := storage.NewR2Client(ctx, param.GetParam(ctx).R2BucketName)
+	if err != nil {
+		return fmt.Errorf("create R2 client: %w", err)
+	}
+	destination := fmt.Sprintf("%s/failed-publication-manifests/%s", arch, path.Base(key))
+	if err := r2Client.CopyObject(ctx, key, destination); err != nil {
+		return fmt.Errorf("copy manifest to quarantine: %w", err)
+	}
+	if err := r2Client.DeleteObject(ctx, key); err != nil {
+		return fmt.Errorf("delete quarantined manifest from active queue: %w", err)
+	}
+	return nil
 }
 
 // CleanupUnreferencedStaging deletes old staged APKs only when no complete

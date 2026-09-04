@@ -15,10 +15,12 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/jackc/pgx/v5"
 	"github.com/securebuildhq/securebuild/pkg/apk"
 	"github.com/securebuildhq/securebuild/pkg/cloudflare"
 	"github.com/securebuildhq/securebuild/pkg/dynamicparam"
 	"github.com/securebuildhq/securebuild/pkg/execution"
+	executiontypes "github.com/securebuildhq/securebuild/pkg/execution/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
@@ -129,51 +131,76 @@ func HandleAddApk(ctx context.Context, arch string) (bool, error) {
 	if err := dynamicparam.EnsureDynamicParams(ctx); err != nil {
 		return false, fmt.Errorf("failed to ensure dynamic params: %w", err)
 	}
-	manifests, hasMore, err := apk.ListPublicationManifests(ctx, arch)
+	items, hasMore, err := apk.ListPublicationManifestItems(ctx, arch)
 	if err != nil {
 		return false, err
 	}
-	if len(manifests) == 0 {
-		// Compatibility path for builders deployed before complete manifests.
-		// Legacy executions have repository_publication_required=false and are
-		// never acknowledged through this path.
-		var legacyHasMore bool
-		err := apk.WithRepositoryLock(ctx, arch, func() error {
-			var err error
-			legacyHasMore, err = handleLegacyAddAPK(ctx, arch)
-			return err
-		})
-		return legacyHasMore, err
+	sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
+	batchErrors := []error{}
+	for _, item := range items {
+		if item.Err != nil {
+			if item.Quarantinable {
+				if quarantineErr := apk.QuarantinePublicationManifest(ctx, arch, item.Key); quarantineErr != nil {
+					batchErrors = append(batchErrors, errors.Join(item.Err, quarantineErr))
+					continue
+				}
+				logger.Warn("quarantined invalid APK publication manifest", zap.String("arch", arch), zap.String("manifestKey", item.Key), zap.Error(item.Err))
+			}
+			batchErrors = append(batchErrors, item.Err)
+			continue
+		}
+		if err := apk.WithRepositoryLock(ctx, arch, func() error {
+			return publishManifest(ctx, item.Key, item.Manifest)
+		}); err != nil {
+			batchErrors = append(batchErrors, fmt.Errorf("publish manifest %s: %w", item.Key, err))
+		}
 	}
-	keys := make([]string, 0, len(manifests))
-	for key := range manifests {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	manifestKey := keys[0]
+
+	// Compatibility events are a separate queue and must still make progress
+	// when a new-style manifest is retrying.
+	var legacyHasMore bool
 	if err := apk.WithRepositoryLock(ctx, arch, func() error {
-		return publishManifest(ctx, manifestKey, manifests[manifestKey])
+		var legacyErr error
+		legacyHasMore, legacyErr = handleLegacyAddAPK(ctx, arch)
+		return legacyErr
 	}); err != nil {
-		return hasMore || len(keys) > 1, err
+		batchErrors = append(batchErrors, fmt.Errorf("publish legacy APK events: %w", err))
 	}
-	return hasMore || len(keys) > 1, nil
+	return hasMore || legacyHasMore, errors.Join(batchErrors...)
 }
 
 func publishManifest(ctx context.Context, manifestKey string, manifest apk.PublicationManifest) error {
-	latest, err := execution.IsLatestExecutionForPackageVersion(ctx, manifest.ExecutionID)
-	if err != nil {
-		return fmt.Errorf("check publication ownership: %w", err)
-	}
 	stagedKeys := make([]string, 0, len(manifest.Artifacts))
 	for _, artifact := range manifest.Artifacts {
 		stagedKeys = append(stagedKeys, artifact.StagedAPKKey)
 	}
+	status, err := execution.GetExecutionStatus(ctx, manifest.ExecutionID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if quarantineErr := apk.QuarantinePublicationManifest(ctx, manifest.Arch, manifestKey); quarantineErr != nil {
+				return errors.Join(fmt.Errorf("manifest references missing execution %s", manifest.ExecutionID), quarantineErr)
+			}
+			return fmt.Errorf("quarantined manifest for missing execution %s", manifest.ExecutionID)
+		}
+		return fmt.Errorf("get execution status: %w", err)
+	}
+	if status == executiontypes.ExecutionStatusFailed || status == executiontypes.ExecutionStatusVMDeleted {
+		return cleanupManifestObjects(ctx, manifestKey, stagedKeys)
+	}
+	verifiedAt, err := execution.GetExecutionRepositoryVerifiedAt(ctx, manifest.ExecutionID, manifest.Arch)
+	if err != nil {
+		return fmt.Errorf("get repository verification: %w", err)
+	}
+	if verifiedAt != nil {
+		return cleanupManifestObjects(ctx, manifestKey, stagedKeys)
+	}
+	latest, err := execution.IsLatestExecutionForPackageVersion(ctx, manifest.ExecutionID)
+	if err != nil {
+		return fmt.Errorf("check publication ownership: %w", err)
+	}
 	if !latest {
 		logger.Warn("discarding superseded APK publication manifest", zap.String("executionID", manifest.ExecutionID), zap.String("arch", manifest.Arch))
-		if err := apk.DeletePublishedEventsFromR2(ctx, []string{manifestKey}); err != nil {
-			return err
-		}
-		return apk.DeletePublishedEventsFromR2(ctx, stagedKeys)
+		return cleanupManifestObjects(ctx, manifestKey, stagedKeys)
 	}
 
 	currentAPKIndexFile, err := apk.GetAPKIndex(ctx, manifest.Arch)
@@ -237,6 +264,16 @@ func publishManifest(ctx context.Context, manifestKey string, manifest apk.Publi
 	}
 	if err := apk.DeletePublishedEventsFromR2(ctx, stagedKeys); err != nil {
 		return fmt.Errorf("clean staged APKs after publication: %w", err)
+	}
+	return nil
+}
+
+func cleanupManifestObjects(ctx context.Context, manifestKey string, stagedKeys []string) error {
+	if err := apk.DeletePublishedEventsFromR2(ctx, []string{manifestKey}); err != nil {
+		return fmt.Errorf("delete publication manifest: %w", err)
+	}
+	if err := apk.DeletePublishedEventsFromR2(ctx, stagedKeys); err != nil {
+		return fmt.Errorf("delete staged APKs: %w", err)
 	}
 	return nil
 }
