@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -36,7 +39,16 @@ func StartAddAPK(ctx context.Context) error {
 	// 	logger.Errorf("failed to rebuild apk index for aarch64: %w", err)
 	// }
 
+	lastStagingCleanup := time.Time{}
 	for {
+		if time.Since(lastStagingCleanup) >= time.Hour {
+			for _, arch := range []string{"x86_64", "aarch64"} {
+				if err := apk.CleanupUnreferencedStaging(ctx, arch, time.Now().Add(-24*time.Hour)); err != nil {
+					logger.Warn("failed to clean unreferenced staged APKs", zap.String("arch", arch), zap.Error(err))
+				}
+			}
+			lastStagingCleanup = time.Now()
+		}
 		hasMoreX86 := false
 
 		if err := handleWithdrawAPK(ctx); err != nil {
@@ -117,6 +129,192 @@ func HandleAddApk(ctx context.Context, arch string) (bool, error) {
 	if err := dynamicparam.EnsureDynamicParams(ctx); err != nil {
 		return false, fmt.Errorf("failed to ensure dynamic params: %w", err)
 	}
+	manifests, hasMore, err := apk.ListPublicationManifests(ctx, arch)
+	if err != nil {
+		return false, err
+	}
+	if len(manifests) == 0 {
+		// Compatibility path for builders deployed before complete manifests.
+		// Legacy executions have repository_publication_required=false and are
+		// never acknowledged through this path.
+		var legacyHasMore bool
+		err := apk.WithRepositoryLock(ctx, arch, func() error {
+			var err error
+			legacyHasMore, err = handleLegacyAddAPK(ctx, arch)
+			return err
+		})
+		return legacyHasMore, err
+	}
+	keys := make([]string, 0, len(manifests))
+	for key := range manifests {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	manifestKey := keys[0]
+	if err := apk.WithRepositoryLock(ctx, arch, func() error {
+		return publishManifest(ctx, manifestKey, manifests[manifestKey])
+	}); err != nil {
+		return hasMore || len(keys) > 1, err
+	}
+	return hasMore || len(keys) > 1, nil
+}
+
+func publishManifest(ctx context.Context, manifestKey string, manifest apk.PublicationManifest) error {
+	latest, err := execution.IsLatestExecutionForPackageVersion(ctx, manifest.ExecutionID)
+	if err != nil {
+		return fmt.Errorf("check publication ownership: %w", err)
+	}
+	stagedKeys := make([]string, 0, len(manifest.Artifacts))
+	for _, artifact := range manifest.Artifacts {
+		stagedKeys = append(stagedKeys, artifact.StagedAPKKey)
+	}
+	if !latest {
+		logger.Warn("discarding superseded APK publication manifest", zap.String("executionID", manifest.ExecutionID), zap.String("arch", manifest.Arch))
+		if err := apk.DeletePublishedEventsFromR2(ctx, []string{manifestKey}); err != nil {
+			return err
+		}
+		return apk.DeletePublishedEventsFromR2(ctx, stagedKeys)
+	}
+
+	currentAPKIndexFile, err := apk.GetAPKIndex(ctx, manifest.Arch)
+	if err != nil {
+		return fmt.Errorf("get APK index: %w", err)
+	}
+	tempFiles := []string{}
+	if currentAPKIndexFile != "" {
+		tempFiles = append(tempFiles, currentAPKIndexFile)
+	}
+	defer func() {
+		for _, path := range tempFiles {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				logger.Warn("failed to remove temporary APK index", zap.String("path", path), zap.Error(err))
+			}
+		}
+	}()
+
+	for _, artifact := range manifest.Artifacts {
+		if err := apk.PromoteStagedAPK(ctx, artifact.StagedAPKKey, artifact.APKFilename, manifest.Arch); err != nil {
+			return err
+		}
+		updated, err := apk.AddAPKToIndex(ctx, artifact.PKGInfo, currentAPKIndexFile)
+		if err != nil {
+			return fmt.Errorf("add %s to APK index: %w", artifact.APKFilename, err)
+		}
+		if updated != currentAPKIndexFile && updated != "" {
+			tempFiles = append(tempFiles, updated)
+		}
+		currentAPKIndexFile = updated
+		if err := apk.AddAPKToCatalogTable(ctx, artifact.APKFilename, manifest.Arch, artifact.PKGInfo); err != nil {
+			return err
+		}
+	}
+	if err := apk.SignAPKIndex(ctx, currentAPKIndexFile); err != nil {
+		return fmt.Errorf("sign APK index: %w", err)
+	}
+	if err := apk.UploadAPKIndex(ctx, currentAPKIndexFile, manifest.Arch); err != nil {
+		return fmt.Errorf("upload APK index: %w", err)
+	}
+
+	repository := strings.TrimRight(param.GetParam(ctx).ApkRepository, "/")
+	urls := []string{fmt.Sprintf("%s/%s/APKINDEX.tar.gz", repository, manifest.Arch)}
+	for _, artifact := range manifest.Artifacts {
+		urls = append(urls, fmt.Sprintf("%s/%s/%s", repository, manifest.Arch, artifact.APKFilename))
+	}
+	if err := cloudflare.PurgeCache(ctx, param.GetParam(ctx).CloudflareZoneID, param.GetParam(ctx).CloudflareCachePurgeToken, urls); err != nil {
+		return fmt.Errorf("purge published APK cache: %w", err)
+	}
+	if err := verifyPublicManifest(ctx, manifest); err != nil {
+		return fmt.Errorf("verify public repository: %w", err)
+	}
+	if err := execution.MarkExecutionRepositoryVerified(ctx, manifest.ExecutionID, manifest.Arch); err != nil {
+		return fmt.Errorf("record repository verification: %w", err)
+	}
+	// Delete the durable retry marker first. If staging cleanup fails, the
+	// hourly sweeper can recover it without causing a completed manifest to be
+	// retried after some of its staged objects have already gone away.
+	if err := apk.DeletePublishedEventsFromR2(ctx, []string{manifestKey}); err != nil {
+		return fmt.Errorf("acknowledge publication manifest: %w", err)
+	}
+	if err := apk.DeletePublishedEventsFromR2(ctx, stagedKeys); err != nil {
+		return fmt.Errorf("clean staged APKs after publication: %w", err)
+	}
+	return nil
+}
+
+func verifyPublicManifest(ctx context.Context, manifest apk.PublicationManifest) error {
+	repository := strings.TrimRight(param.GetParam(ctx).ApkRepository, "/")
+	if repository == "" {
+		return fmt.Errorf("APK repository URL is not configured")
+	}
+	indexPath, err := downloadPublicFile(ctx, fmt.Sprintf("%s/%s/APKINDEX.tar.gz", repository, manifest.Arch), "public-apkindex-*.tar.gz")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(indexPath)
+	index, err := apk.ExtractAPKIndex(indexPath)
+	if err != nil {
+		return err
+	}
+	for _, artifact := range manifest.Artifacts {
+		expectedVersion := fmt.Sprintf("%s-r%s", artifact.PKGInfo["pkgver"], artifact.PKGInfo["pkgrel"])
+		found := false
+		for _, entry := range index.Packages {
+			if entry["P"] == artifact.PKGInfo["pkgname"] && entry["V"] == expectedVersion && entry["C"] == artifact.PKGInfo["alpine_checksum"] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("APKINDEX does not contain %s at checksum %s", artifact.APKFilename, artifact.PKGInfo["alpine_checksum"])
+		}
+		apkPath, err := downloadPublicFile(ctx, fmt.Sprintf("%s/%s/%s", repository, manifest.Arch, artifact.APKFilename), "public-apk-*.apk")
+		if err != nil {
+			return err
+		}
+		metadata, metadataErr := apk.ExtractAPKMetadataOptimized(apkPath)
+		os.Remove(apkPath)
+		if metadataErr != nil {
+			return fmt.Errorf("read public APK %s: %w", artifact.APKFilename, metadataErr)
+		}
+		if metadata["alpine_checksum"] != artifact.PKGInfo["alpine_checksum"] {
+			return fmt.Errorf("public APK checksum mismatch for %s", artifact.APKFilename)
+		}
+	}
+	return nil
+}
+
+func downloadPublicFile(ctx context.Context, url, pattern string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET %s returned %s", url, resp.Status)
+	}
+	tempFile, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", err
+	}
+	path := tempFile.Name()
+	if _, err := io.Copy(tempFile, resp.Body); err != nil {
+		tempFile.Close()
+		os.Remove(path)
+		return "", err
+	}
+	if err := tempFile.Close(); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	return filepath.Clean(path), nil
+}
+
+func handleLegacyAddAPK(ctx context.Context, arch string) (bool, error) {
 
 	apkPublishedEvents, hasMore, err := apk.ListUploadedAPKsInExecutionBucket(ctx, arch)
 	if err != nil {
@@ -193,27 +391,7 @@ func HandleAddApk(ctx context.Context, arch string) (bool, error) {
 		}
 	}
 	if err := cloudflare.PurgeCache(ctx, param.GetParam(ctx).CloudflareZoneID, param.GetParam(ctx).CloudflareCachePurgeToken, urlsToPurge); err != nil {
-		logger.Warn("failed to purge published APK cache", zap.String("arch", arch), zap.Error(err))
-	}
-
-	// A package is consumable only after the index containing it has been
-	// uploaded. Record each APK after that boundary; RecordAPKIndexed marks the
-	// architecture ready once all APKs produced by the execution are present.
-	for _, apkPublishedEvent := range apkPublishedEvents {
-		expectedAPKCount := apkPublishedEvent.ExpectedAPKCount
-		if expectedAPKCount < 1 {
-			// There is no safe way to infer how many APKs an older builder
-			// produced. Publish the artifact, but leave the execution gated so a
-			// partial legacy batch cannot release downstream builds early.
-			logger.Warn("legacy APK publication event cannot acknowledge execution readiness",
-				zap.String("executionID", apkPublishedEvent.ExecutionID),
-				zap.String("arch", arch),
-				zap.String("apkFilename", apkPublishedEvent.APKFilename))
-			continue
-		}
-		if err := execution.RecordAPKIndexed(ctx, apkPublishedEvent.ExecutionID, arch, apkPublishedEvent.APKFilename, expectedAPKCount); err != nil {
-			return hasMore, fmt.Errorf("failed to record indexed APK %s: %w", apkPublishedEvent.APKFilename, err)
-		}
+		return hasMore, fmt.Errorf("failed to purge published APK cache: %w", err)
 	}
 
 	keysToDelete := []string{}

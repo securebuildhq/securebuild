@@ -37,6 +37,11 @@ schema:
           notNull: true
       - name: status
         type: text
+      - name: repository_publication_required
+        type: boolean
+        constraints:
+          notNull: true
+        default: "false"
 
       - name: x86_64_build_stdout
         type: text
@@ -55,17 +60,7 @@ schema:
 
       - name: x86_64_publish_output
         type: text
-      - name: x86_64_indexed_apks
-        type: text[]
-        constraints:
-          notNull: true
-        default: "{}"
-      - name: x86_64_expected_apk_count
-        type: integer
-        constraints:
-          notNull: true
-        default: "0"
-      - name: x86_64_indexed_at
+      - name: x86_64_repository_verified_at
         type: timestamp with time zone
 
       - name: aarch64_build_stdout
@@ -85,17 +80,7 @@ schema:
 
       - name: aarch64_publish_output
         type: text
-      - name: aarch64_indexed_apks
-        type: text[]
-        constraints:
-          notNull: true
-        default: "{}"
-      - name: aarch64_expected_apk_count
-        type: integer
-        constraints:
-          notNull: true
-        default: "0"
-      - name: aarch64_indexed_at
+      - name: aarch64_repository_verified_at
         type: timestamp with time zone
 
 

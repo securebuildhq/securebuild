@@ -23,3 +23,6 @@ seedData:
         - column: status
           value:
             str: "publishing"
+        - column: repository_publication_required
+          value:
+            str: "true"

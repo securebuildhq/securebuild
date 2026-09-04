@@ -34,9 +34,14 @@ func cleanupFinishedVMs(ctx context.Context) error {
 	query := `
 	select ma.machine_id, ma.assigned_task_id, ma.assigned_task_type, ma.work_dir,
 		case
-			when mp.architecture in ('x86_64', 'amd64') then coalesce(e.x86_64_status, e.status)
-			when mp.architecture in ('aarch64', 'arm64') then coalesce(e.aarch64_status, e.status)
-			else e.status
+			when e.status in ('failed', 'vm_deleted') then e.status
+			when mp.architecture in ('x86_64', 'amd64')
+				and e.x86_64_build_finished_at is not null
+				and e.x86_64_status in ('success', 'failed') then e.x86_64_status
+			when mp.architecture in ('aarch64', 'arm64')
+				and e.aarch64_build_finished_at is not null
+				and e.aarch64_status in ('success', 'failed') then e.aarch64_status
+			else 'building'
 		end as status,
 		mp.type
 		from machine_assignment ma

@@ -111,6 +111,7 @@ func TestAPKProxyHappyPath(t *testing.T) {
 	// Start APK Proxy server (setupTestProxy will reinitialize with same values)
 	proxy := setupTestProxy(ctx, t, testDB, minioStorage)
 	defer teardownTestProxy(t, proxy)
+	param.GetParam(ctx).ApkRepository = "http://" + proxy.Address
 
 	arch := "x86_64"
 	apkFilename := "test-package-1.0.0-r0.apk"
@@ -121,21 +122,143 @@ func TestAPKProxyHappyPath(t *testing.T) {
 		testPublishPackage(ctx, t, minioStorage, proxy, arch, apkFilename)
 	})
 
-	t.Run("Track publication readiness", func(t *testing.T) {
-		testPublicationReadinessAccounting(ctx, t, testDB)
+	t.Run("Publish complete multi-APK manifest", func(t *testing.T) {
+		testCompleteManifestIsAtomic(ctx, t, testDB, minioStorage, proxy, arch)
 	})
 
-	t.Run("Publish overlapping executions", func(t *testing.T) {
-		testOverlappingExecutionPublication(ctx, t, testDB, minioStorage, arch, apkFilename)
+	t.Run("Retry failed public verification", func(t *testing.T) {
+		testFailedVerificationRetainsManifest(ctx, t, testDB, minioStorage, proxy, arch, apkFilename)
 	})
 
-	t.Run("Do not acknowledge legacy event", func(t *testing.T) {
-		testLegacyPublicationEvent(ctx, t, testDB, minioStorage, arch, apkFilename)
+	t.Run("Deduplicate active executions", func(t *testing.T) {
+		testDuplicateExecutionPrevention(ctx, t, testDB, pkgVersionID)
 	})
 
 	t.Run("Withdraw package", func(t *testing.T) {
 		testWithdrawPackage(ctx, t, testDB, proxy, arch, apkFilename, pkgID, pkgVersionID)
 	})
+}
+
+func testDuplicateExecutionPrevention(ctx context.Context, t *testing.T, testDB *testutil.TestDatabase, packageVersionID string) {
+	_, err := testDB.Pool.Exec(ctx, `UPDATE execution SET status = 'success' WHERE package_version_id = $1`, packageVersionID)
+	require.NoError(t, err)
+	pkgVersion, err := sbpackage.GetPackageVersion(ctx, packageVersionID)
+	require.NoError(t, err)
+
+	first, created, err := sbexecution.CreateExecutionIfNoActive(ctx, pkgVersion.PackageID, pkgVersion, "test", "first")
+	require.NoError(t, err)
+	require.True(t, created)
+	second, created, err := sbexecution.CreateExecutionIfNoActive(ctx, pkgVersion.PackageID, pkgVersion, "test", "second")
+	require.NoError(t, err)
+	require.False(t, created)
+	require.Equal(t, first.ID, second.ID, "duplicate deliveries must share the active execution")
+
+	_, err = testDB.Pool.Exec(ctx, `UPDATE execution SET status = 'failed' WHERE id = $1`, first.ID)
+	require.NoError(t, err)
+}
+
+func testFailedVerificationRetainsManifest(ctx context.Context, t *testing.T, testDB *testutil.TestDatabase, minioStorage *testutil.MinIOStorage, proxy *TestProxy, arch, apkFilename string) {
+	const executionID = "test-public-verification-retry"
+	_, err := testDB.Pool.Exec(ctx, `
+		INSERT INTO execution (id, created_at, package_id, package_version_id, version_label, status, repository_publication_required)
+		VALUES ($1, NOW() + INTERVAL '1 second', 'test-package-id', 'test-package-version-id', '1.0.0-r0', 'publishing', true)
+	`, executionID)
+	require.NoError(t, err)
+
+	apkPath, err := createMinimalAPK()
+	require.NoError(t, err)
+	defer os.Remove(apkPath)
+	require.NoError(t, uploadAPKForExecution(ctx, minioStorage, apkPath, arch, apkFilename, executionID))
+
+	repository := param.GetParam(ctx).ApkRepository
+	defer func() { param.GetParam(ctx).ApkRepository = repository }()
+	param.GetParam(ctx).ApkRepository = repository + "/missing"
+	_, err = listener.HandleAddApk(ctx, arch)
+	require.Error(t, err)
+	verifiedAt, err := sbexecution.GetExecutionRepositoryVerifiedAt(ctx, executionID, arch)
+	require.NoError(t, err)
+	require.Nil(t, verifiedAt)
+	manifests, _, err := apk.ListPublicationManifests(ctx, arch)
+	require.NoError(t, err)
+	require.Len(t, manifests, 1, "failed verification must retain the only retry marker")
+
+	param.GetParam(ctx).ApkRepository = repository
+	_, err = listener.HandleAddApk(ctx, arch)
+	require.NoError(t, err)
+	verifiedAt, err = sbexecution.GetExecutionRepositoryVerifiedAt(ctx, executionID, arch)
+	require.NoError(t, err)
+	require.NotNil(t, verifiedAt)
+}
+
+func testCompleteManifestIsAtomic(ctx context.Context, t *testing.T, testDB *testutil.TestDatabase, minioStorage *testutil.MinIOStorage, proxy *TestProxy, arch string) {
+	const executionID = "test-complete-manifest"
+	_, err := testDB.Pool.Exec(ctx, `
+		INSERT INTO execution (id, created_at, package_id, package_version_id, version_label, status, repository_publication_required)
+		VALUES ($1, NOW() + INTERVAL '1 second', 'test-package-id', 'test-package-version-id', '1.0.0-r0', 'publishing', true)
+	`, executionID)
+	require.NoError(t, err)
+
+	mainAPK, err := createMinimalAPKForPackage("test-package")
+	require.NoError(t, err)
+	defer os.Remove(mainAPK)
+	subpackageAPK, err := createMinimalAPKForPackage("test-subpackage")
+	require.NoError(t, err)
+	defer os.Remove(subpackageAPK)
+
+	first := stageAPKForExecution(ctx, t, minioStorage, mainAPK, arch, "test-package-1.0.0-r0.apk", executionID)
+	manifests, _, err := apk.ListPublicationManifests(ctx, arch)
+	require.NoError(t, err)
+	require.Empty(t, manifests, "staging one output must not expose a partial publication")
+	second := stageAPKForExecution(ctx, t, minioStorage, subpackageAPK, arch, "test-subpackage-1.0.0-r0.apk", executionID)
+	manifests, _, err = apk.ListPublicationManifests(ctx, arch)
+	require.NoError(t, err)
+	require.Empty(t, manifests, "only the final complete manifest may signal publication")
+
+	logFile, err := os.CreateTemp("", "apk-manifest-*.log")
+	require.NoError(t, err)
+	logFile.Close()
+	defer os.Remove(logFile.Name())
+	require.NoError(t, cli.UploadAPKManifest(ctx, cli.APKPublicationManifest{
+		ExecutionID: executionID,
+		Arch:        arch,
+		Artifacts:   []cli.APKPublicationArtifact{first, second},
+	}, minioStorage.BucketName, minioStorage.AccessKey, minioStorage.SecretKey, minioStorage.Endpoint, "auto", "", logFile.Name()))
+
+	_, err = listener.HandleAddApk(ctx, arch)
+	require.NoError(t, err)
+	verifiedAt, err := sbexecution.GetExecutionRepositoryVerifiedAt(ctx, executionID, arch)
+	require.NoError(t, err)
+	require.NotNil(t, verifiedAt)
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/%s/APKINDEX.tar.gz", proxy.Address, arch))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	indexContent, err := extractFileFromTarGz(resp.Body, "APKINDEX", false)
+	require.NoError(t, err)
+	require.Contains(t, indexContent, "P:test-package")
+	require.Contains(t, indexContent, "P:test-subpackage")
+}
+
+func stageAPKForExecution(ctx context.Context, t *testing.T, storage *testutil.MinIOStorage, sourcePath, arch, filename, executionID string) cli.APKPublicationArtifact {
+	t.Helper()
+	logFile, err := os.CreateTemp("", "apk-stage-*.log")
+	require.NoError(t, err)
+	logFile.Close()
+	defer os.Remove(logFile.Name())
+
+	destination := filepath.Join(t.TempDir(), filename)
+	source, err := os.Open(sourcePath)
+	require.NoError(t, err)
+	defer source.Close()
+	target, err := os.Create(destination)
+	require.NoError(t, err)
+	_, err = io.Copy(target, source)
+	require.NoError(t, err)
+	require.NoError(t, target.Close())
+
+	artifact, err := cli.StageAPK(ctx, destination, arch, storage.BucketName, storage.AccessKey, storage.SecretKey, storage.Endpoint, "auto", "", logFile.Name(), executionID)
+	require.NoError(t, err)
+	return artifact
 }
 
 // testPublishPackage publishes a package and verifies it's accessible through the proxy
@@ -162,16 +285,16 @@ func testPublishPackage(ctx context.Context, t *testing.T, minioStorage *testuti
 	err = uploadAPK(ctx, minioStorage, apkPath, arch, apkFilename)
 	require.NoError(t, err)
 
-	indexedAt, err := sbexecution.GetExecutionIndexedAt(ctx, "test-execution-id", arch)
+	verifiedAt, err := sbexecution.GetExecutionRepositoryVerifiedAt(ctx, "test-execution-id", arch)
 	require.NoError(t, err)
-	require.Nil(t, indexedAt, "execution must not be repository-ready before APKINDEX is uploaded")
+	require.Nil(t, verifiedAt, "execution must not be repository-ready before public verification")
 
-	// The builder also writes the canonical object before emitting the event so
-	// an older indexer remains compatible during a rolling deployment.
+	// Staging is intentionally not public. The APK and APKINDEX become visible
+	// together when the complete manifest is processed.
 	pkgURL := fmt.Sprintf("http://%s/%s/%s", proxy.Address, arch, apkFilename)
 	resp, err := http.Get(pkgURL)
 	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 
 	// Call HandleAddApk to process the pkginfo and generate APKINDEX
@@ -196,9 +319,9 @@ func testPublishPackage(ctx context.Context, t *testing.T, minioStorage *testuti
 	require.Contains(t, indexContent, "test-package", "APKINDEX should contain test-package")
 	fmt.Println("APKINDEX contains the package")
 
-	indexedAt, err = sbexecution.GetExecutionIndexedAt(ctx, "test-execution-id", arch)
+	verifiedAt, err = sbexecution.GetExecutionRepositoryVerifiedAt(ctx, "test-execution-id", arch)
 	require.NoError(t, err)
-	require.NotNil(t, indexedAt, "execution should become repository-ready after APKINDEX is uploaded")
+	require.NotNil(t, verifiedAt, "execution should become ready only after its public index and APK are verified")
 
 	// Verify package is accessible through proxy
 	fmt.Println("Verifying package is accessible through proxy...")
@@ -230,105 +353,6 @@ func testPublishPackage(ctx context.Context, t *testing.T, minioStorage *testuti
 	require.Equal(t, "hello world from test package\n", testFileContent)
 
 	fmt.Println("Package published successfully and is accessible with correct contents")
-}
-
-func testPublicationReadinessAccounting(ctx context.Context, t *testing.T, testDB *testutil.TestDatabase) {
-	const executionID = "test-publication-accounting-execution"
-	_, err := testDB.Pool.Exec(ctx, `
-		INSERT INTO execution (id, created_at, package_id, package_version_id, version_label, status)
-		VALUES ($1, NOW(), 'test-package-id', 'test-package-version-id', '1.0.0-r0', 'publishing')
-	`, executionID)
-	require.NoError(t, err)
-
-	err = sbexecution.RecordAPKIndexed(ctx, executionID, "x86_64", "test-package-1.0.0-r0.apk", 2)
-	require.NoError(t, err)
-	indexedAt, err := sbexecution.GetExecutionIndexedAt(ctx, executionID, "x86_64")
-	require.NoError(t, err)
-	require.Nil(t, indexedAt, "one of two expected APKs must not make the architecture ready")
-
-	// Reprocessing an event after an acknowledgement/delete failure must not
-	// count the same APK twice.
-	err = sbexecution.RecordAPKIndexed(ctx, executionID, "x86_64", "test-package-1.0.0-r0.apk", 2)
-	require.NoError(t, err)
-	indexedAt, err = sbexecution.GetExecutionIndexedAt(ctx, executionID, "x86_64")
-	require.NoError(t, err)
-	require.Nil(t, indexedAt, "duplicate APK acknowledgement must be idempotent")
-
-	err = sbexecution.RecordAPKIndexed(ctx, executionID, "x86_64", "test-subpackage-1.0.0-r0.apk", 2)
-	require.NoError(t, err)
-	indexedAt, err = sbexecution.GetExecutionIndexedAt(ctx, executionID, "x86_64")
-	require.NoError(t, err)
-	require.NotNil(t, indexedAt, "all expected x86_64 APKs should make that architecture ready")
-
-	aarch64IndexedAt, err := sbexecution.GetExecutionIndexedAt(ctx, executionID, "aarch64")
-	require.NoError(t, err)
-	require.Nil(t, aarch64IndexedAt, "architectures must be tracked independently")
-
-	err = sbexecution.RecordAPKIndexed(ctx, executionID, "aarch64", "test-package-1.0.0-r0.apk", 1)
-	require.NoError(t, err)
-	aarch64IndexedAt, err = sbexecution.GetExecutionIndexedAt(ctx, executionID, "aarch64")
-	require.NoError(t, err)
-	require.NotNil(t, aarch64IndexedAt, "aarch64 should become ready from its own APK acknowledgement")
-}
-
-func testOverlappingExecutionPublication(ctx context.Context, t *testing.T, testDB *testutil.TestDatabase, minioStorage *testutil.MinIOStorage, arch string, apkFilename string) {
-	executionIDs := []string{"test-overlap-execution-a", "test-overlap-execution-b"}
-	for _, executionID := range executionIDs {
-		_, err := testDB.Pool.Exec(ctx, `
-			INSERT INTO execution (id, created_at, package_id, package_version_id, version_label, status)
-			VALUES ($1, NOW(), 'test-package-id', 'test-package-version-id', '1.0.0-r0', 'publishing')
-		`, executionID)
-		require.NoError(t, err)
-	}
-
-	apkPath, err := createMinimalAPK()
-	require.NoError(t, err)
-	defer os.Remove(apkPath)
-
-	for _, executionID := range executionIDs {
-		err := uploadAPKForExecution(ctx, minioStorage, apkPath, arch, apkFilename, executionID, 1)
-		require.NoError(t, err)
-	}
-
-	events, _, err := apk.ListUploadedAPKsInExecutionBucket(ctx, arch)
-	require.NoError(t, err)
-	require.Len(t, events, 2, "overlapping executions must retain separate publication events")
-
-	seenExecutions := map[string]bool{}
-	for _, event := range events {
-		seenExecutions[event.ExecutionID] = true
-	}
-	for _, executionID := range executionIDs {
-		require.True(t, seenExecutions[executionID], "missing publication event for %s", executionID)
-	}
-
-	_, err = listener.HandleAddApk(ctx, arch)
-	require.NoError(t, err)
-	for _, executionID := range executionIDs {
-		indexedAt, err := sbexecution.GetExecutionIndexedAt(ctx, executionID, arch)
-		require.NoError(t, err)
-		require.NotNil(t, indexedAt, "overlapping execution %s should be acknowledged", executionID)
-	}
-}
-
-func testLegacyPublicationEvent(ctx context.Context, t *testing.T, testDB *testutil.TestDatabase, minioStorage *testutil.MinIOStorage, arch string, apkFilename string) {
-	const executionID = "test-legacy-publication-execution"
-	_, err := testDB.Pool.Exec(ctx, `
-		INSERT INTO execution (id, created_at, package_id, package_version_id, version_label, status)
-		VALUES ($1, NOW(), 'test-package-id', 'test-package-version-id', '1.0.0-r0', 'publishing')
-	`, executionID)
-	require.NoError(t, err)
-
-	apkPath, err := createMinimalAPK()
-	require.NoError(t, err)
-	defer os.Remove(apkPath)
-	require.NoError(t, uploadAPKForExecution(ctx, minioStorage, apkPath, arch, apkFilename, executionID, 0))
-
-	_, err = listener.HandleAddApk(ctx, arch)
-	require.NoError(t, err)
-	indexedAt, err := sbexecution.GetExecutionIndexedAt(ctx, executionID, arch)
-	require.NoError(t, err)
-	require.Nil(t, indexedAt, "legacy event without an expected APK count must not release the execution")
 }
 
 // testWithdrawPackage removes a package from the database and R2 storage, then verifies it's no longer accessible

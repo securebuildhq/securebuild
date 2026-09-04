@@ -27,16 +27,35 @@ func PurgeCache(ctx context.Context, zoneID, apiKey string, urls []string) error
 		option.WithAPIToken(apiKey),
 	)
 
-	_, err := client.Cache.Purge(ctx, cache.CachePurgeParams{
-		ZoneID: cloudflare.F(zoneID),
-		Body: cache.CachePurgeParamsBodyCachePurgeSingleFile{
-			Files: cloudflare.F(urls),
-		},
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to purge cloudflare cache: %w", err)
+	// Cloudflare accepts at most 100 URLs in a single-file purge request on
+	// non-Enterprise plans. Every batch must succeed before publication can be
+	// acknowledged.
+	for batchIndex, batch := range splitPurgeURLs(urls, 100) {
+		_, err := client.Cache.Purge(ctx, cache.CachePurgeParams{
+			ZoneID: cloudflare.F(zoneID),
+			Body: cache.CachePurgeParamsBodyCachePurgeSingleFile{
+				Files: cloudflare.F(batch),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to purge cloudflare cache batch %d: %w", batchIndex, err)
+		}
 	}
 
 	return nil
+}
+
+func splitPurgeURLs(urls []string, limit int) [][]string {
+	if limit <= 0 {
+		return nil
+	}
+	batches := make([][]string, 0, (len(urls)+limit-1)/limit)
+	for start := 0; start < len(urls); start += limit {
+		end := start + limit
+		if end > len(urls) {
+			end = len(urls)
+		}
+		batches = append(batches, urls[start:end])
+	}
+	return batches
 }
