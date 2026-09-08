@@ -182,7 +182,7 @@ func StartBuildImageListener(ctx context.Context, l *Listener) {
 }
 
 func StartBuildAPKOListener(ctx context.Context, l *Listener) {
-	l.AddHandler(ctx, "build_apko", 1, time.Minute*2, func(ctx context.Context, notification *pgconn.Notification) error {
+	l.AddHandler(ctx, "build_apko", 1, time.Minute*1, func(ctx context.Context, notification *pgconn.Notification) error {
 		return telemetry.WithSpan(ctx, "listener.build_apko", func(ctx context.Context) error {
 			if err := handleBuildAPKO(ctx, notification.Payload); err != nil {
 				logger.Error(fmt.Errorf("failed to handle build apko notification: %w", err))

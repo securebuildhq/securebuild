@@ -2,48 +2,40 @@ package listener
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"sync/atomic"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-	"time"
 
+	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/stretchr/testify/require"
 )
 
-func TestWaitForRepositoryPackageRetriesUntilAvailable(t *testing.T) {
-	var attempts atomic.Int32
-	check := func(context.Context) (bool, error) {
-		return attempts.Add(1) >= 3, nil
-	}
+func TestHandleBuildAPKOSchedulesRetryWhileTriggerPackageIsUnpublished(t *testing.T) {
+	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
 
-	err := waitForRepositoryPackage(
-		ctx,
-		time.Millisecond,
-		check,
-	)
+	payload, err := json.Marshal(BuildAPKOPayload{
+		ImageID: "image-id",
+		APKOID:  "apko-id",
+		TriggerPackage: &BuildAPKOTriggerPackage{
+			Name:       "example",
+			Version:    "10.3.1",
+			APKRelease: 2,
+		},
+	})
 	require.NoError(t, err)
-	require.EqualValues(t, 3, attempts.Load())
-}
 
-func TestWaitForRepositoryPackageStopsAtDeadline(t *testing.T) {
-	var attempts atomic.Int32
-	check := func(context.Context) (bool, error) {
-		attempts.Add(1)
-		return false, nil
-	}
+	ctx := param.WithParam(context.Background(), &param.Param{ApkRepository: server.URL})
+	err = handleBuildAPKO(ctx, string(payload))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	err := waitForRepositoryPackage(
-		ctx,
-		time.Millisecond,
-		check,
-	)
-	require.Error(t, err)
-	require.True(t, errors.Is(err, context.DeadlineExceeded))
-	require.Greater(t, attempts.Load(), int32(1))
+	var retryAfter *RetryAfterError
+	require.ErrorAs(t, err, &retryAfter)
+	require.ErrorIs(t, err, ErrRepositoryPackageUnavailable)
+	require.Equal(t, repositoryPublicationRetryInterval, retryAfter.Delay)
+	require.Equal(t, repositoryPublicationRetryTimeout, retryAfter.MaxAge)
+	require.True(t, errors.Is(retryAfter.Err, ErrRepositoryPackageUnavailable))
 }
