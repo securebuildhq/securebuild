@@ -24,7 +24,7 @@ func RepositoryContainsPackage(ctx context.Context, repositoryURL, packageName, 
 		return false, fmt.Errorf("at least one architecture is required")
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Second}
 	wantedVersion := fmt.Sprintf("%s-r%d", version, release)
 
 	for _, architecture := range architectures {
