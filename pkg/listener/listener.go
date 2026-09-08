@@ -115,8 +115,8 @@ func IsNonRetryableError(err error) bool {
 	return errors.As(err, &nonRetryable)
 }
 
-// RetryAfterError asks the work queue to count a failed attempt, keep the same
-// message pending, and make it available again after Delay.
+// RetryAfterError asks the work queue to keep the same message pending without
+// consuming a failure attempt, and make it available again after Delay.
 type RetryAfterError struct {
 	Err   error
 	Delay time.Duration
@@ -545,8 +545,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 						UPDATE %s
 						SET processing_started_at = NULL,
 						    next_attempt_at = NOW() + $3::interval,
-						    last_error = $2,
-						    attempt_count = COALESCE(attempt_count, 0) + 1
+						    last_error = $2
 						WHERE id = $1`, WorkQueueTable),
 						messageID, handlerErr.Error(), retryAfter.Delay.String())
 					if updateErr != nil {

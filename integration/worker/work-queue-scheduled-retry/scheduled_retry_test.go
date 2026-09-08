@@ -98,7 +98,7 @@ func TestScheduledRetryEventuallyProcessesTheOriginalMessage(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 	require.Equal(t, 1, rowCount, "scheduled retries must reuse the original queue row")
 	require.True(t, completedSuccessfully)
-	require.Equal(t, 1, attemptCount, "publication waits must use the queue's normal failure attempts")
+	require.Zero(t, attemptCount, "publication waits must not consume failure attempts")
 
 	// The scheduled-work poll has run while this handler was active for much
 	// longer than its configured max duration. Releasing it must complete the
