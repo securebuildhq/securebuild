@@ -3,9 +3,11 @@ package listener
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/go-github/v61/github"
+	"github.com/securebuildhq/securebuild/pkg/apk"
 	"github.com/securebuildhq/securebuild/pkg/gitspec"
 	image "github.com/securebuildhq/securebuild/pkg/image"
 	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
@@ -17,9 +19,18 @@ import (
 	"golang.org/x/oauth2"
 )
 
+var ErrRepositoryPackageUnavailable = errors.New("package is not available in the APK repository")
+
+type BuildAPKOTriggerPackage struct {
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	APKRelease int    `json:"apkRelease"`
+}
+
 type BuildAPKOPayload struct {
-	ImageID string `json:"imageId"`
-	APKOID  string `json:"apkoId"`
+	ImageID        string                   `json:"imageId"`
+	APKOID         string                   `json:"apkoId"`
+	TriggerPackage *BuildAPKOTriggerPackage `json:"triggerPackage,omitempty"`
 }
 
 // handleBuildAPKO orchestrates the build process for a single APKO configuration
@@ -27,6 +38,23 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 	var buildAPKOPayload BuildAPKOPayload
 	if err := json.Unmarshal([]byte(payload), &buildAPKOPayload); err != nil {
 		return fmt.Errorf("failed to unmarshal build apko payload: %w", err)
+	}
+
+	if trigger := buildAPKOPayload.TriggerPackage; trigger != nil {
+		available, err := apk.RepositoryContainsPackage(
+			ctx,
+			param.GetParam(ctx).ApkRepository,
+			trigger.Name,
+			trigger.Version,
+			trigger.APKRelease,
+			[]string{"x86_64", "aarch64"},
+		)
+		if err != nil {
+			return fmt.Errorf("check triggering package in APK repository: %w", err)
+		}
+		if !available {
+			return fmt.Errorf("%w: %s=%s-r%d", ErrRepositoryPackageUnavailable, trigger.Name, trigger.Version, trigger.APKRelease)
+		}
 	}
 
 	logger.Info("building single APKO",

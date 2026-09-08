@@ -104,16 +104,9 @@ func HandleBuildPackage(ctx context.Context, payload string) error {
 			zap.Error(err))
 	}
 
-	exe, created, err := execution.CreateExecutionIfNoActive(ctx, pkg.ID, pkgVersion, buildPackagePayload.Cause, buildPackagePayload.CauseID)
+	exe, err := execution.CreateExecution(ctx, pkg.ID, pkgVersion, buildPackagePayload.Cause, buildPackagePayload.CauseID)
 	if err != nil {
 		return fmt.Errorf("failed to create execution: %w", err)
-	}
-	if !created {
-		logger.Info("package version already has an active execution; skipping duplicate build request",
-			zap.String("packageVersionID", pkgVersion.ID),
-			zap.String("executionID", exe.ID),
-			zap.String("status", exe.Status))
-		return nil
 	}
 
 	// Get the active backend to determine architecture behavior

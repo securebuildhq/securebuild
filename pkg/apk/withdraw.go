@@ -9,12 +9,6 @@ import (
 )
 
 func WithdrawAPKs(ctx context.Context, filenames []string, arch string) error {
-	return WithRepositoryLock(ctx, arch, func() error {
-		return withdrawAPKsUnlocked(ctx, filenames, arch)
-	})
-}
-
-func withdrawAPKsUnlocked(ctx context.Context, filenames []string, arch string) error {
 	if err := dynamicparam.EnsureDynamicParams(ctx); err != nil {
 		return fmt.Errorf("failed to ensure dynamic params: %w", err)
 	}
@@ -64,12 +58,6 @@ func withdrawAPKsUnlocked(ctx context.Context, filenames []string, arch string) 
 
 // WithdrawAPK is a local function to remove a single APK, useful when we are surgically removing something from the APK
 func WithdrawAPK(ctx context.Context, filename string, arch string, packageName string, packageVersion string, packageRel string) error {
-	return WithRepositoryLock(ctx, arch, func() error {
-		return withdrawAPKUnlocked(ctx, filename, arch, packageName, packageVersion, packageRel)
-	})
-}
-
-func withdrawAPKUnlocked(ctx context.Context, filename string, arch string, packageName string, packageVersion string, packageRel string) error {
 	if err := dynamicparam.EnsureDynamicParams(ctx); err != nil {
 		return fmt.Errorf("failed to ensure dynamic params: %w", err)
 	}
