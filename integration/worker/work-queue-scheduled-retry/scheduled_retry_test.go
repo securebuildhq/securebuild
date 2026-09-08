@@ -50,7 +50,7 @@ func TestScheduledRetryEventuallyProcessesTheOriginalMessage(t *testing.T) {
 	l := listener.NewListener(ctx)
 	require.NoError(t, l.AddHandler(ctx, channel, 1, time.Second, func(context.Context, *pgconn.Notification) error {
 		if attempts.Add(1) == 1 {
-			return listener.NewRetryAfterError(errors.New("package is not published yet"), 100*time.Millisecond, time.Minute)
+			return listener.NewRetryAfterError(errors.New("package is not published yet"), 100*time.Millisecond)
 		}
 		close(completed)
 		return nil
@@ -98,7 +98,7 @@ func TestScheduledRetryEventuallyProcessesTheOriginalMessage(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 	require.Equal(t, 1, rowCount, "scheduled retries must reuse the original queue row")
 	require.True(t, completedSuccessfully)
-	require.Zero(t, attemptCount, "publication waits must not consume failure attempts")
+	require.Equal(t, 1, attemptCount, "publication waits must use the queue's normal failure attempts")
 
 	// The scheduled-work poll has run while this handler was active for much
 	// longer than its configured max duration. Releasing it must complete the

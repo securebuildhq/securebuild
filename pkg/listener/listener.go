@@ -115,12 +115,11 @@ func IsNonRetryableError(err error) bool {
 	return errors.As(err, &nonRetryable)
 }
 
-// RetryAfterError asks the work queue to keep the same message pending without
-// consuming a failure attempt, and make it available again after Delay.
+// RetryAfterError asks the work queue to count a failed attempt, keep the same
+// message pending, and make it available again after Delay.
 type RetryAfterError struct {
-	Err    error
-	Delay  time.Duration
-	MaxAge time.Duration
+	Err   error
+	Delay time.Duration
 }
 
 func (e *RetryAfterError) Error() string {
@@ -131,8 +130,8 @@ func (e *RetryAfterError) Unwrap() error {
 	return e.Err
 }
 
-func NewRetryAfterError(err error, delay, maxAge time.Duration) *RetryAfterError {
-	return &RetryAfterError{Err: err, Delay: delay, MaxAge: maxAge}
+func NewRetryAfterError(err error, delay time.Duration) *RetryAfterError {
+	return &RetryAfterError{Err: err, Delay: delay}
 }
 
 func AsRetryAfterError(err error) (*RetryAfterError, bool) {
@@ -357,7 +356,6 @@ type queueMessage struct {
 	id           string
 	payload      []byte
 	attemptCount int
-	createdAt    time.Time
 }
 
 // fetchAndLockMessages acquires a pooled connection, runs queue stats and locks
@@ -436,7 +434,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 			END
 		FROM next_available_messages
 		WHERE wq.id = next_available_messages.id
-		RETURNING wq.id, wq.payload, COALESCE(wq.attempt_count, 0)::int, wq.created_at`,
+		RETURNING wq.id, wq.payload, COALESCE(wq.attempt_count, 0)::int`,
 		WorkQueueTable, processor.maxWorkers, WorkQueueTable),
 		processor.channel, includeStale, processor.maxDuration.String())
 	if err != nil {
@@ -448,7 +446,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 	var messages []queueMessage
 	for rows.Next() {
 		var msg queueMessage
-		if err := rows.Scan(&msg.id, &msg.payload, &msg.attemptCount, &msg.createdAt); err != nil {
+		if err := rows.Scan(&msg.id, &msg.payload, &msg.attemptCount); err != nil {
 			logger.Error(fmt.Errorf("failed to scan message: %w", err))
 			continue
 		}
@@ -504,7 +502,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 		// Wait for worker slot
 		processor.workerPool <- struct{}{}
 
-		go func(messageID string, messagePayload []byte, attemptCount int, messageCreatedAt time.Time) {
+		go func(messageID string, messagePayload []byte, attemptCount int) {
 			defer func() { <-processor.workerPool }()
 
 			startTime := time.Now()
@@ -543,30 +541,12 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 
 			if handlerErr != nil {
 				if retryAfter, ok := AsRetryAfterError(handlerErr); ok {
-					if retryAfter.MaxAge > 0 && time.Since(messageCreatedAt) >= retryAfter.MaxAge {
-						logger.Warn("scheduled retry exceeded its maximum age, marking as completed with error",
-							zap.String("id", messageID),
-							zap.String("channel", processor.channel),
-							zap.Duration("max_age", retryAfter.MaxAge),
-							zap.Error(handlerErr))
-
-						_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
-							UPDATE %s
-							SET completed_at = NOW(),
-							    last_error = $2
-							WHERE id = $1`, WorkQueueTable),
-							messageID, fmt.Sprintf("scheduled retry timed out after %s: %s", retryAfter.MaxAge, retryAfter.Err))
-						if updateErr != nil {
-							logger.Error(fmt.Errorf("failed to mark expired scheduled retry %s as completed: %w", messageID, updateErr))
-						}
-						return
-					}
-
 					_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
 						UPDATE %s
 						SET processing_started_at = NULL,
 						    next_attempt_at = NOW() + $3::interval,
-						    last_error = $2
+						    last_error = $2,
+						    attempt_count = COALESCE(attempt_count, 0) + 1
 						WHERE id = $1`, WorkQueueTable),
 						messageID, handlerErr.Error(), retryAfter.Delay.String())
 					if updateErr != nil {
@@ -629,7 +609,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 				zap.String("id", messageID),
 				zap.String("channel", processor.channel),
 				zap.String("duration", time.Since(startTime).String()))
-		}(msg.id, msg.payload, msg.attemptCount, msg.createdAt)
+		}(msg.id, msg.payload, msg.attemptCount)
 	}
 
 	// If no messages found, stop processing until next notification

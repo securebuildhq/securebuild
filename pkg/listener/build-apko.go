@@ -23,8 +23,8 @@ import (
 var ErrRepositoryPackageUnavailable = errors.New("package is not available in the APK repository")
 
 const (
+	repositoryPublicationWaitTimeout   = time.Minute
 	repositoryPublicationRetryInterval = 10 * time.Second
-	repositoryPublicationRetryTimeout  = 30 * time.Minute
 )
 
 type BuildAPKOTriggerPackage struct {
@@ -47,20 +47,34 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 	}
 
 	if trigger := buildAPKOPayload.TriggerPackage; trigger != nil {
-		available, err := apk.RepositoryContainsPackage(
-			ctx,
-			param.GetParam(ctx).ApkRepository,
-			trigger.Name,
-			trigger.Version,
-			trigger.APKRelease,
-			[]string{"x86_64", "aarch64"},
+		waitCtx, cancel := context.WithTimeout(ctx, repositoryPublicationWaitTimeout)
+		err := waitForRepositoryPackage(
+			waitCtx,
+			repositoryPublicationRetryInterval,
+			func(ctx context.Context) (bool, error) {
+				return apk.RepositoryContainsPackage(
+					ctx,
+					param.GetParam(ctx).ApkRepository,
+					trigger.Name,
+					trigger.Version,
+					trigger.APKRelease,
+					[]string{"x86_64", "aarch64"},
+				)
+			},
 		)
-		if err != nil || !available {
-			reason := fmt.Errorf("%w: %s=%s-r%d", ErrRepositoryPackageUnavailable, trigger.Name, trigger.Version, trigger.APKRelease)
-			if err != nil {
-				reason = fmt.Errorf("%w: repository check failed: %v", reason, err)
+		cancel()
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return NewRetryAfterError(fmt.Errorf(
+					"%w after %s: %s=%s-r%d",
+					ErrRepositoryPackageUnavailable,
+					repositoryPublicationWaitTimeout,
+					trigger.Name,
+					trigger.Version,
+					trigger.APKRelease,
+				), repositoryPublicationRetryInterval)
 			}
-			return NewRetryAfterError(reason, repositoryPublicationRetryInterval, repositoryPublicationRetryTimeout)
+			return fmt.Errorf("wait for triggering package in APK repository: %w", err)
 		}
 	}
 
@@ -161,6 +175,28 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 	}
 
 	return nil
+}
+
+func waitForRepositoryPackage(
+	ctx context.Context,
+	retryInterval time.Duration,
+	check func(context.Context) (bool, error),
+) error {
+	ticker := time.NewTicker(retryInterval)
+	defer ticker.Stop()
+
+	for {
+		available, err := check(ctx)
+		if err == nil && available {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // checkAndRefreshLinkedApko checks if a linked APKO's git tag has been reassigned to a

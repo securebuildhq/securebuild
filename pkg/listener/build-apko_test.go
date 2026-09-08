@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/stretchr/testify/require"
@@ -30,12 +32,23 @@ func TestHandleBuildAPKOSchedulesRetryWhileTriggerPackageIsUnpublished(t *testin
 	require.NoError(t, err)
 
 	ctx := param.WithParam(context.Background(), &param.Param{ApkRepository: server.URL})
+	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
 	err = handleBuildAPKO(ctx, string(payload))
 
 	var retryAfter *RetryAfterError
 	require.ErrorAs(t, err, &retryAfter)
 	require.ErrorIs(t, err, ErrRepositoryPackageUnavailable)
 	require.Equal(t, repositoryPublicationRetryInterval, retryAfter.Delay)
-	require.Equal(t, repositoryPublicationRetryTimeout, retryAfter.MaxAge)
 	require.True(t, errors.Is(retryAfter.Err, ErrRepositoryPackageUnavailable))
+}
+
+func TestWaitForRepositoryPackageRetriesUntilAvailable(t *testing.T) {
+	var attempts atomic.Int32
+	err := waitForRepositoryPackage(context.Background(), time.Millisecond, func(context.Context) (bool, error) {
+		return attempts.Add(1) >= 3, nil
+	})
+
+	require.NoError(t, err)
+	require.EqualValues(t, 3, attempts.Load())
 }
