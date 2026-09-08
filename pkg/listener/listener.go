@@ -209,7 +209,7 @@ func (l *Listener) Start(ctx context.Context) error {
 
 		// Check for existing work in each queue
 		processor := l.processors[channel]
-		l.startQueueProcessor(ctx, processor)
+		l.startQueueProcessor(ctx, processor, true)
 	}
 
 	// Send a notification to each channel to trigger immediate processing of any stuck tasks
@@ -256,13 +256,13 @@ func (l *Listener) processNotifications(ctx context.Context) {
 		}
 
 		// Trigger processing if not already processing
-		l.startQueueProcessor(ctx, processor)
+		l.startQueueProcessor(ctx, processor, true)
 	}
 }
 
-func (l *Listener) startQueueProcessor(ctx context.Context, processor *queueProcessor) {
+func (l *Listener) startQueueProcessor(ctx context.Context, processor *queueProcessor, includeStale bool) {
 	if processor.processing.CompareAndSwap(false, true) {
-		go l.processQueue(ctx, processor)
+		go l.processQueue(ctx, processor, includeStale)
 	}
 }
 
@@ -292,52 +292,43 @@ func (l *Listener) startDueQueueProcessors(ctx context.Context) {
 	defer conn.Release()
 
 	rows, err := conn.Query(ctx, fmt.Sprintf(`
-		SELECT channel,
-		       BOOL_OR(processing_started_at IS NULL),
-		       MIN(processing_started_at)
+		SELECT DISTINCT channel
 		FROM %s
 		WHERE completed_at IS NULL
+		  AND processing_started_at IS NULL
 		  AND COALESCE(next_attempt_at, created_at) <= NOW()
-		GROUP BY channel`, WorkQueueTable))
+		`, WorkQueueTable))
 	if err != nil {
 		logger.Warn("failed to query scheduled work", zap.Error(err))
 		return
 	}
 	defer rows.Close()
 
-	type dueQueue struct {
-		channel       string
-		hasAvailable  bool
-		oldestStarted sql.NullTime
-	}
-	var dueQueues []dueQueue
+	var dueChannels []string
 	for rows.Next() {
-		var due dueQueue
-		if err := rows.Scan(&due.channel, &due.hasAvailable, &due.oldestStarted); err != nil {
+		var channel string
+		if err := rows.Scan(&channel); err != nil {
 			logger.Warn("failed to scan scheduled work", zap.Error(err))
 			continue
 		}
-		dueQueues = append(dueQueues, due)
+		dueChannels = append(dueChannels, channel)
 	}
 	if err := rows.Err(); err != nil {
 		logger.Warn("failed while reading scheduled work", zap.Error(err))
 		return
 	}
 
-	for _, due := range dueQueues {
-		processor, ok := l.processors[due.channel]
+	for _, channel := range dueChannels {
+		processor, ok := l.processors[channel]
 		if !ok {
 			continue
 		}
-		stale := due.oldestStarted.Valid && time.Since(due.oldestStarted.Time) >= processor.maxDuration
-		if due.hasAvailable || stale {
-			l.startQueueProcessor(ctx, processor)
-		}
+		l.startQueueProcessor(ctx, processor, false)
 	}
 }
 
 // processQueue handles message processing for a specific queue
-func (l *Listener) processQueue(ctx context.Context, processor *queueProcessor) {
+func (l *Listener) processQueue(ctx context.Context, processor *queueProcessor, includeStale bool) {
 	logger.Debug("processing queue", zap.String("channel", processor.channel))
 	defer func() {
 		processor.processing.Store(false)
@@ -353,7 +344,7 @@ func (l *Listener) processQueue(ctx context.Context, processor *queueProcessor) 
 		}
 
 		// Process messages in a separate function to ensure proper connection cleanup
-		shouldContinue := l.processMessagesForQueue(ctx, processor)
+		shouldContinue := l.processMessagesForQueue(ctx, processor, includeStale)
 		if !shouldContinue {
 			logger.Debug("no messages to process", zap.String("channel", processor.channel))
 			return
@@ -378,7 +369,7 @@ type queueMessage struct {
 // A non-nil error indicates a transient pool acquisition failure and the
 // caller should retry. Fatal query errors are logged here and surfaced as an
 // empty result so the caller stops polling until the next notification.
-func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queueProcessor) ([]queueMessage, error) {
+func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queueProcessor, includeStale bool) ([]queueMessage, error) {
 	poolConn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
 	if err != nil {
 		return nil, err
@@ -431,7 +422,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 			AND COALESCE(next_attempt_at, created_at) <= NOW()
 			AND (
 				processing_started_at IS NULL
-				OR processing_started_at < NOW() - $2::interval
+				OR ($2::boolean AND processing_started_at < NOW() - $3::interval)
 			)
 			ORDER BY COALESCE(priority, 0) DESC, created_at ASC
 			LIMIT %d
@@ -447,7 +438,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 		WHERE wq.id = next_available_messages.id
 		RETURNING wq.id, wq.payload, COALESCE(wq.attempt_count, 0)::int, wq.created_at`,
 		WorkQueueTable, processor.maxWorkers, WorkQueueTable),
-		processor.channel, processor.maxDuration.String())
+		processor.channel, includeStale, processor.maxDuration.String())
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to query messages: %w", err))
 		return nil, nil
@@ -468,8 +459,8 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 }
 
 // processMessagesForQueue handles a single iteration of message processing
-func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queueProcessor) bool {
-	messages, err := l.fetchAndLockMessages(ctx, processor)
+func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queueProcessor, includeStale bool) bool {
+	messages, err := l.fetchAndLockMessages(ctx, processor, includeStale)
 	if err != nil {
 		logger.Warn("failed to get pooled connection in time for listener, continuing with next iteration", zap.String("channel", processor.channel), zap.Error(err))
 		return true
