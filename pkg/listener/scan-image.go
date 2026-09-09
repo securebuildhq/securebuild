@@ -109,10 +109,7 @@ func handleScanImage(ctx context.Context, payload string) error {
 				// Populate cve_package_fix table (vulnerability feed data)
 				// Use CUSTOM scan results (without SecureOS provider) to avoid circular dependency
 				if apko.ID != "" && results.GrypeScanCustomX86 != "" && results.SyftSBOMX86 != "" {
-					if err := saveVulnerabilityFeedData(ctx, "image_catalog:"+imageCatalogID, apko.ID, &VMScanResults{
-						GrypeScanCustomX86: results.GrypeScanCustomX86, GrypeScanCustomAarch64: results.GrypeScanCustomAarch64,
-						SyftSBOMX86: results.SyftSBOMX86, SyftSBOMAarch64: results.SyftSBOMAarch64,
-					}); err != nil {
+					if err := saveVulnerabilityFeedData(ctx, apko.ID, results.GrypeScanCustomX86, results.SyftSBOMX86); err != nil {
 						// Log error but don't fail the scan
 						logger.Errorf("failed to save vulnerability feed data (apkoID: %s): %v", apko.ID, err)
 					}

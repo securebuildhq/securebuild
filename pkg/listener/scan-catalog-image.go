@@ -84,10 +84,7 @@ func handleScanCatalogImage(ctx context.Context, payload string) error {
 	// Populate cve_package_fix table with CUSTOM scan results (for SecDB feed)
 	// This uses only NVD + GitHub data to avoid circular dependency
 	if catalogImage.ApkoID != "" && customScanResults["x86_64"] != "" && catalogImage.SbomX86 != "" {
-		if err := saveVulnerabilityFeedData(ctx, "image_catalog:"+scanPayload.CatalogImageID, catalogImage.ApkoID, &VMScanResults{
-			GrypeScanCustomX86: customScanResults["x86_64"], GrypeScanCustomAarch64: customScanResults["aarch64"],
-			SyftSBOMX86: catalogImage.SbomX86, SyftSBOMAarch64: catalogImage.SbomAarch64,
-		}); err != nil {
+		if err := saveVulnerabilityFeedData(ctx, catalogImage.ApkoID, customScanResults["x86_64"], catalogImage.SbomX86); err != nil {
 			// Log error but don't fail the scan
 			logger.Errorf("failed to save vulnerability feed data (apkoID: %s): %v", catalogImage.ApkoID, err)
 		}

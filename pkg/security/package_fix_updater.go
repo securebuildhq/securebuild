@@ -2,107 +2,226 @@ package security
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
-	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/anchore/syft/syft/artifact"
 	"github.com/anchore/syft/syft/pkg"
+	"github.com/anchore/syft/syft/sbom"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"go.uber.org/zap"
 )
 
-// UpdatePackageFixVersions records resolutions only after checking the same APK
-// version on both supported architectures. Missing Go dependencies require complete
-// binary catalogs; absence from an incomplete SBOM is not evidence of removal.
-func UpdatePackageFixVersions(ctx context.Context, scans []PackageFixScan, targetPackage pkg.Package, sourceID string) error {
-	inventories, err := packageInventories(scans, targetPackage)
-	if err != nil {
-		return err
-	}
-	if sourceID == "" {
-		return fmt.Errorf("scan source is required for package fix evidence")
-	}
-	conn := persistence.MustGetPooledPostgresSession(ctx)
-	defer conn.Release()
-	rows, err := conn.Query(ctx, `SELECT cve_id, artifact_name, artifact_type, artifact_fixed_version
- FROM cve_package_fix WHERE package_name = $1 ORDER BY cve_id, artifact_name`, targetPackage.Name)
-	if err != nil {
-		return fmt.Errorf("query package CVEs: %w", err)
-	}
-	type observation struct{ cve, name, reason string }
-	var observations []observation
-	for rows.Next() {
-		var cve, name, artifactType string
-		var fixes []string
-		if err := rows.Scan(&cve, &name, &artifactType, &fixes); err != nil {
-			rows.Close()
-			return err
+// UpdatePackageFixVersions processes an SBOM to update the package_fixed_version column
+// in the cve_package_fix table. This function identifies which package versions contain
+// fixed versions of non-APK artifacts (Go modules, npm packages, etc.) and records this
+// information for vulnerability feed generation.
+//
+// Process:
+//  1. Extract package -> dependency relationships from SBOM
+//  2. For each CVE in the database, record the package version as fixed when its
+//     artifact was removed or the scanned artifact version satisfies an upstream fix.
+//
+// Parameters:
+//   - ctx: Context for database operations
+//   - s: SBOM containing package and dependency information
+//   - targetPackage: The package being scanned (e.g., "redis-8.0" at version "8.0.4-r0")
+//
+// Returns error if database operations fail.
+func UpdatePackageFixVersions(
+	ctx context.Context,
+	s *sbom.SBOM,
+	targetPackage pkg.Package,
+) error {
+	logger.Info("updating package fixed versions from SBOM",
+		zap.String("package", targetPackage.Name),
+		zap.String("version", targetPackage.Version),
+	)
+
+	// Build artifact map only for artifacts owned by this specific package
+	// Use ownership relationships to find which artifacts belong to this package
+	artifactMap := make(map[string]string)
+
+	// Get all relationships where this package is the owner (From)
+	rels := s.RelationshipsForPackage(targetPackage, artifact.OwnershipByFileOverlapRelationship)
+	for _, rel := range rels {
+		if rel.From != nil && rel.From.ID() == targetPackage.ID() {
+			// This package owns the child artifact
+			if childPkg, ok := rel.To.(pkg.Package); ok {
+				artifactMap[childPkg.Name] = childPkg.Version
+			}
 		}
-		reason := evaluatePackageFix(inventories, cve, name, artifactType, fixes)
-		if reason != "" {
-			observations = append(observations, observation{cve, name, reason})
-		}
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
 	}
 
-	for _, observation := range observations {
-		// Lock before merging: concurrent image builds must not overwrite evidence or
-		// restore a fix invalidated by a newer build that reintroduced the dependency.
+	// Also include the package itself if it's an APK
+	if targetPackage.Type == pkg.ApkPkg {
+		artifactMap[targetPackage.Name] = targetPackage.Version
+	}
+
+	logger.Debug("extracted artifacts owned by package from SBOM",
+		zap.String("package", targetPackage.Name),
+		zap.String("version", targetPackage.Version),
+		zap.Int("artifact_count", len(artifactMap)),
+	)
+
+	// Step 2: Include CVEs without upstream fixes: removing their artifact also resolves them.
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	query := `
+		SELECT
+			cve_id,
+			artifact_name,
+			artifact_type,
+			artifact_fixed_version
+		FROM cve_package_fix
+		WHERE package_name = $1
+		ORDER BY cve_id, artifact_name
+	`
+
+	rows, err := conn.Query(ctx, query, targetPackage.Name)
+	if err != nil {
+		return fmt.Errorf("failed to query CVEs for package %s: %w", targetPackage.Name, err)
+	}
+	defer rows.Close()
+
+	// Step 3: Collect all CVEs that need updates (must complete before executing updates)
+	type updateInfo struct {
+		cveID        string
+		artifactName string
+	}
+	var updates []updateInfo
+
+	for rows.Next() {
+		var (
+			cveID                string
+			artifactName         string
+			artifactType         string
+			artifactFixedVersion []string
+		)
+
+		err := rows.Scan(
+			&cveID,
+			&artifactName,
+			&artifactType,
+			&artifactFixedVersion,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to scan CVE row: %w", err)
+		}
+
+		// Check if this SBOM contains the artifact
+		scannedArtifactVersion, found := artifactMap[artifactName]
+		if !found {
+			// This package no longer contains the vulnerable dependency.
+			updates = append(updates, updateInfo{cveID: cveID, artifactName: artifactName})
+			continue
+		}
+		if len(artifactFixedVersion) == 0 {
+			continue
+		}
+
+		// Check if the scanned artifact version satisfies any of the fixed versions
+		hasFixVersion, err := ArtifactVersionSatisfiesAnyFix(
+			scannedArtifactVersion,
+			artifactFixedVersion,
+			artifactType,
+		)
+		if err != nil {
+			logger.Warn("failed to compare versions",
+				zap.String("cve_id", cveID),
+				zap.String("artifact", artifactName),
+				zap.String("scanned_version", scannedArtifactVersion),
+				zap.Strings("fixed_versions", artifactFixedVersion),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		if !hasFixVersion {
+			// This package version doesn't contain the fix
+			continue
+		}
+
+		// Add to updates list
+		updates = append(updates, updateInfo{
+			cveID:        cveID,
+			artifactName: artifactName,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating CVE rows: %w", err)
+	}
+
+	// Step 4: Execute all updates in transactions with SELECT FOR UPDATE
+	updatedCount := 0
+
+	for _, update := range updates {
+		// Start transaction for this update
 		tx, err := conn.Begin(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		err = func() error {
-			defer tx.Rollback(ctx)
-			var currentVersions []string
-			var rawEvidence []byte
-			if err := tx.QueryRow(ctx, `SELECT COALESCE(package_fixed_version, ARRAY[]::text[]),
-    COALESCE(package_fix_evidence, '{}'::jsonb) FROM cve_package_fix
-    WHERE package_name=$1 AND cve_id=$2 AND artifact_name=$3 FOR UPDATE`,
-				targetPackage.Name, observation.cve, observation.name).Scan(&currentVersions, &rawEvidence); err != nil {
-				return err
-			}
-			evidence := map[string]packageFixEvidence{}
-			if err := json.Unmarshal(rawEvidence, &evidence); err != nil {
-				return fmt.Errorf("decode package fix evidence: %w", err)
-			}
-			record := packageFixEvidence{Reason: observation.reason, Source: sourceID, ObservedAt: time.Now().UTC(), SBOMSHA256: map[string]string{}}
-			for _, scan := range scans {
-				record.SBOMSHA256[scan.Architecture] = scan.SHA256
-			}
-			// Conflicting observations for an immutable package version fail closed.
-			if previous, ok := evidence[targetPackage.Version]; !ok || previous.Reason != fixAffected {
-				evidence[targetPackage.Version] = record
-			}
-			newVersions, err := mergePackageFixVersions(currentVersions, targetPackage.Version, evidence)
-			if err != nil {
-				return err
-			}
-			encoded, err := json.Marshal(evidence)
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `UPDATE cve_package_fix SET package_fixed_version=$1,
-    package_fix_evidence=$2, updated_at=NOW()
-    WHERE package_name=$3 AND cve_id=$4 AND artifact_name=$5`,
-				newVersions, encoded, targetPackage.Name, observation.cve, observation.name); err != nil {
-				return err
-			}
-			return tx.Commit(ctx)
-		}()
+
+		// Fetch current package_fixed_version array with row lock
+		var currentVersions []string
+		fetchQuery := `
+			SELECT COALESCE(package_fixed_version, ARRAY[]::text[])
+			FROM cve_package_fix
+			WHERE package_name = $1
+			  AND cve_id = $2
+			  AND artifact_name = $3
+			FOR UPDATE
+		`
+		err = tx.QueryRow(ctx, fetchQuery, targetPackage.Name, update.cveID, update.artifactName).Scan(&currentVersions)
 		if err != nil {
-			return fmt.Errorf("record resolution for %s@%s / %s: %w", targetPackage.Name, targetPackage.Version, observation.cve, err)
+			tx.Rollback(ctx)
+			return fmt.Errorf("failed to fetch current package_fixed_version for %s (CVE %s, artifact %s): %w",
+				targetPackage.Name, update.cveID, update.artifactName, err)
 		}
-		logger.Debug("recorded package vulnerability observation", zap.String("package", targetPackage.Name),
-			zap.String("version", targetPackage.Version), zap.String("cve", observation.cve), zap.String("reason", observation.reason))
+
+		// Deduplicate at major.minor.patch level - keep only lowest version for each prefix
+		newVersions := deduplicateVersionsByPrefix(currentVersions, targetPackage.Version)
+
+		// Update with deduplicated array
+		updateQuery := `
+			UPDATE cve_package_fix
+			SET package_fixed_version = $1
+			WHERE package_name = $2
+			  AND cve_id = $3
+			  AND artifact_name = $4
+		`
+		_, err = tx.Exec(ctx, updateQuery, newVersions, targetPackage.Name, update.cveID, update.artifactName)
+		if err != nil {
+			tx.Rollback(ctx)
+			return fmt.Errorf("failed to update package_fixed_version for %s@%s (CVE %s, artifact %s): %w",
+				targetPackage.Name, targetPackage.Version, update.cveID, update.artifactName, err)
+		}
+
+		// Commit transaction
+		err = tx.Commit(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to commit transaction: %w", err)
+		}
+
+		updatedCount++
+		logger.Debug("updated package_fixed_version",
+			zap.String("package", targetPackage.Name),
+			zap.String("version", targetPackage.Version),
+			zap.String("cve_id", update.cveID),
+			zap.String("artifact", update.artifactName),
+		)
 	}
+
+	logger.Info("completed package fixed version update",
+		zap.String("package", targetPackage.Name),
+		zap.String("version", targetPackage.Version),
+		zap.Int("updated_cves", updatedCount),
+	)
+
 	return nil
 }
 

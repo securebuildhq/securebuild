@@ -2,7 +2,6 @@ package listener
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -343,7 +342,7 @@ func processImageBuildResults(ctx context.Context, buildID string, tmpDir string
 
 	// Save vulnerability feed data (CVE matches to cve_package_fix table)
 	// Use CUSTOM database scan results (NO SecureOS provider) to avoid circular dependency
-	if err := saveVulnerabilityFeedData(ctx, "image_build:"+buildID, apko.ID, scanResults); err != nil {
+	if err := saveVulnerabilityFeedData(ctx, apko.ID, scanResults.GrypeScanCustomX86, scanResults.SyftSBOMX86); err != nil {
 		// Log error but don't fail the build
 		logger.Errorf("failed to save vulnerability feed data (apkoID: %s): %v", apko.ID, err)
 	}
@@ -727,59 +726,29 @@ func processImageTag(ctx context.Context, img *imagetypes.Image, apko *imagetype
 	return imageCatalogID, nil
 }
 
-// saveVulnerabilityFeedData uses the custom (non-SecureOS) scans from both
-// architectures before making architecture-independent package fix claims.
-func saveVulnerabilityFeedData(ctx context.Context, sourceID, apkoID string, results *VMScanResults) error {
-	if results == nil {
-		return fmt.Errorf("missing scan results")
+// saveVulnerabilityFeedData stores CVE matches from x86 grype scan result into cve_package_fix table
+// This data is used to generate the SecureOS vulnerability feed
+func saveVulnerabilityFeedData(ctx context.Context, apkoID string, grypeScanX86 string, sbomX86 string) error {
+	if grypeScanX86 == "" {
+		return fmt.Errorf("x86 grype scan result is empty")
 	}
-	var scans []security.PackageFixScan
-	for _, input := range []struct{ arch, scan, sbom string }{
-		{"x86_64", results.GrypeScanCustomX86, results.SyftSBOMX86},
-		{"aarch64", results.GrypeScanCustomAarch64, results.SyftSBOMAarch64},
-	} {
-		if input.scan == "" || input.sbom == "" {
-			return fmt.Errorf("missing scan or SBOM for %s", input.arch)
-		}
-		decoder := syftjson.NewFormatDecoder()
-		data, _, _, err := decoder.Decode(strings.NewReader(input.sbom))
-		if err != nil {
-			return fmt.Errorf("parse %s SBOM: %w", input.arch, err)
-		}
-		if data == nil || data.Artifacts.Packages == nil {
-			return fmt.Errorf("missing package catalog in %s SBOM", input.arch)
-		}
-		var doc models.Document
-		if err := json.Unmarshal([]byte(input.scan), &doc); err != nil {
-			return fmt.Errorf("parse %s Grype scan: %w", input.arch, err)
-		}
-		// Reject JSON null/{} as well as missing results. An empty matches array is valid.
-		if doc.Matches == nil {
-			return fmt.Errorf("missing matches array in %s Grype scan", input.arch)
-		}
-		scans = append(scans, security.PackageFixScan{Architecture: input.arch, SBOM: data,
-			SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(input.sbom))), Vulnerabilities: feedCVEMatches(doc)})
+	if sbomX86 == "" {
+		return fmt.Errorf("x86 SBOM is empty")
 	}
-	// Store both architectures before updating fixes so an ARM-only CVE cannot be
-	// missed or overwritten by the x86 resolution check.
-	for _, scan := range scans {
-		if err := security.StoreCVEMatches(ctx, apkoID, scan.Vulnerabilities, scan.SBOM); err != nil {
-			return err
-		}
-	}
-	for p := range scans[0].SBOM.Artifacts.Packages.Enumerate() {
-		if p.Type != syftpkg.ApkPkg {
-			continue
-		}
-		if err := security.UpdatePackageFixVersions(ctx, scans, p, sourceID); err != nil {
-			logger.Warn("failed to update package fix versions", zap.String("apkoID", apkoID),
-				zap.String("package", p.Name), zap.String("version", p.Version), zap.Error(err))
-		}
-	}
-	return nil
-}
 
-func feedCVEMatches(grypeDoc models.Document) []security.CVEPackageFix {
+	// Parse the SBOM using official Syft decoder
+	decoder := syftjson.NewFormatDecoder()
+	sbomData, _, _, err := decoder.Decode(strings.NewReader(sbomX86))
+	if err != nil {
+		return fmt.Errorf("failed to parse SBOM: %w", err)
+	}
+
+	// Parse Grype's official JSON format using models.Document
+	var grypeDoc models.Document
+	if err := json.Unmarshal([]byte(grypeScanX86), &grypeDoc); err != nil {
+		return fmt.Errorf("failed to parse Grype document: %w", err)
+	}
+
 	// Convert Grype's official Match type to security.CVEPackageFix
 	cveMatches := make([]security.CVEPackageFix, 0, len(grypeDoc.Matches))
 	for _, match := range grypeDoc.Matches {
@@ -804,5 +773,30 @@ func feedCVEMatches(grypeDoc models.Document) []security.CVEPackageFix {
 		})
 	}
 
-	return cveMatches
+	// Store CVE matches in cve_package_fix table
+	// This will run correlation algorithm to map language packages to APK packages
+	if err := security.StoreCVEMatches(ctx, apkoID, cveMatches, sbomData); err != nil {
+		return fmt.Errorf("failed to store CVE matches: %w", err)
+	}
+
+	// Update package fixed versions for APK packages in this SBOM
+	// This discovers which package versions contain fixed artifact versions
+	for pkg := range sbomData.Artifacts.Packages.Enumerate() {
+		// Only process APK packages (OS packages), not language dependencies
+		if pkg.Type != syftpkg.ApkPkg {
+			continue
+		}
+
+		err := security.UpdatePackageFixVersions(ctx, sbomData, pkg)
+		if err != nil {
+			logger.Warn("failed to update package fix versions",
+				zap.String("apkoID", apkoID),
+				zap.String("package", pkg.Name),
+				zap.String("version", pkg.Version),
+				zap.Error(err))
+			// Continue processing other packages even if one fails
+		}
+	}
+
+	return nil
 }
