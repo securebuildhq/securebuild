@@ -80,7 +80,7 @@ func GenerateSecDBFeed(ctx context.Context) (string, error) {
 		)
 
 		// Determine where to place this CVE based on artifact type and available fix information
-		if len(row.ArtifactFixedVersion) == 0 {
+		if len(row.ArtifactFixedVersion) == 0 && len(row.PackageFixedVersion) == 0 {
 			// Truly unfixable CVE - use version "0" (Alpine secdb convention)
 			if !cveExists(packageMap[row.PackageName]["0"], row.CVEID) {
 				packageMap[row.PackageName]["0"] = append(

@@ -21,9 +21,8 @@ import (
 //
 // Process:
 //  1. Extract package -> dependency relationships from SBOM
-//  2. For each CVE in the database with artifact_fixed_version set:
-//     a. Check if the scanned artifact version >= any fixed version (using Grype's version comparison)
-//     b. If yes, record the package version as containing the fix
+//  2. For each CVE in the database, record the package version as fixed when its
+//     artifact was removed or the scanned artifact version satisfies an upstream fix.
 //
 // Parameters:
 //   - ctx: Context for database operations
@@ -67,7 +66,7 @@ func UpdatePackageFixVersions(
 		zap.Int("artifact_count", len(artifactMap)),
 	)
 
-	// Step 2: Query CVEs for this package that have artifact fixes but unknown package fixes
+	// Step 2: Include CVEs without upstream fixes: removing their artifact also resolves them.
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -79,8 +78,6 @@ func UpdatePackageFixVersions(
 			artifact_fixed_version
 		FROM cve_package_fix
 		WHERE package_name = $1
-		  AND artifact_fixed_version IS NOT NULL
-		  AND array_length(artifact_fixed_version, 1) > 0
 		ORDER BY cve_id, artifact_name
 	`
 
@@ -118,7 +115,11 @@ func UpdatePackageFixVersions(
 		// Check if this SBOM contains the artifact
 		scannedArtifactVersion, found := artifactMap[artifactName]
 		if !found {
-			// This SBOM doesn't contain the artifact, skip
+			// This package no longer contains the vulnerable dependency.
+			updates = append(updates, updateInfo{cveID: cveID, artifactName: artifactName})
+			continue
+		}
+		if len(artifactFixedVersion) == 0 {
 			continue
 		}
 
