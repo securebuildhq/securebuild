@@ -1,0 +1,363 @@
+{
+  "artifacts": [
+    {
+      "id": "93dc6402b613da0f",
+      "name": "github.com/replicatedhq/replicated-sdk",
+      "version": "v0.0.0-20260907032400-46f5dd952c67",
+      "type": "go-module",
+      "foundBy": "go-module-binary-cataloger",
+      "locations": [
+        {
+          "path": "/usr/bin/replicated",
+          "layerID": "sha256:04348d794a79f9592a17b8563dfc1de3b109f6b84fd6574ef4777cf97c094110",
+          "accessPath": "/usr/bin/replicated",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [],
+      "language": "go",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:replicatedhq:replicated-sdk:v0.0.0-20260907032400-46f5dd952c67:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicatedhq:replicated_sdk:v0.0.0-20260907032400-46f5dd952c67:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        }
+      ],
+      "purl": "pkg:golang/github.com/replicatedhq/replicated-sdk@v0.0.0-20260907032400-46f5dd952c67",
+      "metadataType": "go-module-buildinfo-entry",
+      "metadata": {
+        "goBuildSettings": [
+          {
+            "key": "-buildmode",
+            "value": "exe"
+          },
+          {
+            "key": "-compiler",
+            "value": "gc"
+          },
+          {
+            "key": "-tags",
+            "value": "netgo,osusergo"
+          },
+          {
+            "key": "-trimpath",
+            "value": "true"
+          },
+          {
+            "key": "DefaultGODEBUG",
+            "value": "tracebacklabels=0,x509sslcertoverrideplatform=0"
+          },
+          {
+            "key": "CGO_ENABLED",
+            "value": "0"
+          },
+          {
+            "key": "GOARCH",
+            "value": "arm64"
+          },
+          {
+            "key": "GOOS",
+            "value": "linux"
+          },
+          {
+            "key": "GOARM64",
+            "value": "v8.0"
+          },
+          {
+            "key": "vcs",
+            "value": "git"
+          },
+          {
+            "key": "vcs.revision",
+            "value": "46f5dd952c6703b2f9ec75923bbaff5420035d33"
+          },
+          {
+            "key": "vcs.time",
+            "value": "2026-09-07T03:24:00Z"
+          },
+          {
+            "key": "vcs.modified",
+            "value": "false"
+          }
+        ],
+        "goCompiledVersion": "go1.27.1",
+        "architecture": "arm64",
+        "mainModule": "github.com/replicatedhq/replicated-sdk",
+        "goCryptoSettings": [
+          "standard-crypto"
+        ]
+      }
+    },
+    {
+      "id": "de427408c6f8c99c",
+      "name": "replicated-sdk-1.19",
+      "version": "1.19.11-r0",
+      "type": "apk",
+      "foundBy": "apk-db-cataloger",
+      "locations": [
+        {
+          "path": "/usr/lib/apk/db/installed",
+          "layerID": "sha256:04348d794a79f9592a17b8563dfc1de3b109f6b84fd6574ef4777cf97c094110",
+          "accessPath": "/usr/lib/apk/db/installed",
+          "annotations": {
+            "evidence": "primary"
+          }
+        }
+      ],
+      "licenses": [
+        {
+          "value": "Apache-2.0",
+          "spdxExpression": "Apache-2.0",
+          "type": "declared",
+          "urls": [],
+          "locations": [
+            {
+              "path": "/usr/lib/apk/db/installed",
+              "layerID": "sha256:04348d794a79f9592a17b8563dfc1de3b109f6b84fd6574ef4777cf97c094110",
+              "accessPath": "/usr/lib/apk/db/installed",
+              "annotations": {
+                "evidence": "primary"
+              }
+            }
+          ]
+        }
+      ],
+      "language": "",
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:replicated-sdk-1.19:replicated-sdk-1.19:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated-sdk-1.19:replicated_sdk_1.19:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated_sdk_1.19:replicated-sdk-1.19:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated_sdk_1.19:replicated_sdk_1.19:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated-sdk-1.19:replicated-sdk:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated-sdk-1.19:replicated_sdk:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated-sdk:replicated-sdk-1.19:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated-sdk:replicated_sdk_1.19:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated_sdk:replicated-sdk-1.19:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated_sdk:replicated_sdk_1.19:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated_sdk_1.19:replicated-sdk:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated_sdk_1.19:replicated_sdk:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated:replicated-sdk-1.19:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated:replicated_sdk_1.19:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated-sdk:replicated-sdk:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated-sdk:replicated_sdk:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated_sdk:replicated-sdk:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated_sdk:replicated_sdk:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated:replicated-sdk:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        },
+        {
+          "cpe": "cpe:2.3:a:replicated:replicated_sdk:1.19.11-r0:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        }
+      ],
+      "purl": "pkg:apk/secureos/replicated-sdk-1.19@1.19.11-r0?arch=aarch64&distro=secureos-2025.09.09",
+      "metadataType": "apk-db-entry",
+      "metadata": {
+        "package": "replicated-sdk-1.19",
+        "originPackage": "replicated-sdk-1.19",
+        "maintainer": "Securebuild",
+        "version": "1.19.11-r0",
+        "architecture": "aarch64",
+        "url": "",
+        "description": "replicated sdk package",
+        "size": 12282156,
+        "installedSize": 38068111,
+        "pullDependencies": [],
+        "provides": [
+          "cmd:replicated=1.19.11-r0",
+          "replicated-sdk=1.19.11-r0"
+        ],
+        "pullChecksum": "Q1lPUOnzMn86+x3RDCh1sXMk4Zx3s=",
+        "gitCommitOfApkPort": "unknown",
+        "files": [
+          {
+            "path": "/usr"
+          },
+          {
+            "path": "/usr/bin"
+          },
+          {
+            "path": "/usr/bin/replicated",
+            "ownerUid": "0",
+            "ownerGid": "0",
+            "permissions": "0755",
+            "digest": {
+              "algorithm": "'Q1'+base64(sha1)",
+              "value": "Q1DmB2+YjUokgXVrajuB5MgLA/rgo="
+            }
+          },
+          {
+            "path": "/var"
+          },
+          {
+            "path": "/var/lib"
+          },
+          {
+            "path": "/var/lib/db"
+          },
+          {
+            "path": "/var/lib/db/sbom"
+          },
+          {
+            "path": "/var/lib/db/sbom/replicated-sdk-1.19-1.19.11-r0.spdx.json",
+            "digest": {
+              "algorithm": "'Q1'+base64(sha1)",
+              "value": "Q1Mu7lhOjFsjIjsNiSLa/QxYaqSjI="
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "artifactRelationships": [
+    {
+      "parent": "de427408c6f8c99c",
+      "child": "93dc6402b613da0f",
+      "type": "ownership-by-file-overlap",
+      "metadata": {
+        "files": [
+          "/usr/bin/replicated"
+        ]
+      }
+    }
+  ],
+  "files": [
+    {
+      "id": "6d97c2dc714f35dd",
+      "location": {
+        "path": "/usr/bin/replicated",
+        "layerID": "sha256:04348d794a79f9592a17b8563dfc1de3b109f6b84fd6574ef4777cf97c094110"
+      },
+      "metadata": {
+        "mode": 755,
+        "type": "RegularFile",
+        "userID": 0,
+        "groupID": 0,
+        "mimeType": "application/x-executable",
+        "size": 38035861
+      },
+      "digests": [
+        {
+          "algorithm": "sha1",
+          "value": "0e6076f988d4a2481756b6a3b81e4c80b03fae0a"
+        },
+        {
+          "algorithm": "sha256",
+          "value": "182dac2eb819bf7f017c420f755d645f5fe2aee462fa01dc209b2385d75e1ee7"
+        }
+      ],
+      "executable": {
+        "format": "elf",
+        "hasExports": false,
+        "hasEntrypoint": true,
+        "importedLibraries": [],
+        "elfSecurityFeatures": {
+          "symbolTableStripped": false,
+          "nx": true,
+          "relRO": "none",
+          "pie": false,
+          "dso": false,
+          "cfi": false,
+          "fortify": false
+        }
+      }
+    },
+    {
+      "id": "2fcab5dafe57b7f9",
+      "location": {
+        "path": "/var/lib/db/sbom/replicated-sdk-1.19-1.19.11-r0.spdx.json",
+        "layerID": "sha256:04348d794a79f9592a17b8563dfc1de3b109f6b84fd6574ef4777cf97c094110"
+      },
+      "metadata": {
+        "mode": 644,
+        "type": "RegularFile",
+        "userID": 0,
+        "groupID": 0,
+        "mimeType": "application/json",
+        "size": 3578
+      },
+      "digests": [
+        {
+          "algorithm": "sha1",
+          "value": "32eee584e8c5b23223b0d8922dafd0c586aa4a32"
+        },
+        {
+          "algorithm": "sha256",
+          "value": "0e3689dc02c7524d844eb2939775f16208b1107147297c22303143a7cb0b1941"
+        }
+      ]
+    }
+  ],
+  "source": {
+    "type": "directory",
+    "target": "/fixture"
+  },
+  "descriptor": {
+    "name": "syft",
+    "version": "1.51.1"
+  },
+  "schema": {
+    "version": "16.1.10",
+    "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.1.10.json"
+  }
+}

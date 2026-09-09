@@ -38,16 +38,17 @@ type AlpinePackageInfo struct {
 
 // CVEPackageFixRow represents a row from the cve_package_fix table
 type CVEPackageFixRow struct {
-	CVEID                string
-	PackageName          string
-	ArtifactName         string
-	ArtifactType         string
-	ArtifactLanguage     string
-	ArtifactFixedVersion []string
-	PackageFixedVersion  []string
-	Severity             string
-	Namespace            string
-	UpdatedAt            time.Time
+	CVEID                  string
+	PackageName            string
+	ArtifactName           string
+	ArtifactType           string
+	ArtifactLanguage       string
+	ArtifactFixedVersion   []string
+	PackageFixedVersion    []string
+	HasAffectedObservation bool
+	Severity               string
+	Namespace              string
+	UpdatedAt              time.Time
 }
 
 // GenerateSecDBFeed generates an Alpine secdb format JSON feed from the cve_package_fix table
@@ -80,8 +81,8 @@ func GenerateSecDBFeed(ctx context.Context) (string, error) {
 		)
 
 		// Determine where to place this CVE based on artifact type and available fix information
-		if len(row.ArtifactFixedVersion) == 0 {
-			// Truly unfixable CVE - use version "0" (Alpine secdb convention)
+		if len(row.ArtifactFixedVersion) == 0 && len(row.PackageFixedVersion) == 0 && !row.HasAffectedObservation {
+			// Preserve the legacy representation for rows without fix observations.
 			if !cveExists(packageMap[row.PackageName]["0"], row.CVEID) {
 				packageMap[row.PackageName]["0"] = append(
 					packageMap[row.PackageName]["0"],
@@ -89,9 +90,9 @@ func GenerateSecDBFeed(ctx context.Context) (string, error) {
 				)
 			}
 		} else if len(row.PackageFixedVersion) == 0 {
-			// Fix exists upstream but we haven't scanned a package with it yet
+			// No package fix is known, or an affected build invalidated a prior fix.
 			// Use "None" to indicate package is vulnerable but no SecureBuild fix version known. This is a case sensitive value supported by Vunnel.
-			logger.Debug("adding CVE to 'None' - fix exists but package version unknown",
+			logger.Debug("adding CVE to 'None' - no safe package fix version known",
 				zap.String("cve_id", row.CVEID),
 				zap.String("package_name", row.PackageName),
 				zap.String("artifact_name", row.ArtifactName),
@@ -294,6 +295,8 @@ func queryAllCVEs(ctx context.Context) ([]CVEPackageFixRow, error) {
 			artifact_language,
 			artifact_fixed_version,
 			package_fixed_version,
+			EXISTS (SELECT 1 FROM jsonb_each(COALESCE(package_fix_evidence, '{}'::jsonb))
+			        AS observation WHERE observation.value->>'reason' = 'affected'),
 			severity,
 			namespace,
 			updated_at
@@ -320,6 +323,7 @@ func queryAllCVEs(ctx context.Context) ([]CVEPackageFixRow, error) {
 			&artifactLanguage,
 			&row.ArtifactFixedVersion,
 			&row.PackageFixedVersion,
+			&row.HasAffectedObservation,
 			&row.Severity,
 			&row.Namespace,
 			&row.UpdatedAt,
