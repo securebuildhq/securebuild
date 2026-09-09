@@ -3,7 +3,6 @@ package work_queue_scheduled_retry
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,44 +37,48 @@ func TestScheduledRetryEventuallyProcessesTheOriginalMessage(t *testing.T) {
 	const channel = "scheduled_retry_test"
 	var attempts atomic.Int32
 	completed := make(chan struct{})
-	const longRunningChannel = "scheduled_retry_long_running_test"
-	var longRunningAttempts atomic.Int32
-	longRunningStarted := make(chan struct{})
-	longRunningRelease := make(chan struct{})
-	var releaseOnce sync.Once
-	t.Cleanup(func() {
-		releaseOnce.Do(func() { close(longRunningRelease) })
-	})
+	const staleChannel = "scheduled_retry_stale_test"
+	var staleAttempts atomic.Int32
+	staleRecovered := make(chan struct{})
+	const expiredChannel = "scheduled_retry_expired_test"
+	var expiredAttempts atomic.Int32
 
 	l := listener.NewListener(ctx)
 	require.NoError(t, l.AddHandler(ctx, channel, 1, time.Second, func(context.Context, *pgconn.Notification) error {
 		if attempts.Add(1) == 1 {
-			return listener.NewRetryAfterError(errors.New("package is not published yet"), 100*time.Millisecond)
+			return listener.NewRetryAfterError(errors.New("package is not published yet"), 100*time.Millisecond, time.Minute)
 		}
 		close(completed)
 		return nil
 	}))
-	require.NoError(t, l.AddHandler(ctx, longRunningChannel, 1, 100*time.Millisecond, func(context.Context, *pgconn.Notification) error {
-		if longRunningAttempts.Add(1) == 1 {
-			close(longRunningStarted)
-			<-longRunningRelease
-		}
+	require.NoError(t, l.AddHandler(ctx, staleChannel, 1, 2*time.Second, func(context.Context, *pgconn.Notification) error {
+		staleAttempts.Add(1)
+		close(staleRecovered)
 		return nil
+	}))
+	require.NoError(t, l.AddHandler(ctx, expiredChannel, 1, time.Second, func(context.Context, *pgconn.Notification) error {
+		expiredAttempts.Add(1)
+		return listener.NewRetryAfterError(errors.New("package was never published"), 100*time.Millisecond, time.Nanosecond)
 	}))
 
 	listenerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// Simulate a worker dying immediately after locking a row. The startup scan
+	// sees it before maxDuration has elapsed; scheduled polling must reclaim it
+	// once it becomes stale even though no new notification is sent.
+	require.NoError(t, persistence.EnqueueWork(ctx, staleChannel, map[string]string{"image": "example"}))
+	_, err = testDB.Pool.Exec(ctx, `
+		UPDATE work_queue
+		SET processing_started_at = NOW()
+		WHERE channel = $1`, staleChannel)
+	require.NoError(t, err)
+
 	require.NoError(t, l.Start(listenerCtx))
 	defer l.Stop(listenerCtx)
 
 	require.NoError(t, persistence.EnqueueWork(ctx, channel, map[string]string{"package": "example=10.3.1-r2"}))
-	require.NoError(t, persistence.EnqueueWork(ctx, longRunningChannel, map[string]string{"image": "example"}))
-
-	select {
-	case <-longRunningStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("long-running handler did not start")
-	}
+	require.NoError(t, persistence.EnqueueWork(ctx, expiredChannel, map[string]string{"package": "missing=10.3.1-r2"}))
 
 	select {
 	case <-completed:
@@ -100,20 +103,34 @@ func TestScheduledRetryEventuallyProcessesTheOriginalMessage(t *testing.T) {
 	require.True(t, completedSuccessfully)
 	require.Zero(t, attemptCount, "publication waits must not consume failure attempts")
 
-	// The scheduled-work poll has run while this handler was active for much
-	// longer than its configured max duration. Releasing it must complete the
-	// original invocation without a second invocation being queued behind it.
-	releaseOnce.Do(func() { close(longRunningRelease) })
+	var expiredLastError string
 	require.Eventually(t, func() bool {
 		var completed bool
 		err = testDB.Pool.QueryRow(ctx, `
-			SELECT completed_at IS NOT NULL
+			SELECT completed_at IS NOT NULL, last_error
 			FROM work_queue
-			WHERE channel = $1`, longRunningChannel).Scan(&completed)
+			WHERE channel = $1`, expiredChannel).Scan(&completed, &expiredLastError)
 		return err == nil && completed
 	}, 2*time.Second, 10*time.Millisecond)
-	require.Never(t, func() bool {
-		return longRunningAttempts.Load() > 1
-	}, time.Second, 10*time.Millisecond, "scheduled polling must not replay a running handler")
-	require.EqualValues(t, 1, longRunningAttempts.Load())
+	require.EqualValues(t, 1, expiredAttempts.Load())
+	require.Contains(t, expiredLastError, "scheduled retry timed out")
+
+	select {
+	case <-staleRecovered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("scheduled polling did not recover stale work")
+	}
+	require.EqualValues(t, 1, staleAttempts.Load())
+
+	var staleCompleted bool
+	var staleAttemptCount int
+	require.Eventually(t, func() bool {
+		err = testDB.Pool.QueryRow(ctx, `
+			SELECT completed_at IS NOT NULL, COALESCE(attempt_count, 0)
+			FROM work_queue
+			WHERE channel = $1`, staleChannel).Scan(&staleCompleted, &staleAttemptCount)
+		return err == nil && staleCompleted
+	}, 2*time.Second, 10*time.Millisecond)
+	require.True(t, staleCompleted)
+	require.Equal(t, 1, staleAttemptCount, "reclaiming stale work must count as a retry")
 }

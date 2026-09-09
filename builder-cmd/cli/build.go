@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/securebuildhq/securebuild/pkg/apk"
+	buildertypes "github.com/securebuildhq/securebuild/pkg/builder/types"
 	"github.com/securebuildhq/securebuild/pkg/cloudflare"
 	"github.com/securebuildhq/securebuild/pkg/image/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
@@ -285,17 +287,27 @@ exit $MELANGE_TEST_EXIT_CODE;
 	}
 	executionID := string(executionIDBytes)
 
-	// upload all packages to r2 and write the index content to disk
+	// Upload all packages to R2 and record the exact outputs produced by this
+	// architecture for the listener's repository-publication gate.
+	publishedPackageNames := make([]string, 0, len(apkFilenames))
 	for _, apkFilename := range apkFilenames {
 		logToFile(publishingLogFile, fmt.Sprintf("uploading %s to r2", apkFilename))
 
-		if err := UploadAPK(ctx, apkFilename, arch, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, publishingLogFile, executionID, zoneID, cachePurgeToken); err != nil {
+		packageName, err := uploadAPK(ctx, apkFilename, arch, r2BucketName, r2AccessKey, r2SecretKey, r2Endpoint, r2Region, r2Directory, publishingLogFile, executionID, zoneID, cachePurgeToken)
+		if err != nil {
 			WriteStatus(statusFile, types.ImageBuildStatusFailed)
 			logToFile(publishingLogFile, fmt.Sprintf("failed to upload apk: %s", err))
 			return fmt.Errorf("failed to upload apk: %w", err)
 		}
+		publishedPackageNames = append(publishedPackageNames, packageName)
 
 		logToFile(publishingLogFile, fmt.Sprintf("uploaded %s to r2", apkFilename))
+	}
+
+	manifestPath := filepath.Join(outputDir, buildertypes.PackageOutputManifestFilename)
+	if err := writePackageOutputManifest(manifestPath, arch, publishedPackageNames); err != nil {
+		WriteStatus(statusFile, types.ImageBuildStatusFailed)
+		return fmt.Errorf("failed to write package output manifest: %w", err)
 	}
 
 	logToFile(publishingLogFile, "all packages uploaded to r2")
@@ -330,7 +342,7 @@ func logToFile(filename string, message string) {
 	}
 }
 
-func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoFilename string, executionID string) error {
+func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoFilename string, executionID string) (string, error) {
 	// Try optimized extraction first
 	apkMeta, err := apk.ExtractAPKMetadataOptimized(apkFilename)
 	if err != nil {
@@ -338,7 +350,7 @@ func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoF
 		logger.Warnf("Optimized APK metadata extraction failed for %s, trying fallback method: %v", apkFilename, err)
 		apkMeta, err = apk.ExtractAPKMetadata(apkFilename)
 		if err != nil {
-			return fmt.Errorf("failed to extract apk metadata (both optimized and fallback methods failed): %w", err)
+			return "", fmt.Errorf("failed to extract apk metadata (both optimized and fallback methods failed): %w", err)
 		}
 		logger.Infof("Successfully extracted APK metadata using fallback method for %s", apkFilename)
 	}
@@ -352,13 +364,49 @@ func writePkgInfo(ctx context.Context, apkFilename string, arch string, pkgInfoF
 
 	b, err := json.Marshal(apkPublishedEvent)
 	if err != nil {
-		return fmt.Errorf("failed to marshal apk metadata: %w", err)
+		return "", fmt.Errorf("failed to marshal apk metadata: %w", err)
 	}
 
 	if err := os.WriteFile(pkgInfoFilename, b, 0o644); err != nil {
-		return fmt.Errorf("failed to write pkg info file: %w", err)
+		return "", fmt.Errorf("failed to write pkg info file: %w", err)
 	}
 
+	packageName := strings.TrimSpace(apkMeta["pkgname"])
+	if packageName == "" {
+		return "", fmt.Errorf("APK metadata for %s has no package name", apkFilename)
+	}
+
+	return packageName, nil
+}
+
+func writePackageOutputManifest(filename, architecture string, packageNames []string) error {
+	uniqueNames := make(map[string]struct{}, len(packageNames))
+	for _, packageName := range packageNames {
+		packageName = strings.TrimSpace(packageName)
+		if packageName != "" {
+			uniqueNames[packageName] = struct{}{}
+		}
+	}
+	if len(uniqueNames) == 0 {
+		return fmt.Errorf("no APK outputs were produced for %s", architecture)
+	}
+
+	sortedNames := make([]string, 0, len(uniqueNames))
+	for packageName := range uniqueNames {
+		sortedNames = append(sortedNames, packageName)
+	}
+	sort.Strings(sortedNames)
+
+	manifestJSON, err := json.Marshal(buildertypes.PackageOutputManifest{
+		Architecture: architecture,
+		PackageNames: sortedNames,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal package output manifest: %w", err)
+	}
+	if err := os.WriteFile(filename, manifestJSON, 0o644); err != nil {
+		return fmt.Errorf("write package output manifest: %w", err)
+	}
 	return nil
 }
 
@@ -394,35 +442,41 @@ type ApkPublishedEvent struct {
 }
 
 func UploadAPK(ctx context.Context, apkFilename string, arch string, bucketName string, accessKeyID string, secretAccessKey string, endpoint string, region string, directory string, publishingLogFile string, executionID string, cfZoneID string, cfCachePurgeToken string) error {
+	_, err := uploadAPK(ctx, apkFilename, arch, bucketName, accessKeyID, secretAccessKey, endpoint, region, directory, publishingLogFile, executionID, cfZoneID, cfCachePurgeToken)
+	return err
+}
+
+func uploadAPK(ctx context.Context, apkFilename string, arch string, bucketName string, accessKeyID string, secretAccessKey string, endpoint string, region string, directory string, publishingLogFile string, executionID string, cfZoneID string, cfCachePurgeToken string) (string, error) {
 	logToFile(publishingLogFile, fmt.Sprintf("in uploadAPK: uploading %s to r2", apkFilename))
 	apkKey := filepath.Join(directory, arch, filepath.Base(apkFilename))
 	if err := UploadFileToR2WithRetries(ctx, apkFilename, bucketName, apkKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, cfZoneID, cfCachePurgeToken); err != nil {
-		return fmt.Errorf("failed to upload apk: %w", err)
+		return "", fmt.Errorf("failed to upload apk: %w", err)
 	}
 	logToFile(publishingLogFile, fmt.Sprintf("uploaded %s to r2", apkFilename))
 
 	pkgInfoFile, err := os.CreateTemp("", "pkginfo-*.json")
 	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
+		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
 	defer pkgInfoFile.Close()
 	defer os.Remove(pkgInfoFile.Name()) // Clean up temp file
 
 	logToFile(publishingLogFile, fmt.Sprintf("writing pkg info for %s", apkFilename))
-	if err := writePkgInfo(ctx, apkFilename, arch, pkgInfoFile.Name(), executionID); err != nil {
-		return fmt.Errorf("failed to write pkg info: %w", err)
+	packageName, err := writePkgInfo(ctx, apkFilename, arch, pkgInfoFile.Name(), executionID)
+	if err != nil {
+		return "", fmt.Errorf("failed to write pkg info: %w", err)
 	}
 	logToFile(publishingLogFile, fmt.Sprintf("wrote pkg info for %s", apkFilename))
 
 	logToFile(publishingLogFile, fmt.Sprintf("uploading pkg info for %s to r2", apkFilename))
 	metadataKey := filepath.Join(directory, arch, fmt.Sprintf("executions/%s.json", filepath.Base(apkFilename)))
 	if err := UploadFileToR2WithRetries(ctx, pkgInfoFile.Name(), bucketName, metadataKey, accessKeyID, secretAccessKey, endpoint, region, publishingLogFile, 3, cfZoneID, cfCachePurgeToken); err != nil {
-		return fmt.Errorf("failed to upload pkg info: %w", err)
+		return "", fmt.Errorf("failed to upload pkg info: %w", err)
 	}
 	logToFile(publishingLogFile, fmt.Sprintf("uploaded pkg info for %s to r2", apkFilename))
 
 	logger.Infof("Successfully uploaded %s to R2 bucket %s", apkFilename, bucketName)
-	return nil
+	return packageName, nil
 }
 
 func UploadFileToR2WithRetries(ctx context.Context, fileName string, bucketName string, key string, accessKeyID string, secretAccessKey string, endpoint string, region string, publishingLogFile string, retries int, cfZoneID string, cfAPIKey string) error {

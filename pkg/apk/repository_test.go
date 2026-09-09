@@ -57,6 +57,29 @@ func TestRepositoryContainsPackageRequiresEveryArchitecture(t *testing.T) {
 	require.False(t, available)
 }
 
+func TestRepositoryContainsPackagesRequiresEveryPackage(t *testing.T) {
+	t.Parallel()
+
+	index := testAPKIndexArchive(t, "example", "10.3.1-r2", "example-cli", "10.3.1-r2")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, err := w.Write(index)
+		require.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+
+	available, err := RepositoryContainsPackages(
+		context.Background(), server.URL, []string{"example", "example-cli"}, "10.3.1", 2, []string{"x86_64", "aarch64"},
+	)
+	require.NoError(t, err)
+	require.True(t, available)
+
+	available, err = RepositoryContainsPackages(
+		context.Background(), server.URL, []string{"example", "example-doc"}, "10.3.1", 2, []string{"x86_64", "aarch64"},
+	)
+	require.NoError(t, err)
+	require.False(t, available)
+}
+
 func TestRepositoryContainsPackageRequiresExactRevision(t *testing.T) {
 	t.Parallel()
 
@@ -89,19 +112,24 @@ func TestRepositoryContainsPackageReturnsRepositoryErrors(t *testing.T) {
 	require.False(t, available)
 }
 
-func testAPKIndexArchive(t *testing.T, packageName, version string) []byte {
+func testAPKIndexArchive(t *testing.T, packages ...string) []byte {
 	t.Helper()
 
-	content := []byte(fmt.Sprintf("P:%s\nV:%s\n\n", packageName, version))
+	require.Zero(t, len(packages)%2)
+	var content bytes.Buffer
+	for i := 0; i < len(packages); i += 2 {
+		_, err := fmt.Fprintf(&content, "P:%s\nV:%s\n\n", packages[i], packages[i+1])
+		require.NoError(t, err)
+	}
 	var archive bytes.Buffer
 	gzipWriter := gzip.NewWriter(&archive)
 	tarWriter := tar.NewWriter(gzipWriter)
 	require.NoError(t, tarWriter.WriteHeader(&tar.Header{
 		Name: "APKINDEX",
 		Mode: 0o644,
-		Size: int64(len(content)),
+		Size: int64(content.Len()),
 	}))
-	_, err := tarWriter.Write(content)
+	_, err := tarWriter.Write(content.Bytes())
 	require.NoError(t, err)
 	require.NoError(t, tarWriter.Close())
 	require.NoError(t, gzipWriter.Close())
