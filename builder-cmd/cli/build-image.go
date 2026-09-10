@@ -319,6 +319,10 @@ func runApkoBuild(ctx context.Context, config *ImageBuildConfig) error {
 }
 
 func scanPushedImagesWithSyft(ctx context.Context, config *ImageBuildConfig) error {
+	workDir, err := filepath.Abs(config.WorkDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve scan work directory: %w", err)
+	}
 	// Use the first tag since all tags point to the same image
 	if len(config.Tags) == 0 {
 		return fmt.Errorf("no tags specified for scanning")
@@ -360,7 +364,7 @@ func scanPushedImagesWithSyft(ctx context.Context, config *ImageBuildConfig) err
 				"--quiet",
 				"--output", "json",
 				"--platform", fmt.Sprintf("linux/%s", arch),
-				imageRef,
+				"registry:" + imageRef,
 			}
 
 			// Create SBOM file
@@ -381,6 +385,14 @@ func scanPushedImagesWithSyft(ctx context.Context, config *ImageBuildConfig) err
 
 			// Run syft command
 			syftCmd := exec.CommandContext(ctx, "syft", syftArgs...)
+			// Task-local scratch space is also covered by work-dir cleanup if the builder exits.
+			tmpDir, err := os.MkdirTemp(workDir, ".syft-"+arch+"-")
+			if err != nil {
+				errChan <- fmt.Errorf("failed to create syft temporary directory: %w", err)
+				return
+			}
+			defer os.RemoveAll(tmpDir)
+			syftCmd.Env = append(os.Environ(), "TMPDIR="+tmpDir)
 			syftCmd.Dir = config.WorkDir
 			syftCmd.Stdout = sbomFileHandle
 			syftCmd.Stderr = sbomStderrHandle
@@ -420,6 +432,10 @@ func scanPushedImagesWithSyft(ctx context.Context, config *ImageBuildConfig) err
 }
 
 func scanAlternateImage(ctx context.Context, config *ImageBuildConfig) error {
+	workDir, err := filepath.Abs(config.WorkDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve scan work directory: %w", err)
+	}
 	arches := []string{"aarch64", "x86_64"}
 
 	var wg sync.WaitGroup
@@ -438,11 +454,19 @@ func scanAlternateImage(ctx context.Context, config *ImageBuildConfig) error {
 			args := []string{
 				"--output", "json",
 				"--platform", fmt.Sprintf("linux/%s", arch),
-				config.AlternateImageRef,
+				"registry:" + config.AlternateImageRef,
 			}
 
 			// Run grype command and capture JSON output and stderr
 			cmd := exec.CommandContext(ctx, "grype", args...)
+			// Task-local scratch space is also covered by work-dir cleanup if the builder exits.
+			tmpDir, err := os.MkdirTemp(workDir, ".grype-"+arch+"-")
+			if err != nil {
+				errChan <- fmt.Errorf("failed to create grype temporary directory: %w", err)
+				return
+			}
+			defer os.RemoveAll(tmpDir)
+			cmd.Env = append(os.Environ(), "TMPDIR="+tmpDir)
 			cmd.Dir = config.WorkDir
 
 			// Create output files
