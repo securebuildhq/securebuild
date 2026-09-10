@@ -51,7 +51,7 @@ runs:
         fi
 
         # Check for Go changes
-        if echo "$CHANGED_FILES" | grep -q -E '^pkg/|^cmd/|^integration/|^go\.mod$|^go\.sum$'; then
+        if echo "$CHANGED_FILES" | grep -q -E '^pkg/|^cmd/|^builder-cmd/|^integration/|^go\.mod$|^go\.sum$'; then
           echo "run-go=true" >> $GITHUB_OUTPUT
         else
           echo "run-go=false" >> $GITHUB_OUTPUT
