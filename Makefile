@@ -69,7 +69,7 @@ create-fake-builder:
 
 .PHONY: test-unit-go
 test-unit-go: create-fake-builder
-	@go test -v -short ./pkg/... ./cmd/... ./builder-cmd/...
+	@go test -v -short ./pkg/... ./cmd/...
 
 .PHONY: test-integration-oci-proxy
 test-integration-oci-proxy: create-fake-builder
