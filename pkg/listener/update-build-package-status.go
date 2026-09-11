@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -276,44 +275,14 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 	x86Done := x86BuilderID == "" || updatedX86BuildStatus == "success"
 	aarch64Done := aarch64BuilderID == "" || updatedAarch64BuildStatus == "success"
 	if x86Done && aarch64Done && (x86BuilderID != "" || aarch64BuilderID != "") {
-		packageOutputsByArchitecture := make(map[string][]string, 2)
-		if x86BuilderID != "" {
-			packageNames, err := readPackageOutputManifest(ctx, x86Builder, executionID, "x86_64", assignmentWorkDirs[x86BuilderID], pkgVersion.Version, pkgVersion.APKRelease)
-			if err != nil {
-				return fmt.Errorf("read x86_64 package output manifest: %w", err)
-			}
-			packageOutputsByArchitecture["x86_64"] = packageNames
-		}
-		if aarch64BuilderID != "" {
-			packageNames, err := readPackageOutputManifest(ctx, aarch64Builder, executionID, "aarch64", assignmentWorkDirs[aarch64BuilderID], pkgVersion.Version, pkgVersion.APKRelease)
-			if err != nil {
-				return fmt.Errorf("read aarch64 package output manifest: %w", err)
-			}
-			packageOutputsByArchitecture["aarch64"] = packageNames
+		if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusSuccess); err != nil {
+			return fmt.Errorf("failed to set execution status: %w", err)
 		}
 
 		// Check if this execution is part of a custom build request
 		customBuildRequestID, err := sbpackage.GetCustomBuildRequestIDForPackageVersion(ctx, pkgVersionID)
 		if err != nil {
 			return fmt.Errorf("failed to get custom build request id: %w", err)
-		}
-
-		if customBuildRequestID != "" {
-			// Custom images bypass build_apko. Keep this execution in the status
-			// poller until its outputs are indexed, so "all packages complete"
-			// below cannot start an image while any package is still publishing.
-			ready, err := customPackagePublicationReady(ctx, executionID, customBuildRequestID, &BuildAPKOTriggerPackage{
-				PackagesByArchitecture: packageOutputsByArchitecture,
-				Version:                pkgVersion.Version,
-				APKRelease:             pkgVersion.APKRelease,
-			})
-			if err != nil || !ready {
-				return err
-			}
-		}
-
-		if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusSuccess); err != nil {
-			return fmt.Errorf("failed to set execution status: %w", err)
 		}
 
 		if customBuildRequestID != "" {
@@ -400,7 +369,7 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 		}
 
 		// Queue build_image_with_vm_assigned events for images that depend on this package
-		if err := queueBuildApkoEventsForPackage(ctx, pkgVersion, packageOutputsByArchitecture); err != nil {
+		if err := queueBuildApkoEventsForPackage(ctx, pkgVersion); err != nil {
 			logger.Error(fmt.Errorf("failed to queue build_image_with_vm_assigned events for dependent images: %w", err),
 				zap.String("packageID", pkgVersion.PackageID),
 				zap.Error(err))
@@ -636,133 +605,9 @@ func collectPublishOutput(ctx context.Context, runner buildbackend.Runner, arch 
 	}
 }
 
-func readPackageOutputManifest(ctx context.Context, vm buildertypes.BuilderVM, executionID, architecture, workDir, version string, release int) ([]string, error) {
-	if workDir == "" {
-		resolvedWorkDir, err := builder.GetWorkDirForTask(ctx, "build_package", executionID, vm.ID)
-		if err != nil {
-			return nil, fmt.Errorf("get package build work dir: %w", err)
-		}
-		workDir = resolvedWorkDir
-	}
-
-	runner, err := buildbackend.NewRunner(ctx, vm)
-	if err != nil {
-		return nil, fmt.Errorf("create package build runner: %w", err)
-	}
-	defer runner.Close()
-
-	manifestPath := filepath.Join(workDir, "output", buildertypes.PackageOutputManifestFilename)
-	manifestJSON, err := runner.ReadFile(manifestPath)
-	if err != nil {
-		exists, statErr := runner.FileExists(manifestPath)
-		if statErr != nil {
-			return nil, fmt.Errorf("check package output manifest: %w", statErr)
-		}
-		if exists {
-			return nil, fmt.Errorf("read %s: %w", manifestPath, err)
-		}
-		// Builders already running at deployment have no manifest. Their
-		// packages directory contains the same APKs the uploader enumerated.
-		return readLegacyPackageOutputs(ctx, runner, filepath.Join(workDir, "packages", architecture), version, release)
-	}
-
-	var manifest buildertypes.PackageOutputManifest
-	if err := json.Unmarshal([]byte(manifestJSON), &manifest); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", manifestPath, err)
-	}
-	if manifest.Architecture != architecture {
-		return nil, fmt.Errorf("package output manifest architecture %q does not match %q", manifest.Architecture, architecture)
-	}
-	if len(manifest.PackageNames) == 0 {
-		return nil, fmt.Errorf("package output manifest for %s is empty", architecture)
-	}
-	for _, packageName := range manifest.PackageNames {
-		if strings.TrimSpace(packageName) == "" {
-			return nil, fmt.Errorf("package output manifest for %s contains an empty package name", architecture)
-		}
-	}
-
-	return manifest.PackageNames, nil
-}
-
-// readLegacyPackageOutputs recovers actual outputs, including conditional
-// subpackages, without guessing them from the recipe or waiting for the catalog.
-func readLegacyPackageOutputs(ctx context.Context, runner buildbackend.Runner, packagesDir, version string, release int) ([]string, error) {
-	quotedDir := "'" + strings.ReplaceAll(packagesDir, "'", "'\\''") + "'"
-	output, err := runner.RunCommand(ctx, "find "+quotedDir+" -type f -name '*.apk' -print")
-	if err != nil {
-		return nil, fmt.Errorf("list legacy APK outputs: %w", err)
-	}
-	suffix := fmt.Sprintf("-%s-r%d.apk", version, release)
-	names := map[string]struct{}{}
-	for _, filename := range strings.Split(strings.TrimSpace(output), "\n") {
-		if filename == "" {
-			continue
-		}
-		base := filepath.Base(filename)
-		if !strings.HasSuffix(base, suffix) || base == suffix {
-			return nil, fmt.Errorf("unexpected legacy APK output %q for %s-r%d", base, version, release)
-		}
-		names[strings.TrimSuffix(base, suffix)] = struct{}{}
-	}
-	if len(names) == 0 {
-		return nil, fmt.Errorf("no legacy APK outputs found in %s", packagesDir)
-	}
-	packageNames := make([]string, 0, len(names))
-	for name := range names {
-		packageNames = append(packageNames, name)
-	}
-	sort.Strings(packageNames)
-	return packageNames, nil
-}
-
-// customPackagePublicationReady uses the status checker's existing polling loop.
-// Per-architecture completion timestamps bound the wait across worker restarts.
-func customPackagePublicationReady(ctx context.Context, executionID, requestID string, trigger *BuildAPKOTriggerPackage) (bool, error) {
-	publicationErr := checkPackagePublication(ctx, trigger)
-	if publicationErr == nil {
-		return true, nil
-	}
-	if IsNonRetryableError(publicationErr) {
-		return false, failCustomPackagePublication(ctx, executionID, requestID, publicationErr)
-	}
-
-	var completedAt time.Time
-	for architecture := range trigger.PackagesByArchitecture {
-		updatedAt, err := execution.GetExecutionBuildStatusUpdatedAt(ctx, executionID, architecture)
-		if err != nil {
-			return false, fmt.Errorf("get package completion time: %w", err)
-		}
-		if updatedAt == nil {
-			return false, fmt.Errorf("missing %s package completion time", architecture)
-		}
-		if updatedAt.After(completedAt) {
-			completedAt = *updatedAt
-		}
-	}
-	if time.Since(completedAt) >= repositoryPublicationTimeout {
-		return false, failCustomPackagePublication(ctx, executionID, requestID, fmt.Errorf("repository publication timed out: %w", publicationErr))
-	}
-	if _, retry := AsRetryAfterError(publicationErr); retry {
-		logger.Debug("waiting for custom package repository publication", zap.String("executionID", executionID), zap.Error(publicationErr))
-		return false, nil
-	}
-	return false, publicationErr
-}
-
-func failCustomPackagePublication(ctx context.Context, executionID, requestID string, cause error) error {
-	if err := updateCustomBuildRequestError(ctx, requestID, "failed", cause.Error()); err != nil {
-		return fmt.Errorf("record custom request publication failure: %w", err)
-	}
-	if err := execution.UpdateExecutionStatus(ctx, executionID, executiontypes.ExecutionStatusFailed); err != nil {
-		return fmt.Errorf("record execution publication failure: %w", err)
-	}
-	return cause
-}
-
 // queueBuildApkoEventsForPackage enqueues build_apko events for APKOs that depend on the given package.
 // VM assignment and image build creation happen asynchronously in the build_apko handler, so the status checker is not blocked.
-func queueBuildApkoEventsForPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVersion, packageOutputsByArchitecture map[string][]string) error {
+func queueBuildApkoEventsForPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVersion) error {
 	packageID := pkgVersion.PackageID
 	version := pkgVersion.Version
 
@@ -788,13 +633,6 @@ func queueBuildApkoEventsForPackage(ctx context.Context, pkgVersion *sbpackagety
 		zap.String("version", version),
 		zap.Int("apkoCount", len(apkoIDs)),
 		zap.Strings("apkoIDs", apkoIDs))
-	if len(apkoIDs) == 0 {
-		return nil
-	}
-
-	if len(packageOutputsByArchitecture) == 0 {
-		return fmt.Errorf("package output manifests are empty")
-	}
 
 	for _, apkoID := range apkoIDs {
 		// Get image ID for this APKO (build_apko handler expects imageId + apkoId)
@@ -809,11 +647,10 @@ func queueBuildApkoEventsForPackage(ctx context.Context, pkgVersion *sbpackagety
 		payload := BuildAPKOPayload{
 			ImageID: imageID,
 			APKOID:  apkoID,
-			TriggerPackage: &BuildAPKOTriggerPackage{
-				Name:                   pkg.Name, // Older workers accept only the parent package name.
-				PackagesByArchitecture: packageOutputsByArchitecture,
-				Version:                version,
-				APKRelease:             pkgVersion.APKRelease,
+			TriggerPackage: BuildAPKOTriggerPackage{
+				Name:       pkg.Name,
+				Version:    version,
+				APKRelease: pkgVersion.APKRelease,
 			},
 		}
 		payloadJSON, err := json.Marshal(payload)

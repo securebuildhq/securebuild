@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/go-github/v61/github"
@@ -31,16 +30,15 @@ const (
 )
 
 type BuildAPKOTriggerPackage struct {
-	Name                   string              `json:"name,omitempty"`
-	PackagesByArchitecture map[string][]string `json:"packagesByArchitecture,omitempty"`
-	Version                string              `json:"version"`
-	APKRelease             int                 `json:"apkRelease"`
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	APKRelease int    `json:"apkRelease"`
 }
 
 type BuildAPKOPayload struct {
-	ImageID        string                   `json:"imageId"`
-	APKOID         string                   `json:"apkoId"`
-	TriggerPackage *BuildAPKOTriggerPackage `json:"triggerPackage,omitempty"`
+	ImageID        string                  `json:"imageId"`
+	APKOID         string                  `json:"apkoId"`
+	TriggerPackage BuildAPKOTriggerPackage `json:"triggerPackage"`
 }
 
 // handleBuildAPKO orchestrates the build process for a single APKO configuration
@@ -50,10 +48,8 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 		return fmt.Errorf("failed to unmarshal build apko payload: %w", err)
 	}
 
-	if trigger := buildAPKOPayload.TriggerPackage; trigger != nil {
-		if err := checkPackagePublication(ctx, trigger); err != nil {
-			return err
-		}
+	if err := checkPackagePublication(ctx, buildAPKOPayload.TriggerPackage); err != nil {
+		return err
 	}
 
 	logger.Info("building single APKO",
@@ -155,65 +151,33 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 	return nil
 }
 
-// checkPackagePublication is shared by dependent image builds and the custom
-// request poller. It checks the public indexes, not the earlier catalog writes.
-func checkPackagePublication(ctx context.Context, trigger *BuildAPKOTriggerPackage) error {
-	requirements, err := trigger.publicationRequirements()
+// checkPackagePublication checks the exact triggering package revision in both
+// public indexes before the image build record or VM assignment is created.
+func checkPackagePublication(ctx context.Context, trigger BuildAPKOTriggerPackage) error {
+	available, err := apk.RepositoryContainsPackage(
+		ctx,
+		param.GetParam(ctx).ApkRepository,
+		trigger.Name,
+		trigger.Version,
+		trigger.APKRelease,
+	)
 	if err != nil {
-		return NewNonRetryableError(err)
+		err = fmt.Errorf("check triggering package in APK repository: %w", err)
+		if errors.Is(err, apk.ErrInvalidRepositoryRequest) {
+			return NewNonRetryableError(err)
+		}
+		return NewRetryAfterError(err, repositoryPublicationRetryInterval, repositoryPublicationTimeout)
 	}
-
-	for _, architecture := range []string{"aarch64", "x86_64"} {
-		packageNames := requirements[architecture]
-		available, err := apk.RepositoryContainsPackages(
-			ctx,
-			param.GetParam(ctx).ApkRepository,
-			packageNames,
-			trigger.Version,
-			trigger.APKRelease,
-			[]string{architecture},
-		)
-		if err != nil {
-			err = fmt.Errorf("check triggering package in %s APK repository: %w", architecture, err)
-			if errors.Is(err, apk.ErrInvalidRepositoryRequest) {
-				return NewNonRetryableError(err)
-			}
-			return NewRetryAfterError(err, repositoryPublicationRetryInterval, repositoryPublicationTimeout)
-		}
-		if available {
-			continue
-		}
-
+	if !available {
 		return NewRetryAfterError(fmt.Errorf(
-			"%w: %s/%s=%s-r%d",
+			"%w: %s=%s-r%d",
 			ErrRepositoryPackageUnavailable,
-			architecture,
-			strings.Join(packageNames, ","),
+			trigger.Name,
 			trigger.Version,
 			trigger.APKRelease,
 		), repositoryPublicationRetryInterval, repositoryPublicationTimeout)
 	}
 	return nil
-}
-
-func (t *BuildAPKOTriggerPackage) publicationRequirements() (map[string][]string, error) {
-	if len(t.PackagesByArchitecture) > 0 {
-		// Package builders may have only one architecture, but runApkoBuild
-		// always builds both. Do not guess conditional outputs for a missing
-		// architecture, or silently approve a partial publication check.
-		for _, architecture := range []string{"aarch64", "x86_64"} {
-			if len(t.PackagesByArchitecture[architecture]) == 0 {
-				return nil, fmt.Errorf("cannot start multi-architecture image build: no APK outputs recorded for %s", architecture)
-			}
-		}
-		return t.PackagesByArchitecture, nil
-	}
-
-	packageNames := []string{t.Name}
-	return map[string][]string{
-		"x86_64":  packageNames,
-		"aarch64": packageNames,
-	}, nil
 }
 
 // checkAndRefreshLinkedApko checks if a linked APKO's git tag has been reassigned to a

@@ -2,16 +2,6 @@ package types
 
 import "time"
 
-const PackageOutputManifestFilename = "package-output-manifest.json"
-
-// PackageOutputManifest records the APKs actually emitted by one package build
-// architecture. The listener uses it to wait for those exact artifacts to reach
-// the public repository before starting dependent image builds.
-type PackageOutputManifest struct {
-	Architecture string   `json:"architecture"`
-	PackageNames []string `json:"packageNames"`
-}
-
 type CMXVM struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`

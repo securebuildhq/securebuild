@@ -209,7 +209,7 @@ func (l *Listener) Start(ctx context.Context) error {
 
 		// Check for existing work in each queue
 		processor := l.processors[channel]
-		l.startQueueProcessor(ctx, processor, true)
+		l.startQueueProcessor(ctx, processor)
 	}
 
 	// Send a notification to each channel to trigger immediate processing of any stuck tasks
@@ -256,13 +256,13 @@ func (l *Listener) processNotifications(ctx context.Context) {
 		}
 
 		// Trigger processing if not already processing
-		l.startQueueProcessor(ctx, processor, true)
+		l.startQueueProcessor(ctx, processor)
 	}
 }
 
-func (l *Listener) startQueueProcessor(ctx context.Context, processor *queueProcessor, includeStale bool) {
+func (l *Listener) startQueueProcessor(ctx context.Context, processor *queueProcessor) {
 	if processor.processing.CompareAndSwap(false, true) {
-		go l.processQueue(ctx, processor, includeStale)
+		go l.processQueue(ctx, processor)
 	}
 }
 
@@ -322,14 +322,12 @@ func (l *Listener) startDueQueueProcessors(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		// Include stale in-flight rows so a worker restart cannot strand work that
-		// was still inside its visibility window during the one-time startup scan.
-		l.startQueueProcessor(ctx, processor, true)
+		l.startQueueProcessor(ctx, processor)
 	}
 }
 
 // processQueue handles message processing for a specific queue
-func (l *Listener) processQueue(ctx context.Context, processor *queueProcessor, includeStale bool) {
+func (l *Listener) processQueue(ctx context.Context, processor *queueProcessor) {
 	logger.Debug("processing queue", zap.String("channel", processor.channel))
 	defer func() {
 		processor.processing.Store(false)
@@ -345,7 +343,7 @@ func (l *Listener) processQueue(ctx context.Context, processor *queueProcessor, 
 		}
 
 		// Process messages in a separate function to ensure proper connection cleanup
-		shouldContinue := l.processMessagesForQueue(ctx, processor, includeStale)
+		shouldContinue := l.processMessagesForQueue(ctx, processor)
 		if !shouldContinue {
 			logger.Debug("no messages to process", zap.String("channel", processor.channel))
 			return
@@ -370,7 +368,7 @@ type queueMessage struct {
 // A non-nil error indicates a transient pool acquisition failure and the
 // caller should retry. Fatal query errors are logged here and surfaced as an
 // empty result so the caller stops polling until the next notification.
-func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queueProcessor, includeStale bool) ([]queueMessage, error) {
+func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queueProcessor) ([]queueMessage, error) {
 	poolConn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
 	if err != nil {
 		return nil, err
@@ -423,7 +421,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 			AND COALESCE(next_attempt_at, created_at) <= NOW()
 			AND (
 				processing_started_at IS NULL
-				OR ($2::boolean AND processing_started_at < NOW() - $3::interval)
+				OR processing_started_at < NOW() - $2::interval
 			)
 			ORDER BY COALESCE(priority, 0) DESC, created_at ASC
 			LIMIT %d
@@ -439,7 +437,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 		WHERE wq.id = next_available_messages.id
 		RETURNING wq.id, wq.payload, COALESCE(wq.attempt_count, 0)::int, wq.created_at`,
 		WorkQueueTable, processor.maxWorkers, WorkQueueTable),
-		processor.channel, includeStale, processor.maxDuration.String())
+		processor.channel, processor.maxDuration.String())
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to query messages: %w", err))
 		return nil, nil
@@ -460,8 +458,8 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 }
 
 // processMessagesForQueue handles a single iteration of message processing
-func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queueProcessor, includeStale bool) bool {
-	messages, err := l.fetchAndLockMessages(ctx, processor, includeStale)
+func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queueProcessor) bool {
+	messages, err := l.fetchAndLockMessages(ctx, processor)
 	if err != nil {
 		logger.Warn("failed to get pooled connection in time for listener, continuing with next iteration", zap.String("channel", processor.channel), zap.Error(err))
 		return true

@@ -30,7 +30,7 @@ func TestRepositoryContainsPackage(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	available, err := RepositoryContainsPackage(
-		context.Background(), server.URL, "example", "10.3.1", 2, []string{"x86_64", "aarch64"},
+		context.Background(), server.URL, "example", "10.3.1", 2,
 	)
 	require.NoError(t, err)
 	require.True(t, available)
@@ -41,7 +41,7 @@ func TestRepositoryContainsPackageRequiresEveryArchitecture(t *testing.T) {
 
 	index := testAPKIndexArchive(t, "example", "10.3.1-r2")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path == "/x86_64/APKINDEX.tar.gz" {
+		if req.URL.Path == "/aarch64/APKINDEX.tar.gz" {
 			_, err := w.Write(index)
 			require.NoError(t, err)
 			return
@@ -51,30 +51,7 @@ func TestRepositoryContainsPackageRequiresEveryArchitecture(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	available, err := RepositoryContainsPackage(
-		context.Background(), server.URL+"/", "example", "10.3.1", 2, []string{"x86_64", "aarch64"},
-	)
-	require.NoError(t, err)
-	require.False(t, available)
-}
-
-func TestRepositoryContainsPackagesRequiresEveryPackage(t *testing.T) {
-	t.Parallel()
-
-	index := testAPKIndexArchive(t, "example", "10.3.1-r2", "example-cli", "10.3.1-r2")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, err := w.Write(index)
-		require.NoError(t, err)
-	}))
-	t.Cleanup(server.Close)
-
-	available, err := RepositoryContainsPackages(
-		context.Background(), server.URL, []string{"example", "example-cli"}, "10.3.1", 2, []string{"x86_64", "aarch64"},
-	)
-	require.NoError(t, err)
-	require.True(t, available)
-
-	available, err = RepositoryContainsPackages(
-		context.Background(), server.URL, []string{"example", "example-doc"}, "10.3.1", 2, []string{"x86_64", "aarch64"},
+		context.Background(), server.URL+"/", "example", "10.3.1", 2,
 	)
 	require.NoError(t, err)
 	require.False(t, available)
@@ -91,7 +68,7 @@ func TestRepositoryContainsPackageRequiresExactRevision(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	available, err := RepositoryContainsPackage(
-		context.Background(), server.URL, "example", "10.3.1", 2, []string{"x86_64", "aarch64"},
+		context.Background(), server.URL, "example", "10.3.1", 2,
 	)
 	require.NoError(t, err)
 	require.False(t, available)
@@ -106,7 +83,7 @@ func TestRepositoryContainsPackageReturnsRepositoryErrors(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	available, err := RepositoryContainsPackage(
-		context.Background(), server.URL, "example", "10.3.1", 2, []string{"x86_64"},
+		context.Background(), server.URL, "example", "10.3.1", 2,
 	)
 	require.ErrorContains(t, err, "503 Service Unavailable")
 	require.False(t, available)

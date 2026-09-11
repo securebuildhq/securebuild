@@ -29,7 +29,7 @@ func EnqueueWorkWithPriority(ctx context.Context, channel string, payload interf
 	}
 
 	now := time.Now().UTC()
-	_, err = conn.Exec(ctx, `INSERT INTO work_queue (id, channel, payload, created_at, next_attempt_at, priority) VALUES ($1, $2, $3, $4, $4, $5)`, id, channel, payload, now, priority)
+	_, err = conn.Exec(ctx, `INSERT INTO work_queue (id, channel, payload, created_at, priority) VALUES ($1, $2, $3, $4, $5)`, id, channel, payload, now, priority)
 	if err != nil {
 		return fmt.Errorf("failed to insert work: %w", err)
 	}
