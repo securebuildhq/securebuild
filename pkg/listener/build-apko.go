@@ -36,9 +36,9 @@ type BuildAPKOTriggerPackage struct {
 }
 
 type BuildAPKOPayload struct {
-	ImageID        string                  `json:"imageId"`
-	APKOID         string                  `json:"apkoId"`
-	TriggerPackage BuildAPKOTriggerPackage `json:"triggerPackage"`
+	ImageID        string                   `json:"imageId"`
+	APKOID         string                   `json:"apkoId"`
+	TriggerPackage *BuildAPKOTriggerPackage `json:"triggerPackage,omitempty"`
 }
 
 // handleBuildAPKO orchestrates the build process for a single APKO configuration
@@ -48,8 +48,10 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 		return fmt.Errorf("failed to unmarshal build apko payload: %w", err)
 	}
 
-	if err := checkPackagePublication(ctx, buildAPKOPayload.TriggerPackage); err != nil {
-		return err
+	if buildAPKOPayload.TriggerPackage != nil {
+		if err := checkPackagePublication(ctx, *buildAPKOPayload.TriggerPackage); err != nil {
+			return err
+		}
 	}
 
 	logger.Info("building single APKO",

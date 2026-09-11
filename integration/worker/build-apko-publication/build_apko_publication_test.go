@@ -75,7 +75,7 @@ func TestBuildAPKORepositoryRetryLifecycle(t *testing.T) {
 	payload, err := json.Marshal(listener.BuildAPKOPayload{
 		ImageID: "image",
 		APKOID:  "apko",
-		TriggerPackage: listener.BuildAPKOTriggerPackage{
+		TriggerPackage: &listener.BuildAPKOTriggerPackage{
 			Name: "example", Version: "10.3.1", APKRelease: 2,
 		},
 	})
@@ -123,6 +123,34 @@ func TestBuildAPKORepositoryRetryLifecycle(t *testing.T) {
 	require.Equal(t, 1, builds)
 	require.Equal(t, 1, dispatches)
 	require.EqualValues(t, 1, backend.acquired.Load())
+
+	// Manually triggered builds omit triggerPackage and must bypass publication
+	// gating even while the repository is unavailable.
+	stage.Store(0)
+	manualPayload, err := json.Marshal(listener.BuildAPKOPayload{
+		ImageID: "image",
+		APKOID:  "apko",
+	})
+	require.NoError(t, err)
+	require.NotContains(t, string(manualPayload), "triggerPackage")
+	require.NoError(t, persistence.EnqueueWork(ctx, "build_apko", string(manualPayload)))
+
+	require.Eventually(t, func() bool {
+		var complete bool
+		queryErr := db.Pool.QueryRow(ctx, `
+			SELECT completed_at IS NOT NULL AND last_error IS NULL
+			FROM work_queue
+			WHERE channel = 'build_apko' AND id <> $1`, queueID).Scan(&complete)
+		return queryErr == nil && complete
+	}, 10*time.Second, 10*time.Millisecond)
+
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM work_queue WHERE channel = 'build_apko'`).Scan(&queueRows))
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM image_build`).Scan(&builds))
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM work_queue WHERE channel = 'build_image_with_vm_assigned'`).Scan(&dispatches))
+	require.Equal(t, 2, queueRows)
+	require.Equal(t, 2, builds)
+	require.Equal(t, 2, dispatches)
+	require.EqualValues(t, 2, backend.acquired.Load())
 }
 
 func assertNoImageWork(t *testing.T, ctx context.Context, db *testutil.TestDatabase, backend *publicationTestBackend) {

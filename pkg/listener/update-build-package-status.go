@@ -647,7 +647,7 @@ func queueBuildApkoEventsForPackage(ctx context.Context, pkgVersion *sbpackagety
 		payload := BuildAPKOPayload{
 			ImageID: imageID,
 			APKOID:  apkoID,
-			TriggerPackage: BuildAPKOTriggerPackage{
+			TriggerPackage: &BuildAPKOTriggerPackage{
 				Name:       pkg.Name,
 				Version:    version,
 				APKRelease: pkgVersion.APKRelease,

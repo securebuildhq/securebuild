@@ -27,7 +27,7 @@ func TestHandleBuildAPKOSchedulesRetryWhileTriggerPackageIsUnpublished(t *testin
 	payload, err := json.Marshal(BuildAPKOPayload{
 		ImageID: "image-id",
 		APKOID:  "apko-id",
-		TriggerPackage: BuildAPKOTriggerPackage{
+		TriggerPackage: &BuildAPKOTriggerPackage{
 			Name:       "example",
 			Version:    "10.3.1",
 			APKRelease: 2,
@@ -57,7 +57,7 @@ func TestHandleBuildAPKODelaysRetryForRepositoryErrors(t *testing.T) {
 	payload, err := json.Marshal(BuildAPKOPayload{
 		ImageID: "image-id",
 		APKOID:  "apko-id",
-		TriggerPackage: BuildAPKOTriggerPackage{
+		TriggerPackage: &BuildAPKOTriggerPackage{
 			Name:       "example",
 			Version:    "10.3.1",
 			APKRelease: 2,
@@ -74,6 +74,23 @@ func TestHandleBuildAPKODelaysRetryForRepositoryErrors(t *testing.T) {
 	require.Equal(t, 10*time.Second, retryAfter.Delay)
 	require.Equal(t, 30*time.Minute, retryAfter.MaxAge)
 	require.ErrorContains(t, err, "503 Service Unavailable")
+}
+
+func TestHandleBuildAPKORejectsInvalidPresentTriggerPackage(t *testing.T) {
+	t.Parallel()
+
+	payload, err := json.Marshal(BuildAPKOPayload{
+		ImageID:        "image-id",
+		APKOID:         "apko-id",
+		TriggerPackage: &BuildAPKOTriggerPackage{},
+	})
+	require.NoError(t, err)
+
+	ctx := param.WithParam(context.Background(), &param.Param{ApkRepository: "https://repo.example"})
+	err = handleBuildAPKO(ctx, string(payload))
+
+	require.True(t, IsNonRetryableError(err))
+	require.ErrorContains(t, err, "package name")
 }
 
 func TestCheckPackagePublicationWaitsForBothArchitectures(t *testing.T) {
