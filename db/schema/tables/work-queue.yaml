@@ -35,6 +35,8 @@ schema:
       type: timestamp with time zone
     - name: processing_started_at
       type: timestamp with time zone
+    - name: next_attempt_at
+      type: timestamp with time zone
     - name: attempt_count
       type: integer
     - name: last_error

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -114,6 +115,32 @@ func IsNonRetryableError(err error) bool {
 	return errors.As(err, &nonRetryable)
 }
 
+// RetryAfterError asks the work queue to keep the same message pending without
+// consuming a failure attempt, and make it available again after Delay.
+type RetryAfterError struct {
+	Err    error
+	Delay  time.Duration
+	MaxAge time.Duration
+}
+
+func (e *RetryAfterError) Error() string {
+	return fmt.Sprintf("retry after %s: %s", e.Delay, e.Err.Error())
+}
+
+func (e *RetryAfterError) Unwrap() error {
+	return e.Err
+}
+
+func NewRetryAfterError(err error, delay, maxAge time.Duration) *RetryAfterError {
+	return &RetryAfterError{Err: err, Delay: delay, MaxAge: maxAge}
+}
+
+func AsRetryAfterError(err error) (*RetryAfterError, bool) {
+	var retryAfter *RetryAfterError
+	ok := errors.As(err, &retryAfter)
+	return retryAfter, ok
+}
+
 // Listener manages PostgreSQL LISTEN/NOTIFY subscriptions
 type Listener struct {
 	conn              *pgxpool.Conn
@@ -125,16 +152,16 @@ type Listener struct {
 }
 
 const (
-	WorkQueueTable   = "work_queue"
-	MaxRetryAttempts = 5 // Maximum number of retry attempts before giving up
+	WorkQueueTable            = "work_queue"
+	MaxRetryAttempts          = 5 // Maximum number of retry attempts before giving up
+	scheduledWorkPollInterval = 5 * time.Second
 )
 
 type queueProcessor struct {
 	channel     string
 	handler     NotificationHandler
 	workerPool  chan struct{}
-	processing  bool
-	pollTicker  *time.Ticker
+	processing  atomic.Bool
 	maxWorkers  int
 	maxDuration time.Duration // Maximum time a task can be processing before considered failed
 }
@@ -159,7 +186,6 @@ func (l *Listener) AddHandler(ctx context.Context, channel string, maxWorkers in
 		channel:     channel,
 		handler:     handler,
 		workerPool:  make(chan struct{}, maxWorkers),
-		pollTicker:  time.NewTicker(5 * time.Second),
 		maxWorkers:  maxWorkers,
 		maxDuration: maxDuration,
 	}
@@ -183,10 +209,7 @@ func (l *Listener) Start(ctx context.Context) error {
 
 		// Check for existing work in each queue
 		processor := l.processors[channel]
-		if !processor.processing {
-			processor.processing = true
-			go l.processQueue(ctx, processor)
-		}
+		l.startQueueProcessor(ctx, processor)
 	}
 
 	// Send a notification to each channel to trigger immediate processing of any stuck tasks
@@ -202,6 +225,7 @@ func (l *Listener) Start(ctx context.Context) error {
 
 	// Start processing notifications
 	go l.processNotifications(ctx)
+	go l.processScheduledWork(ctx)
 
 	return nil
 }
@@ -232,10 +256,73 @@ func (l *Listener) processNotifications(ctx context.Context) {
 		}
 
 		// Trigger processing if not already processing
-		if !processor.processing {
-			processor.processing = true
-			go l.processQueue(ctx, processor)
+		l.startQueueProcessor(ctx, processor)
+	}
+}
+
+func (l *Listener) startQueueProcessor(ctx context.Context, processor *queueProcessor) {
+	if processor.processing.CompareAndSwap(false, true) {
+		go l.processQueue(ctx, processor)
+	}
+}
+
+// processScheduledWork wakes queues that have durable work whose next attempt
+// is due. A single database poll covers every registered channel and makes
+// scheduled retries survive listener restarts.
+func (l *Listener) processScheduledWork(ctx context.Context) {
+	ticker := time.NewTicker(scheduledWorkPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			l.startDueQueueProcessors(ctx)
 		}
+	}
+}
+
+func (l *Listener) startDueQueueProcessors(ctx context.Context) {
+	conn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
+	if err != nil {
+		logger.Warn("failed to check for scheduled work", zap.Error(err))
+		return
+	}
+	defer conn.Release()
+
+	rows, err := conn.Query(ctx, fmt.Sprintf(`
+		SELECT DISTINCT channel
+		FROM %s
+		WHERE completed_at IS NULL
+		  AND COALESCE(next_attempt_at, created_at) <= NOW()
+		`, WorkQueueTable))
+	if err != nil {
+		logger.Warn("failed to query scheduled work", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	var dueChannels []string
+	for rows.Next() {
+		var channel string
+		if err := rows.Scan(&channel); err != nil {
+			logger.Warn("failed to scan scheduled work", zap.Error(err))
+			continue
+		}
+		dueChannels = append(dueChannels, channel)
+	}
+	if err := rows.Err(); err != nil {
+		logger.Warn("failed while reading scheduled work", zap.Error(err))
+		return
+	}
+
+	for _, channel := range dueChannels {
+		processor, ok := l.processors[channel]
+		if !ok {
+			continue
+		}
+		l.startQueueProcessor(ctx, processor)
 	}
 }
 
@@ -243,7 +330,7 @@ func (l *Listener) processNotifications(ctx context.Context) {
 func (l *Listener) processQueue(ctx context.Context, processor *queueProcessor) {
 	logger.Debug("processing queue", zap.String("channel", processor.channel))
 	defer func() {
-		processor.processing = false
+		processor.processing.Store(false)
 		logger.Debug("processing queue done", zap.String("channel", processor.channel))
 	}()
 
@@ -252,10 +339,7 @@ func (l *Listener) processQueue(ctx context.Context, processor *queueProcessor) 
 		case <-ctx.Done():
 			logger.Debug("context done", zap.String("channel", processor.channel))
 			return
-		case <-processor.pollTicker.C:
-			// Continue processing on ticker
 		default:
-			// Process immediately on notification
 		}
 
 		// Process messages in a separate function to ensure proper connection cleanup
@@ -272,6 +356,7 @@ type queueMessage struct {
 	id           string
 	payload      []byte
 	attemptCount int
+	createdAt    time.Time
 }
 
 // fetchAndLockMessages acquires a pooled connection, runs queue stats and locks
@@ -296,7 +381,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 		SELECT
 			COUNT(*) as total,
 			COUNT(CASE WHEN processing_started_at IS NOT NULL AND completed_at IS NULL THEN 1 END) as in_flight,
-			COUNT(CASE WHEN processing_started_at IS NULL AND completed_at IS NULL THEN 1 END) as available,
+			COUNT(CASE WHEN processing_started_at IS NULL AND completed_at IS NULL AND COALESCE(next_attempt_at, created_at) <= NOW() THEN 1 END) as available,
 			MIN(created_at) as oldest_message_created_at
 		FROM %s
 		WHERE channel = $1
@@ -333,6 +418,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 			FROM %s
 			WHERE completed_at IS NULL
 			AND channel = $1
+			AND COALESCE(next_attempt_at, created_at) <= NOW()
 			AND (
 				processing_started_at IS NULL
 				OR processing_started_at < NOW() - $2::interval
@@ -349,7 +435,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 			END
 		FROM next_available_messages
 		WHERE wq.id = next_available_messages.id
-		RETURNING wq.id, wq.payload, COALESCE(wq.attempt_count, 0)::int`,
+		RETURNING wq.id, wq.payload, COALESCE(wq.attempt_count, 0)::int, wq.created_at`,
 		WorkQueueTable, processor.maxWorkers, WorkQueueTable),
 		processor.channel, processor.maxDuration.String())
 	if err != nil {
@@ -361,7 +447,7 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 	var messages []queueMessage
 	for rows.Next() {
 		var msg queueMessage
-		if err := rows.Scan(&msg.id, &msg.payload, &msg.attemptCount); err != nil {
+		if err := rows.Scan(&msg.id, &msg.payload, &msg.attemptCount, &msg.createdAt); err != nil {
 			logger.Error(fmt.Errorf("failed to scan message: %w", err))
 			continue
 		}
@@ -417,7 +503,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 		// Wait for worker slot
 		processor.workerPool <- struct{}{}
 
-		go func(messageID string, messagePayload []byte, attemptCount int) {
+		go func(messageID string, messagePayload []byte, attemptCount int, messageCreatedAt time.Time) {
 			defer func() { <-processor.workerPool }()
 
 			startTime := time.Now()
@@ -455,6 +541,39 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 			defer updateConn.Release()
 
 			if handlerErr != nil {
+				if retryAfter, ok := AsRetryAfterError(handlerErr); ok {
+					if retryAfter.MaxAge > 0 && time.Since(messageCreatedAt) >= retryAfter.MaxAge {
+						logger.Warn("scheduled retry exceeded its maximum age, marking as completed with error",
+							zap.String("id", messageID),
+							zap.String("channel", processor.channel),
+							zap.Duration("max_age", retryAfter.MaxAge),
+							zap.Error(handlerErr))
+
+						_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
+							UPDATE %s
+							SET completed_at = NOW(),
+							    last_error = $2
+							WHERE id = $1`, WorkQueueTable),
+							messageID, fmt.Sprintf("scheduled retry timed out after %s: %s", retryAfter.MaxAge, retryAfter.Err))
+						if updateErr != nil {
+							logger.Error(fmt.Errorf("failed to mark expired scheduled retry %s as completed: %w", messageID, updateErr))
+						}
+						return
+					}
+
+					_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
+						UPDATE %s
+						SET processing_started_at = NULL,
+						    next_attempt_at = NOW() + $3::interval,
+						    last_error = $2
+						WHERE id = $1`, WorkQueueTable),
+						messageID, handlerErr.Error(), retryAfter.Delay.String())
+					if updateErr != nil {
+						logger.Error(fmt.Errorf("failed to schedule retry for message %s: %w", messageID, updateErr))
+					}
+					return
+				}
+
 				// Check if this is a non-retryable error
 				if IsNonRetryableError(handlerErr) {
 					logger.Warn("handler returned non-retryable error, marking as completed with error",
@@ -480,6 +599,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 				_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
 					UPDATE %s
 					SET processing_started_at = NULL,
+						next_attempt_at = NOW(),
 						last_error = $2,
 						attempt_count = COALESCE(attempt_count, 0) + 1
 					WHERE id = $1`, WorkQueueTable),
@@ -508,7 +628,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 				zap.String("id", messageID),
 				zap.String("channel", processor.channel),
 				zap.String("duration", time.Since(startTime).String()))
-		}(msg.id, msg.payload, msg.attemptCount)
+		}(msg.id, msg.payload, msg.attemptCount, msg.createdAt)
 	}
 
 	// If no messages found, stop processing until next notification

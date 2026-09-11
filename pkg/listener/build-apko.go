@@ -3,9 +3,12 @@ package listener
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/go-github/v61/github"
+	"github.com/securebuildhq/securebuild/pkg/apk"
 	"github.com/securebuildhq/securebuild/pkg/gitspec"
 	image "github.com/securebuildhq/securebuild/pkg/image"
 	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
@@ -17,9 +20,25 @@ import (
 	"golang.org/x/oauth2"
 )
 
+var ErrRepositoryPackageUnavailable = errors.New("package is not available in the APK repository")
+
+const (
+	repositoryPublicationRetryInterval = 10 * time.Second
+	// Publication is asynchronous and batched. Allow an indexing backlog or
+	// repository outage to recover without keeping a worker or builder occupied.
+	repositoryPublicationTimeout = 30 * time.Minute
+)
+
+type BuildAPKOTriggerPackage struct {
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	APKRelease int    `json:"apkRelease"`
+}
+
 type BuildAPKOPayload struct {
-	ImageID string `json:"imageId"`
-	APKOID  string `json:"apkoId"`
+	ImageID        string                   `json:"imageId"`
+	APKOID         string                   `json:"apkoId"`
+	TriggerPackage *BuildAPKOTriggerPackage `json:"triggerPackage,omitempty"`
 }
 
 // handleBuildAPKO orchestrates the build process for a single APKO configuration
@@ -27,6 +46,12 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 	var buildAPKOPayload BuildAPKOPayload
 	if err := json.Unmarshal([]byte(payload), &buildAPKOPayload); err != nil {
 		return fmt.Errorf("failed to unmarshal build apko payload: %w", err)
+	}
+
+	if buildAPKOPayload.TriggerPackage != nil {
+		if err := checkPackagePublication(ctx, *buildAPKOPayload.TriggerPackage); err != nil {
+			return err
+		}
 	}
 
 	logger.Info("building single APKO",
@@ -125,6 +150,35 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 		return fmt.Errorf("failed to enqueue work: %w", err)
 	}
 
+	return nil
+}
+
+// checkPackagePublication checks the exact triggering package revision in both
+// public indexes before the image build record or VM assignment is created.
+func checkPackagePublication(ctx context.Context, trigger BuildAPKOTriggerPackage) error {
+	available, err := apk.RepositoryContainsPackage(
+		ctx,
+		param.GetParam(ctx).ApkRepository,
+		trigger.Name,
+		trigger.Version,
+		trigger.APKRelease,
+	)
+	if err != nil {
+		err = fmt.Errorf("check triggering package in APK repository: %w", err)
+		if errors.Is(err, apk.ErrInvalidRepositoryRequest) {
+			return NewNonRetryableError(err)
+		}
+		return NewRetryAfterError(err, repositoryPublicationRetryInterval, repositoryPublicationTimeout)
+	}
+	if !available {
+		return NewRetryAfterError(fmt.Errorf(
+			"%w: %s=%s-r%d",
+			ErrRepositoryPackageUnavailable,
+			trigger.Name,
+			trigger.Version,
+			trigger.APKRelease,
+		), repositoryPublicationRetryInterval, repositoryPublicationTimeout)
+	}
 	return nil
 }
 

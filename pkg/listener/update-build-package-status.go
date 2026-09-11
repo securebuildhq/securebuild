@@ -369,7 +369,7 @@ func updateBuildPackageStatus(ctx context.Context, executionID string) error {
 		}
 
 		// Queue build_image_with_vm_assigned events for images that depend on this package
-		if err := queueBuildApkoEventsForPackage(ctx, pkgVersion.PackageID, pkgVersion.Version); err != nil {
+		if err := queueBuildApkoEventsForPackage(ctx, pkgVersion); err != nil {
 			logger.Error(fmt.Errorf("failed to queue build_image_with_vm_assigned events for dependent images: %w", err),
 				zap.String("packageID", pkgVersion.PackageID),
 				zap.Error(err))
@@ -607,7 +607,10 @@ func collectPublishOutput(ctx context.Context, runner buildbackend.Runner, arch 
 
 // queueBuildApkoEventsForPackage enqueues build_apko events for APKOs that depend on the given package.
 // VM assignment and image build creation happen asynchronously in the build_apko handler, so the status checker is not blocked.
-func queueBuildApkoEventsForPackage(ctx context.Context, packageID string, version string) error {
+func queueBuildApkoEventsForPackage(ctx context.Context, pkgVersion *sbpackagetypes.PackageVersion) error {
+	packageID := pkgVersion.PackageID
+	version := pkgVersion.Version
+
 	// Get the package info for logging
 	pkg, err := sbpackage.GetPackage(ctx, packageID)
 	if err != nil {
@@ -644,6 +647,11 @@ func queueBuildApkoEventsForPackage(ctx context.Context, packageID string, versi
 		payload := BuildAPKOPayload{
 			ImageID: imageID,
 			APKOID:  apkoID,
+			TriggerPackage: &BuildAPKOTriggerPackage{
+				Name:       pkg.Name,
+				Version:    version,
+				APKRelease: pkgVersion.APKRelease,
+			},
 		}
 		payloadJSON, err := json.Marshal(payload)
 		if err != nil {
