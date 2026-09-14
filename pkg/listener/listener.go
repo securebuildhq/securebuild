@@ -369,6 +369,11 @@ type queueMessage struct {
 // caller should retry. Fatal query errors are logged here and surfaced as an
 // empty result so the caller stops polling until the next notification.
 func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queueProcessor) ([]queueMessage, error) {
+	// Leave work eligible for reprioritization until a handler can actually run it.
+	availableWorkers := processor.maxWorkers - len(processor.workerPool)
+	if availableWorkers <= 0 {
+		return nil, nil
+	}
 	poolConn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
 	if err != nil {
 		return nil, err
@@ -409,13 +414,28 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 	channelTag := fmt.Sprintf("channel:%s", processor.channel)
 	telemetry.Gauge("securebuild.worker.queue.total", float64(total), []string{channelTag})
 
-	// Query and lock unprocessed messages atomically
-	// Order by priority DESC (higher priority first), then created_at ASC (oldest first)
-	// Priority: 0/NULL = normal, 1 = high
+	orderedIDs, err := pendingBuildOrder(ctx, poolConn, processor)
+	if err != nil {
+		return nil, err
+	}
+	order := "COALESCE(priority, 0) DESC, created_at ASC, id ASC"
+	join := ""
+	rank := "0::bigint"
+	args := []interface{}{processor.channel, processor.maxDuration.String()}
+	if orderedIDs != nil {
+		order = "queue_rank"
+		// Join ordinal ranks once rather than scanning the entire ID array for
+		// every pending row, which would be quadratic for large rebuild cascades.
+		join = "JOIN unnest($3::text[]) WITH ORDINALITY AS build_order(build_id, queue_rank) ON build_order.build_id = pending.id"
+		rank = "build_order.queue_rank"
+		args = append(args, orderedIDs)
+	}
+	// Claim atomically, then explicitly order the returned batch: UPDATE RETURNING
+	// alone does not preserve the order used to select rows.
 	rows, err := poolConn.Query(ctx, fmt.Sprintf(`
 		WITH next_available_messages AS (
-			SELECT id, payload
-			FROM %s
+			SELECT id, payload, %s AS queue_rank
+			FROM %s AS pending %s
 			WHERE completed_at IS NULL
 			AND channel = $1
 			AND COALESCE(next_attempt_at, created_at) <= NOW()
@@ -423,10 +443,10 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 				processing_started_at IS NULL
 				OR processing_started_at < NOW() - $2::interval
 			)
-			ORDER BY COALESCE(priority, 0) DESC, created_at ASC
+			ORDER BY %s
 			LIMIT %d
-			FOR UPDATE SKIP LOCKED
-		)
+			FOR UPDATE OF pending SKIP LOCKED
+		), claimed AS (
 		UPDATE %s AS wq
 		SET processing_started_at = NOW(),
 			attempt_count = COALESCE(attempt_count, 0) + CASE
@@ -435,9 +455,11 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 			END
 		FROM next_available_messages
 		WHERE wq.id = next_available_messages.id
-		RETURNING wq.id, wq.payload, COALESCE(wq.attempt_count, 0)::int, wq.created_at`,
-		WorkQueueTable, processor.maxWorkers, WorkQueueTable),
-		processor.channel, processor.maxDuration.String())
+		RETURNING wq.id, wq.payload, COALESCE(wq.attempt_count, 0)::int AS attempt_count,
+			wq.priority, wq.created_at, next_available_messages.queue_rank
+		)
+		SELECT id, payload, attempt_count, created_at FROM claimed ORDER BY %s`,
+		rank, WorkQueueTable, join, order, availableWorkers, WorkQueueTable, order), args...)
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to query messages: %w", err))
 		return nil, nil
@@ -459,9 +481,20 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 
 // processMessagesForQueue handles a single iteration of message processing
 func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queueProcessor) bool {
+	if len(processor.workerPool) >= processor.maxWorkers {
+		// Wait without reserving pending jobs; newer builds may arrive meanwhile.
+		timer := time.NewTimer(scheduledWorkPollInterval)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		}
+	}
 	messages, err := l.fetchAndLockMessages(ctx, processor)
 	if err != nil {
-		logger.Warn("failed to get pooled connection in time for listener, continuing with next iteration", zap.String("channel", processor.channel), zap.Error(err))
+		logger.Warn("failed to fetch queue messages, continuing with next iteration", zap.String("channel", processor.channel), zap.Error(err))
 		return true
 	}
 

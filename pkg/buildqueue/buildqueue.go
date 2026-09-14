@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/securebuildhq/securebuild/pkg/buildpriority"
 	"github.com/securebuildhq/securebuild/pkg/execution"
 	executiontypes "github.com/securebuildhq/securebuild/pkg/execution/types"
 	"github.com/securebuildhq/securebuild/pkg/listener"
@@ -33,8 +34,11 @@ func ProcessRebuildChains(ctx context.Context) error {
 			SELECT DISTINCT ON (cause_id) cause_id, status
 			FROM execution
 			ORDER BY cause_id, created_at DESC
-		)
-		SELECT p.name, p.id, rcl.link_id, rc.chain_name, rc.package_version_id, rc.package_id
+		), candidate AS (
+		SELECT p.name, p.id AS package_id, rcl.link_id, rc.chain_name,
+			rc.package_version_id AS chain_package_version_id, rc.package_id AS chain_package_id,
+			rc.created_at,
+			CASE WHEN rc.package_id = p.id THEN NULLIF(rc.package_version_id, '') END AS package_version_id
 		FROM rebuild_chain_link rcl
 		JOIN package p ON rcl.package_id = p.id
 		JOIN rebuild_chain rc ON rcl.rebuild_chain_id = rc.id
@@ -47,7 +51,11 @@ func ProcessRebuildChains(ctx context.Context) error {
 			WHERE rcd.link_id = rcl.link_id
 			AND (le.status IS NULL OR le.status != 'success')
 		)
-	`
+		)
+		SELECT candidate.name, candidate.package_id, candidate.link_id, candidate.chain_name,
+			candidate.chain_package_version_id, candidate.chain_package_id, candidate.created_at,
+			family_metadata.family, version_metadata.versions
+		FROM candidate ` + buildpriority.PackageMetadataJoin
 
 	rows, err := conn.Query(ctx, query)
 	if err != nil {
@@ -55,13 +63,35 @@ func ProcessRebuildChains(ctx context.Context) error {
 	}
 	defer rows.Close()
 
+	type chainLink struct {
+		packageName, packageID, linkID, chainName string
+		chainPackageVersionID                     sql.NullString
+		chainPackageID                            string
+	}
+	links := make(map[string]chainLink)
+	var candidates []buildpriority.Candidate
 	for rows.Next() {
-		var packageName, packageID, linkID, chainName string
-		var chainPackageVersionID sql.NullString
-		var chainPackageID string
-		if err := rows.Scan(&packageName, &packageID, &linkID, &chainName, &chainPackageVersionID, &chainPackageID); err != nil {
+		var link chainLink
+		var candidate buildpriority.Candidate
+		if err := rows.Scan(&link.packageName, &link.packageID, &link.linkID, &link.chainName,
+			&link.chainPackageVersionID, &link.chainPackageID, &candidate.CreatedAt,
+			&candidate.Family, &candidate.Versions); err != nil {
 			return fmt.Errorf("failed to scan package data: %w", err)
 		}
+		candidate.ID = link.linkID
+		candidates = append(candidates, candidate)
+		links[link.linkID] = link
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to read rebuild chain links: %w", err)
+	}
+	rows.Close()
+
+	// Rank only dependency-ready links. No version preference can bypass the DAG.
+	for _, id := range buildpriority.Order(candidates) {
+		link := links[id]
+		packageName, packageID, linkID, chainName := link.packageName, link.packageID, link.linkID, link.chainName
+		chainPackageVersionID, chainPackageID := link.chainPackageVersionID, link.chainPackageID
 
 		logger.Info("building package for rebuild chain",
 			zap.String("chainName", chainName),
