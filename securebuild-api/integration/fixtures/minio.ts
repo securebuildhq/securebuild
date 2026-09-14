@@ -26,7 +26,7 @@ function stripDigestAlgo(digest: string): string {
 export async function setupMinio(): Promise<MinioStorage> {
   console.log('Starting MinIO container...');
 
-  const container = await new MinioContainer('minio/minio:latest')
+  const container = await new MinioContainer('registry.replicated.com/library/minio:RELEASE.2025-10-15T17-29-55Z')
     .start();
 
   const host = container.getHost();

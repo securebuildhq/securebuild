@@ -37,7 +37,7 @@ func SetupMinIO(ctx context.Context, t *testing.T) *MinIOStorage {
 
 	// Start MinIO container using Testcontainers
 	minioContainer, err := miniocontainer.Run(ctx,
-		"minio/minio:RELEASE.2025-09-07T16-13-09Z",
+		"registry.replicated.com/library/minio:RELEASE.2025-10-15T17-29-55Z",
 	)
 	require.NoError(t, err)
 
