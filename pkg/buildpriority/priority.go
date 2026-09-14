@@ -1,78 +1,72 @@
-// Package buildpriority orders pending builds by upstream version within a family.
+// Package buildpriority supplies persistent upstream-version keys and SQL ranking.
 package buildpriority
 
 import (
-	"sort"
-	"time"
-
-	"github.com/Masterminds/semver/v3"
+	"fmt"
+	"regexp"
+	"strings"
 )
 
-// Candidate describes work that is ready to run. Versions excludes rebuild epochs:
-// rebuilding an old release must not make it newer than a recent upstream release.
-type Candidate struct {
-	ID        string
-	Family    string
-	Versions  []string
-	Priority  int
-	CreatedAt time.Time
-}
+var versionPattern = regexp.MustCompile(`^v?([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`)
+var numericIdentifier = regexp.MustCompile(`^[0-9]+$`)
 
-// Order returns IDs with explicit priority first, then version rank (newest in
-// each family, next newest, etc.), then FIFO. Unrelated version numbers are never
-// compared. Missing or non-semver metadata receives rank zero and uses FIFO.
-func Order(candidates []Candidate) []string {
-	versions := make(map[string]*semver.Version, len(candidates))
-	families := make(map[string][]*semver.Version)
-	for _, c := range candidates {
-		if c.Family == "" {
+// VersionKey returns the highest supported version's intrinsic sort key. Compare
+// keys with PostgreSQL COLLATE "C". Empty means unrankable; NULL is reserved for
+// records awaiting backfill. Keep this encoding in sync with the web app helper.
+// Core components support up to 20 digits, without floating point conversion.
+func VersionKey(versions ...string) string {
+	best := ""
+	for _, raw := range versions {
+		m := versionPattern.FindStringSubmatch(raw)
+		if m == nil {
 			continue
 		}
-		for _, raw := range c.Versions {
-			v, err := semver.NewVersion(raw)
-			if err == nil && (versions[c.ID] == nil || v.GreaterThan(versions[c.ID])) {
-				versions[c.ID] = v
+		var core []string
+		for _, part := range m[1:4] {
+			part = strings.TrimLeft(part, "0")
+			if part == "" {
+				part = "0"
+			}
+			if len(part) > 20 {
+				core = nil
+				break
+			}
+			core = append(core, strings.Repeat("0", 20-len(part))+part)
+		}
+		if len(core) != 3 {
+			continue
+		}
+		key := strings.Join(core, ".") + "/"
+		if m[4] == "" {
+			key += "~" // stable sorts after all prereleases
+		} else {
+			valid := true
+			for _, part := range strings.Split(m[4], ".") {
+				if numericIdentifier.MatchString(part) {
+					if len(part) > 1 && part[0] == '0' {
+						valid = false
+						break
+					}
+					// Numeric identifiers precede text; length precedes digits.
+					key += fmt.Sprintf("0%010d%s!", len(part), part)
+				} else {
+					// ! sorts before every allowed identifier character, so a
+					// shorter identifier precedes one with the same prefix.
+					key += "1" + part + "!"
+				}
+			}
+			if !valid {
+				continue
 			}
 		}
-		if v := versions[c.ID]; v != nil {
-			families[c.Family] = append(families[c.Family], v)
+		if key > best {
+			best = key
 		}
 	}
-	for family, vs := range families {
-		sort.Slice(vs, func(i, j int) bool { return vs[i].GreaterThan(vs[j]) })
-		unique := vs[:0]
-		for _, v := range vs {
-			if len(unique) == 0 || !v.Equal(unique[len(unique)-1]) {
-				unique = append(unique, v)
-			}
-		}
-		families[family] = unique
-	}
-	ranks := make(map[string]int, len(candidates))
-	for _, c := range candidates {
-		if v := versions[c.ID]; v != nil {
-			ranks[c.ID] = sort.Search(len(families[c.Family]), func(i int) bool {
-				return !families[c.Family][i].GreaterThan(v)
-			})
-		}
-	}
-	ordered := append([]Candidate(nil), candidates...)
-	sort.Slice(ordered, func(i, j int) bool {
-		a, b := ordered[i], ordered[j]
-		if a.Priority != b.Priority {
-			return a.Priority > b.Priority
-		}
-		if ranks[a.ID] != ranks[b.ID] {
-			return ranks[a.ID] < ranks[b.ID]
-		}
-		if !a.CreatedAt.Equal(b.CreatedAt) {
-			return a.CreatedAt.Before(b.CreatedAt)
-		}
-		return a.ID < b.ID
-	})
-	ids := make([]string, len(ordered))
-	for i, c := range ordered {
-		ids[i] = c.ID
-	}
-	return ids
+	return best
 }
+
+// VersionRank ranks known keys within each family. Unknown metadata shares rank
+// zero with the newest known version and retains FIFO eligibility.
+const VersionRank = `CASE WHEN family IS NULL OR family = '' OR version_key IS NULL THEN 0
+	ELSE DENSE_RANK() OVER (PARTITION BY family ORDER BY version_key COLLATE "C" DESC NULLS LAST) - 1 END`

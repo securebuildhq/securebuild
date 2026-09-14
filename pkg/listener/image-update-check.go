@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-github/v61/github"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/securebuildhq/securebuild/pkg/buildpriority"
 	"github.com/securebuildhq/securebuild/pkg/gitspec"
 	"github.com/securebuildhq/securebuild/pkg/image"
 	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
@@ -78,23 +79,15 @@ func assignImageAPKOTags(ctx context.Context, imageID, targetApkoID string, tags
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, `
-		UPDATE image_apko
-		SET tags = ARRAY(
-			SELECT existing_tag
-			FROM unnest(tags) AS existing_tag
-			WHERE NOT (existing_tag = ANY($3::text[]))
-		), updated_at = NOW()
-		WHERE image_id = $1 AND id <> $2 AND tags && $3::text[]
-	`, imageID, targetApkoID, tags)
+	err = image.RemoveAPKOTags(ctx, tx, imageID, targetApkoID, tags)
 	if err != nil {
 		return fmt.Errorf("remove tags from previous APKOs: %w", err)
 	}
 
 	commandTag, err := tx.Exec(ctx, `
-		UPDATE image_apko SET tags = $1, name = $2, updated_at = NOW()
+		UPDATE image_apko SET tags = $1, name = $2, updated_at = NOW(), version_sort_key = $5, version_sort_tags = $1
 		WHERE id = $3 AND image_id = $4
-	`, tags, tags[0], targetApkoID, imageID)
+	`, tags, tags[0], targetApkoID, imageID, buildpriority.VersionKey(tags...))
 	if err != nil {
 		return fmt.Errorf("update target APKO tags: %w", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/Masterminds/semver"
 	"github.com/jackc/pgx/v5"
 	"github.com/securebuildhq/securebuild/pkg/builder"
+	"github.com/securebuildhq/securebuild/pkg/buildpriority"
 	"github.com/securebuildhq/securebuild/pkg/gitspec"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/package/types"
@@ -667,9 +668,9 @@ func CreateNewReleaseForLatestPackageVersion(ctx context.Context, packageID stri
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, license, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, git_remote, melange_file_path, git_tag, git_commit_sha)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-	`, newVersionID, packageID, newVersion, updatedMelangeYAML, now, now, release, latestVersion.License, latestVersion.UseRoot, latestVersion.BootstrapEnabled, latestVersion.BootstrapApkRepository, latestVersion.BootstrapKeyringAppend, util.NullIfEmpty(latestVersion.GitRemote), util.NullIfEmpty(latestVersion.MelangeFilePath), util.NullIfEmpty(latestVersion.GitTag), util.NullIfEmpty(latestVersion.GitCommitSHA))
+		INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, license, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, git_remote, melange_file_path, git_tag, git_commit_sha, version_sort_key)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+	`, newVersionID, packageID, newVersion, updatedMelangeYAML, now, now, release, latestVersion.License, latestVersion.UseRoot, latestVersion.BootstrapEnabled, latestVersion.BootstrapApkRepository, latestVersion.BootstrapKeyringAppend, util.NullIfEmpty(latestVersion.GitRemote), util.NullIfEmpty(latestVersion.MelangeFilePath), util.NullIfEmpty(latestVersion.GitTag), util.NullIfEmpty(latestVersion.GitCommitSHA), buildpriority.VersionKey(newVersion))
 	if err != nil {
 		return nil, fmt.Errorf("insert new package version: %w", err)
 	}
@@ -699,9 +700,9 @@ func CreateNewReleaseForLatestPackageVersion(ctx context.Context, packageID stri
 			return nil, fmt.Errorf("generate random id for subpackage version: %w", err)
 		}
 		_, err = tx.Exec(ctx, `
-			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, license, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		`, newID, subpackage.ID, latestVersion.Version, nil, now, now, release, latestVersion.License, latestVersion.UseRoot, latestVersion.BootstrapEnabled, latestVersion.BootstrapApkRepository, latestVersion.BootstrapKeyringAppend)
+			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, license, use_root, bootstrap_enabled, bootstrap_apk_repository, bootstrap_keyring_append, version_sort_key)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		`, newID, subpackage.ID, latestVersion.Version, nil, now, now, release, latestVersion.License, latestVersion.UseRoot, latestVersion.BootstrapEnabled, latestVersion.BootstrapApkRepository, latestVersion.BootstrapKeyringAppend, buildpriority.VersionKey(latestVersion.Version))
 		if err != nil {
 			return nil, fmt.Errorf("insert subpackage version %s %s-r%d: %w", subpackage.Name, latestVersion.Version, release, err)
 		}

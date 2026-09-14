@@ -51,11 +51,14 @@ func ProcessRebuildChains(ctx context.Context) error {
 			WHERE rcd.link_id = rcl.link_id
 			AND (le.status IS NULL OR le.status != 'success')
 		)
+		), metadata AS (
+			SELECT candidate.*, family_metadata.family, version_metadata.version_key
+			FROM candidate ` + buildpriority.PackageMetadataJoin + `
+		), ranked AS (
+			SELECT metadata.*, ` + buildpriority.VersionRank + ` AS version_rank FROM metadata
 		)
-		SELECT candidate.name, candidate.package_id, candidate.link_id, candidate.chain_name,
-			candidate.chain_package_version_id, candidate.chain_package_id, candidate.created_at,
-			family_metadata.family, version_metadata.versions
-		FROM candidate ` + buildpriority.PackageMetadataJoin
+		SELECT name, package_id, link_id, chain_name, chain_package_version_id, chain_package_id
+		FROM ranked ORDER BY version_rank, created_at, link_id`
 
 	rows, err := conn.Query(ctx, query)
 	if err != nil {
@@ -68,19 +71,14 @@ func ProcessRebuildChains(ctx context.Context) error {
 		chainPackageVersionID                     sql.NullString
 		chainPackageID                            string
 	}
-	links := make(map[string]chainLink)
-	var candidates []buildpriority.Candidate
+	var links []chainLink
 	for rows.Next() {
 		var link chainLink
-		var candidate buildpriority.Candidate
 		if err := rows.Scan(&link.packageName, &link.packageID, &link.linkID, &link.chainName,
-			&link.chainPackageVersionID, &link.chainPackageID, &candidate.CreatedAt,
-			&candidate.Family, &candidate.Versions); err != nil {
+			&link.chainPackageVersionID, &link.chainPackageID); err != nil {
 			return fmt.Errorf("failed to scan package data: %w", err)
 		}
-		candidate.ID = link.linkID
-		candidates = append(candidates, candidate)
-		links[link.linkID] = link
+		links = append(links, link)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("failed to read rebuild chain links: %w", err)
@@ -88,8 +86,7 @@ func ProcessRebuildChains(ctx context.Context) error {
 	rows.Close()
 
 	// Rank only dependency-ready links. No version preference can bypass the DAG.
-	for _, id := range buildpriority.Order(candidates) {
-		link := links[id]
+	for _, link := range links {
 		packageName, packageID, linkID, chainName := link.packageName, link.packageID, link.linkID, link.chainName
 		chainPackageVersionID, chainPackageID := link.chainPackageVersionID, link.chainPackageID
 

@@ -5,6 +5,10 @@ schema:
     primaryKey:
       - id
     columns:
+      - name: version_sort_tags
+        type: text[]
+      - name: version_sort_key
+        type: text
       - name: id
         type: text
         constraints:

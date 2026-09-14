@@ -9,6 +9,7 @@ import (
 
 	semver "github.com/Masterminds/semver/v3"
 	"github.com/jackc/pgx/v5"
+	"github.com/securebuildhq/securebuild/pkg/buildpriority"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -306,7 +307,7 @@ func ReassignTagsForImage(ctx context.Context, tx pgx.Tx, imageID string) error 
 
 	// Update tags (caller manages transaction)
 	for apkoID, tags := range newTagAssignments {
-		_, err := tx.Exec(ctx, `UPDATE image_apko SET tags = $1 WHERE id = $2`, tags, apkoID)
+		_, err := tx.Exec(ctx, `UPDATE image_apko SET tags = $1, version_sort_key = $3, version_sort_tags = $1 WHERE id = $2`, tags, apkoID, buildpriority.VersionKey(tags...))
 		if err != nil {
 			return fmt.Errorf("failed to update tags for APKO %s: %w", apkoID, err)
 		}
@@ -367,4 +368,40 @@ func computeGlobalTagReassignments(apkos []APKOTagInfo) (map[string][]string, er
 	reassignLessSpecificTags(newTagAssignments, apkoVersions, apkos, protectedTags)
 
 	return newTagAssignments, nil
+}
+
+// RemoveAPKOTags removes reassigned aliases and refreshes the old owners' keys
+// in the caller's transaction. RETURNING uses the updated tags, including when
+// removing the last numeric tag leaves only rolling aliases.
+func RemoveAPKOTags(ctx context.Context, tx pgx.Tx, imageID, excludeID string, tags []string) error {
+	rows, err := tx.Query(ctx, `
+		UPDATE image_apko SET tags = ARRAY(
+			SELECT tag FROM unnest(tags) AS tag WHERE NOT (tag = ANY($3::text[]))
+		), updated_at = NOW()
+		WHERE image_id = $1 AND id <> $2 AND tags && $3::text[]
+		RETURNING id, tags`, imageID, excludeID, tags)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var ids, keys []string
+	for rows.Next() {
+		var id string
+		var remaining []string
+		if err := rows.Scan(&id, &remaining); err != nil {
+			return err
+		}
+		ids = append(ids, id)
+		keys = append(keys, buildpriority.VersionKey(remaining...))
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err = tx.Exec(ctx, `UPDATE image_apko ia SET version_sort_key = k.key, version_sort_tags = ia.tags
+		FROM unnest($1::text[], $2::text[]) AS k(id, key) WHERE ia.id = k.id`, ids, keys)
+	return err
 }

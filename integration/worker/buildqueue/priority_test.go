@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/securebuildhq/securebuild/integration/testutil"
+	"github.com/securebuildhq/securebuild/pkg/buildpriority"
 	"github.com/securebuildhq/securebuild/pkg/buildqueue"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
@@ -43,6 +44,7 @@ func TestRebuildChainVersionPriority(t *testing.T) {
 		INSERT INTO rebuild_chain_dependency (link_id, dependency_id) VALUES ('blocked', 'z-new');
 	`)
 	require.NoError(t, err)
+	require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
 	require.NoError(t, buildqueue.ProcessRebuildChains(ctx))
 	rows, err := db.Pool.Query(ctx, `SELECT cause_id, status FROM execution ORDER BY created_at`)
 	require.NoError(t, err)

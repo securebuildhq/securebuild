@@ -1,3 +1,4 @@
+import { versionKey } from "../build-priority";
 import { getDB, withTransaction } from "../data/db";
 import { getParam } from "../data/param";
 import { Image, ImageAPKO, ImageAPKOVersion,ImageContainedInCatalogItem, ImageExternalRegistry, ImageBuild } from "../types/image";
@@ -504,8 +505,8 @@ export async function createImage(name: string, alternateImage: string, apkos: C
 
       for (const apko of apkos) {
         const apkoId = 'a' + srs.default({ length: 32, alphanumeric: true });
-        const apkoQuery = `insert into image_apko (id, image_id, name, tags, created_at, updated_at) values ($1, $2, $3, $4, now(), now())`;
-        await client.query(apkoQuery, [apkoId, imageId, apko.name, apko.tags]);
+        const apkoQuery = `insert into image_apko (id, image_id, name, tags, created_at, updated_at, version_sort_key, version_sort_tags) values ($1, $2, $3, $4, now(), now(), $5, $4)`;
+        await client.query(apkoQuery, [apkoId, imageId, apko.name, apko.tags, versionKey(...apko.tags)]);
 
         const apkoVersionId = 'av' + srs.default({ length: 32, alphanumeric: true });
         const apkoVersionQuery = `insert into image_apko_version (id, image_apko_id, apko_yaml, created_at, updated_at) values ($1, $2, $3, now(), now())`;
@@ -744,8 +745,8 @@ export async function createGenerateApko(imageId: string): Promise<ImageAPKO> {
   try {
     const db = getDB(await getParam("DB_URI"));
     const apkoId = 'a' + srs.default({ length: 32, alphanumeric: true });
-    const query = `insert into image_apko (id, image_id, name, tags, created_at, updated_at) values ($1, $2, $3, $4, now(), now())`;
-    await db.query(query, [apkoId, imageId, "APKO", []]);
+    const query = `insert into image_apko (id, image_id, name, tags, created_at, updated_at, version_sort_key, version_sort_tags) values ($1, $2, $3, $4, now(), now(), $5, $4)`;
+    await db.query(query, [apkoId, imageId, "APKO", [], ""]);
 
     const apkoVersionId = 'av' + srs.default({ length: 32, alphanumeric: true });
     const apkoVersionQuery = `insert into image_apko_version (id, image_apko_id, apko_yaml, created_at, updated_at) values ($1, $2, $3, now(), now())`;
@@ -883,8 +884,8 @@ export async function getLatestImageAPKOVersion(id: string): Promise<ImageAPKOVe
 export async function updateImageAPKOTags(apkoId: string, tags: string[]): Promise<void> {
   try {
     const db = getDB(await getParam("DB_URI"));
-    const query = `update image_apko set tags = $1, updated_at = now() where id = $2`;
-    await db.query(query, [tags, apkoId]);
+    const query = `update image_apko set tags = $1, updated_at = now(), version_sort_key = $3, version_sort_tags = $1 where id = $2`;
+    await db.query(query, [tags, apkoId, versionKey(...tags)]);
 
     // Enqueue GitHub sync after successfully updating tags
     await enqueueWork('github_sync', {}).catch(err => {
@@ -1173,8 +1174,8 @@ export async function createLinkedImage(req: CreateLinkedImageRequest): Promise<
 
     const apkoId = 'a' + srs.default({ length: 32, alphanumeric: true });
     await client.query(
-      `insert into image_apko (id, image_id, name, tags, created_at, updated_at, git_remote, git_tag, apko_file_path) values ($1, $2, $3, $4, now(), now(), $5, $6, $7)`,
-      [apkoId, imageId, ociTag, [ociTag], gitRemote, gitTag, apkoFilePath]
+      `insert into image_apko (id, image_id, name, tags, created_at, updated_at, git_remote, git_tag, apko_file_path, version_sort_key, version_sort_tags) values ($1, $2, $3, $4, now(), now(), $5, $6, $7, $8, $4)`,
+      [apkoId, imageId, ociTag, [ociTag], gitRemote, gitTag, apkoFilePath, versionKey(ociTag)]
     );
 
     const apkoVersionId = 'av' + srs.default({ length: 32, alphanumeric: true });
@@ -1227,8 +1228,8 @@ export async function addLinkedImageApko(imageId: string, gitTag: string): Promi
 
   await withTransaction(db, async (client) => {
     await client.query(
-      `insert into image_apko (id, image_id, name, tags, created_at, updated_at, git_remote, git_tag, apko_file_path) values ($1, $2, $3, $4, now(), now(), $5, $6, $7)`,
-      [apkoId, imageId, ociTag, [ociTag], git_remote, gitTag, apko_file_path]
+      `insert into image_apko (id, image_id, name, tags, created_at, updated_at, git_remote, git_tag, apko_file_path, version_sort_key, version_sort_tags) values ($1, $2, $3, $4, now(), now(), $5, $6, $7, $8, $4)`,
+      [apkoId, imageId, ociTag, [ociTag], git_remote, gitTag, apko_file_path, versionKey(ociTag)]
     );
 
     await client.query(

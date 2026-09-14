@@ -414,27 +414,19 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 	channelTag := fmt.Sprintf("channel:%s", processor.channel)
 	telemetry.Gauge("securebuild.worker.queue.total", float64(total), []string{channelTag})
 
-	orderedIDs, err := pendingBuildOrder(ctx, poolConn, processor)
-	if err != nil {
-		return nil, err
-	}
-	order := "COALESCE(priority, 0) DESC, created_at ASC, id ASC"
+	cte := buildOrderCTE(processor.channel)
+	order := "COALESCE(pending.priority, 0) DESC, queue_rank, pending.created_at, pending.id"
 	join := ""
 	rank := "0::bigint"
-	args := []interface{}{processor.channel, processor.maxDuration.String()}
-	if orderedIDs != nil {
-		order = "queue_rank"
-		// Join ordinal ranks once rather than scanning the entire ID array for
-		// every pending row, which would be quadratic for large rebuild cascades.
-		join = "JOIN unnest($3::text[]) WITH ORDINALITY AS build_order(build_id, queue_rank) ON build_order.build_id = pending.id"
-		rank = "build_order.queue_rank"
-		args = append(args, orderedIDs)
+	if cte != "" {
+		join = "JOIN build_order ON build_order.id = pending.id"
+		rank = "build_order.version_rank"
 	}
 	// Claim atomically, then explicitly order the returned batch: UPDATE RETURNING
 	// alone does not preserve the order used to select rows.
 	rows, err := poolConn.Query(ctx, fmt.Sprintf(`
-		WITH next_available_messages AS (
-			SELECT id, payload, %s AS queue_rank
+		WITH %s next_available_messages AS (
+			SELECT pending.id, pending.payload, %s AS queue_rank
 			FROM %s AS pending %s
 			WHERE completed_at IS NULL
 			AND channel = $1
@@ -458,8 +450,9 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 		RETURNING wq.id, wq.payload, COALESCE(wq.attempt_count, 0)::int AS attempt_count,
 			wq.priority, wq.created_at, next_available_messages.queue_rank
 		)
-		SELECT id, payload, attempt_count, created_at FROM claimed ORDER BY %s`,
-		rank, WorkQueueTable, join, order, availableWorkers, WorkQueueTable, order), args...)
+		SELECT id, payload, attempt_count, created_at FROM claimed
+		ORDER BY COALESCE(priority, 0) DESC, queue_rank, created_at, id`,
+		cte, rank, WorkQueueTable, join, order, availableWorkers, WorkQueueTable), processor.channel, processor.maxDuration.String())
 	if err != nil {
 		logger.Error(fmt.Errorf("failed to query messages: %w", err))
 		return nil, nil

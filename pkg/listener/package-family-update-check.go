@@ -29,6 +29,7 @@ import (
 	"github.com/google/go-github/v61/github"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/securebuildhq/securebuild/pkg/buildpriority"
 	"github.com/securebuildhq/securebuild/pkg/gitspec"
 	"github.com/securebuildhq/securebuild/pkg/image"
 	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
@@ -804,9 +805,9 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 		}
 
 		_, err = tx.Exec(ctx, `
-			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, git_remote, melange_file_path, git_tag, git_commit_sha)
-			VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10)
-		`, newVersionID, newPackageID, versionStr, overriddenYAML, now, now, gitRemote, melangeFilePath, gitTag, specContent.CommitSHA)
+			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, git_remote, melange_file_path, git_tag, git_commit_sha, version_sort_key)
+			VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10, $11)
+		`, newVersionID, newPackageID, versionStr, overriddenYAML, now, now, gitRemote, melangeFilePath, gitTag, specContent.CommitSHA, buildpriority.VersionKey(versionStr))
 		if err != nil {
 			return nil, fmt.Errorf("insert package version: %w", err)
 		}
@@ -873,9 +874,9 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, git_remote, melange_file_path, git_tag, git_commit_sha)
-		VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10)
-	`, newVersionID, existingPackageID, versionStr, overriddenYAML, now, now, gitRemote, melangeFilePath, gitTag, specContent.CommitSHA)
+		INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, git_remote, melange_file_path, git_tag, git_commit_sha, version_sort_key)
+		VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9, $10, $11)
+	`, newVersionID, existingPackageID, versionStr, overriddenYAML, now, now, gitRemote, melangeFilePath, gitTag, specContent.CommitSHA, buildpriority.VersionKey(versionStr))
 	if err != nil {
 		return nil, fmt.Errorf("insert package version: %w", err)
 	}
@@ -906,9 +907,9 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 			return nil, fmt.Errorf("generate random id for subpackage version: %w", err)
 		}
 		_, err = tx.Exec(ctx, `
-			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release)
-			VALUES ($1, $2, $3, NULL, $4, $5, 0)
-		`, newID, subpackage.ID, versionStr, now, now)
+			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, version_sort_key)
+			VALUES ($1, $2, $3, NULL, $4, $5, 0, $6)
+		`, newID, subpackage.ID, versionStr, now, now, buildpriority.VersionKey(versionStr))
 		if err != nil {
 			return nil, fmt.Errorf("insert subpackage version %s %s-r0: %w", subpackage.Name, versionStr, err)
 		}
@@ -1006,9 +1007,9 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, git_remote, melange_file_path, git_tag, git_commit_sha)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, newVersionID, packageID, versionStr, overriddenYAML, now, now, newEpoch, gitRemote, melangeFilePath, gitTag, newCommitSHA)
+		INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, git_remote, melange_file_path, git_tag, git_commit_sha, version_sort_key)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, newVersionID, packageID, versionStr, overriddenYAML, now, now, newEpoch, gitRemote, melangeFilePath, gitTag, newCommitSHA, buildpriority.VersionKey(versionStr))
 	if err != nil {
 		return nil, fmt.Errorf("insert package version: %w", err)
 	}
@@ -1039,9 +1040,9 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 			return nil, fmt.Errorf("generate random id for subpackage version: %w", err)
 		}
 		_, err = tx.Exec(ctx, `
-			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release)
-			VALUES ($1, $2, $3, NULL, $4, $5, $6)
-		`, newID, subpackage.ID, versionStr, now, now, newEpoch)
+			INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, version_sort_key)
+			VALUES ($1, $2, $3, NULL, $4, $5, $6, $7)
+		`, newID, subpackage.ID, versionStr, now, now, newEpoch, buildpriority.VersionKey(versionStr))
 		if err != nil {
 			return nil, fmt.Errorf("insert subpackage version %s %s-r%d: %w", subpackage.Name, versionStr, newEpoch, err)
 		}
@@ -1252,23 +1253,15 @@ func createLinkedImageAPKO(ctx context.Context, imageID, gitRemote, apkoFilePath
 
 	// A tag identifies only one APKO file for an image. Reassign requested tags
 	// atomically before creating their new owner.
-	_, err = tx.Exec(ctx, `
-		UPDATE image_apko
-		SET tags = ARRAY(
-			SELECT existing_tag
-			FROM unnest(tags) AS existing_tag
-			WHERE NOT (existing_tag = ANY($2::text[]))
-		), updated_at = NOW()
-		WHERE image_id = $1 AND tags && $2::text[]
-	`, imageID, imageTags)
+	err = image.RemoveAPKOTags(ctx, tx, imageID, "", imageTags)
 	if err != nil {
 		return "", fmt.Errorf("remove reassigned tags from existing APKOs: %w", err)
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO image_apko (id, image_id, name, tags, created_at, updated_at, git_remote, git_tag, apko_file_path)
-		VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7)
-	`, apkoID, imageID, imageTags[0], imageTags, gitRemote, gitTag, apkoFilePath)
+		INSERT INTO image_apko (id, image_id, name, tags, created_at, updated_at, git_remote, git_tag, apko_file_path, version_sort_key, version_sort_tags)
+		VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7, $8, $4)
+	`, apkoID, imageID, imageTags[0], imageTags, gitRemote, gitTag, apkoFilePath, buildpriority.VersionKey(imageTags...))
 	if err != nil {
 		return "", fmt.Errorf("insert image_apko: %w", err)
 	}
@@ -1844,9 +1837,9 @@ func processPatchVersionUpdate(ctx context.Context, pf *package_family.PackageFa
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO package_version (id, package_id, version, apk_release, melange_yaml, created_at, updated_at, use_root, custom_disk_size)
-		VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6, $7)
-	`, newPackageVersionID, existingPackageID, version.Original(), newEpoch, transformedYAML, templateUseRoot, templateCustomDiskSize)
+		INSERT INTO package_version (id, package_id, version, apk_release, melange_yaml, created_at, updated_at, use_root, custom_disk_size, version_sort_key)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6, $7, $8)
+	`, newPackageVersionID, existingPackageID, version.Original(), newEpoch, transformedYAML, templateUseRoot, templateCustomDiskSize, buildpriority.VersionKey(version.Original()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create package_version: %w", err)
 	}
@@ -3567,9 +3560,9 @@ func generateSingleImageAPKO(
 		// Create new image_apko record
 		newApkoID = generateID()
 		_, err = tx.Exec(ctx, `
-			INSERT INTO image_apko (id, image_id, name, tags, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, NOW(), NOW())
-		`, newApkoID, imageID, newApkoName, tags)
+			INSERT INTO image_apko (id, image_id, name, tags, created_at, updated_at, version_sort_key, version_sort_tags)
+			VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $4)
+		`, newApkoID, imageID, newApkoName, tags, buildpriority.VersionKey(tags...))
 		if err != nil {
 			return "", fmt.Errorf("failed to create image_apko: %w", err)
 		}

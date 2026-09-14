@@ -15,6 +15,7 @@ import (
 
 	"chainguard.dev/melange/pkg/config"
 	"github.com/jackc/pgx/v5"
+	"github.com/securebuildhq/securebuild/pkg/buildpriority"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/package/types"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
@@ -104,9 +105,9 @@ func updatePackage(ctx context.Context, currentPackage *types.Package, currentVe
 	}
 
 	_, err = tx.Exec(ctx, `
-	INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, license, use_root, custom_disk_size)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-`, newVersionID, currentPackage.ID, compiled.Package.Version, melangeYAML, now, now, compiled.Package.Epoch, license, currentVersion.UseRoot, currentVersion.CustomDiskSize)
+	INSERT INTO package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, license, use_root, custom_disk_size, version_sort_key)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+`, newVersionID, currentPackage.ID, compiled.Package.Version, melangeYAML, now, now, compiled.Package.Epoch, license, currentVersion.UseRoot, currentVersion.CustomDiskSize, buildpriority.VersionKey(compiled.Package.Version))
 	if err != nil {
 		return fmt.Errorf("insert new package version: %w", err)
 	}

@@ -1,3 +1,4 @@
+import { versionKey } from "../build-priority";
 import { getDB, withTransaction } from "../data/db";
 import { Pool, PoolClient } from "pg";
 import { Package, PackageBuild, PackageVersion, Patch, VersionInfo, AdditionalFile, PackageDependency, AdditionalFiles } from "../types/package";
@@ -1050,8 +1051,8 @@ export async function createPackageRelease(
       // Get current subpackages from database
       const currentSubpackages = await listSubpackages(client, pkgId);
       // Insert new package version, copying git link fields from the previous version
-      const query = `insert into package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, use_root, git_remote, melange_file_path, git_tag, git_commit_sha) values ($1, $2, $3, $4, now(), now(), $5, $6, $7, $8, $9, $10)`;
-      await client.query(query, [id, pkgId, version, melangeYaml, newRelease, currentVersion.useRoot, currentVersion.gitRemote || null, currentVersion.melangeFilePath || null, currentVersion.gitTag || null, currentVersion.gitCommitSha || null]);
+      const query = `insert into package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, use_root, git_remote, melange_file_path, git_tag, git_commit_sha, version_sort_key) values ($1, $2, $3, $4, now(), now(), $5, $6, $7, $8, $9, $10, $11)`;
+      await client.query(query, [id, pkgId, version, melangeYaml, newRelease, currentVersion.useRoot, currentVersion.gitRemote || null, currentVersion.melangeFilePath || null, currentVersion.gitTag || null, currentVersion.gitCommitSha || null, versionKey(version)]);
 
       // Update provides data
       const { writePackageVersionProvides } = await import('./provides');
@@ -1112,8 +1113,8 @@ export async function createPackageVersion(pkgId: string, version: string): Prom
     }
 
     await withTransaction(db, async (client) => {
-      const query = `insert into package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, use_root) values ($1, $2, $3, $4, now(), now(), $5, $6)`;
-      await client.query(query, [id, pkgId, newVersion, updatedMelangeYaml, newRelease, currentPackageVersion.useRoot]);
+      const query = `insert into package_version (id, package_id, version, melange_yaml, created_at, updated_at, apk_release, use_root, version_sort_key) values ($1, $2, $3, $4, now(), now(), $5, $6, $7)`;
+      await client.query(query, [id, pkgId, newVersion, updatedMelangeYaml, newRelease, currentPackageVersion.useRoot, versionKey(newVersion)]);
 
       // Update provides data
       const { writePackageVersionProvides } = await import('./provides');

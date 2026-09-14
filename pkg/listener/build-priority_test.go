@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/securebuildhq/securebuild/integration/testutil"
+	"github.com/securebuildhq/securebuild/pkg/buildpriority"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,8 @@ func TestBuildPriorityClaims(t *testing.T) {
 		       ('new', 'go-image', 'new', ARRAY['latest', '1.10', '1.10.0'], NOW() - INTERVAL '1 day', NOW());
 	`)
 	require.NoError(t, err)
+
+	require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
 
 	for _, channel := range []string{"build_package", "build_apko"} {
 		t.Run(channel, func(t *testing.T) {
@@ -116,11 +119,6 @@ func TestBuildPriorityClaims(t *testing.T) {
 				enqueue("new-delayed", "new", 0)
 				_, err := db.Pool.Exec(ctx, `UPDATE work_queue SET next_attempt_at = NOW() + INTERVAL '1 hour' WHERE id = 'new-delayed'`)
 				require.NoError(t, err)
-				conn := persistence.MustGetPooledPostgresSession(ctx)
-				order, err := pendingBuildOrder(ctx, conn, p)
-				conn.Release()
-				require.NoError(t, err)
-				require.Equal(t, []string{"old-ready"}, order)
 				require.Equal(t, []string{"old-ready"}, ids(claim(p)))
 				require.Empty(t, claim(p))
 				_, err = db.Pool.Exec(ctx, `UPDATE work_queue SET next_attempt_at = NOW() WHERE id = 'new-delayed'`)
@@ -129,7 +127,7 @@ func TestBuildPriorityClaims(t *testing.T) {
 			})
 			t.Run("newest beyond first FIFO batch", func(t *testing.T) {
 				p := reset(1)
-				for i := 0; i < 50; i++ {
+				for i := 0; i < 650; i++ {
 					enqueue(fmt.Sprintf("old-%02d", i), "old", 0)
 				}
 				enqueue("new-last", "new", 0)
@@ -162,4 +160,89 @@ func TestBuildPriorityClaims(t *testing.T) {
 		require.Equal(t, "first", messages[1].id)
 		require.Equal(t, "second", messages[2].id)
 	})
+	t.Run("database ranks families with aliases prereleases and FIFO fallback", func(t *testing.T) {
+		rows, err := db.Pool.Query(ctx, `WITH metadata(id, family, version_key, created_at) AS (
+            VALUES ('go-old', 'go', $1::text, 1),
+                   ('go-new', 'go', $2::text, 2),
+                   ('pg-old', 'pg', $3::text, 3),
+                   ('pg-new', 'pg', $4::text, 4),
+                   ('go-alias', 'go', $2::text, 5),
+                   ('unknown', 'go', NULL, 6),
+                   ('go-rc', 'go', $5::text, 7)
+        ), ranked AS (SELECT *, `+buildpriority.VersionRank+` AS version_rank FROM metadata)
+        SELECT id FROM ranked ORDER BY version_rank, created_at, id`,
+			buildpriority.VersionKey("1.9.0"), buildpriority.VersionKey("1.10.0"),
+			buildpriority.VersionKey("17.0"), buildpriority.VersionKey("18.0"), buildpriority.VersionKey("1.10.0-rc.1"))
+		require.NoError(t, err)
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id string
+			require.NoError(t, rows.Scan(&id))
+			ids = append(ids, id)
+		}
+		require.NoError(t, rows.Err())
+		require.Equal(t, []string{"go-new", "pg-new", "go-alias", "unknown", "pg-old", "go-rc", "go-old"}, ids)
+	})
+	t.Run("tag reassignment refreshes both owners without a backfill", func(t *testing.T) {
+		require.NoError(t, assignImageAPKOTags(ctx, "go-image", "old", []string{"1.10", "1.10.0"}))
+		var oldKey, newKey string
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT version_sort_key FROM image_apko WHERE id = 'old'`).Scan(&oldKey))
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT version_sort_key FROM image_apko WHERE id = 'new'`).Scan(&newKey))
+		require.Equal(t, buildpriority.VersionKey("1.10.0"), oldKey)
+		require.Empty(t, newKey, "old owner only has latest remaining and must fall back to FIFO")
+	})
+	t.Run("stale tag keys fall back until repaired", func(t *testing.T) {
+		_, err := db.Pool.Exec(ctx, `UPDATE image_apko SET tags = ARRAY['1.9.1'] WHERE id = 'old'`)
+		require.NoError(t, err)
+		var stale bool
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT version_sort_tags IS DISTINCT FROM tags FROM image_apko WHERE id = 'old'`).Scan(&stale))
+		require.True(t, stale)
+		_, err = db.Pool.Exec(ctx, `UPDATE image_apko SET tags = ARRAY['2.0.0'],
+            version_sort_tags = ARRAY['2.0.0'], version_sort_key = $1 WHERE id = 'new'`, buildpriority.VersionKey("2.0.0"))
+		require.NoError(t, err)
+		_, err = db.Pool.Exec(ctx, `DELETE FROM work_queue;
+            INSERT INTO work_queue (id, channel, payload, created_at) VALUES
+            ('stale', 'build_apko', '{"apkoId":"old"}', NOW() - INTERVAL '1 second'),
+            ('rolling', 'build_apko', '{"apkoId":"new"}', NOW())`)
+		require.NoError(t, err)
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		defer conn.Release()
+		var rank int
+		require.NoError(t, conn.QueryRow(ctx, `WITH `+buildOrderCTE("build_apko")+`result AS (SELECT * FROM build_order) SELECT version_rank FROM result WHERE id = 'stale'`, "build_apko", "1 hour").Scan(&rank))
+		require.Zero(t, rank)
+		require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
+		var key string
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT version_sort_key FROM image_apko WHERE id = 'old' AND version_sort_tags = tags`).Scan(&key))
+		require.Equal(t, buildpriority.VersionKey("1.9.1"), key)
+	})
+	t.Run("backfill spans batches skips locks and is idempotent", func(t *testing.T) {
+		_, err := db.Pool.Exec(ctx, `INSERT INTO image_apko (id, image_id, name, tags, created_at, updated_at)
+            SELECT 'backfill-' || n, 'go-image', 'backfill-' || n,
+                CASE WHEN n = 1 THEN ARRAY['nightly'] ELSE ARRAY['1.9.1'] END, NOW(), NOW()
+            FROM generate_series(1, 1101) n`)
+		require.NoError(t, err)
+		tx, err := db.Pool.Begin(ctx)
+		require.NoError(t, err)
+		defer tx.Rollback(ctx)
+		_, err = tx.Exec(ctx, `UPDATE image_apko SET tags = ARRAY['1.33.6'] WHERE id = 'backfill-2'`)
+		require.NoError(t, err)
+		require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
+		var missing int
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM image_apko WHERE version_sort_key IS NULL`).Scan(&missing))
+		require.Equal(t, 1, missing)
+		require.NoError(t, tx.Commit(ctx))
+		require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
+		var key string
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT version_sort_key FROM image_apko WHERE id = 'backfill-2'`).Scan(&key))
+		require.Equal(t, buildpriority.VersionKey("1.33.6"), key)
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT version_sort_key FROM image_apko WHERE id = 'backfill-1'`).Scan(&key))
+		require.Empty(t, key)
+		var before, after string
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT xmin::text FROM image_apko WHERE id = 'backfill-3'`).Scan(&before))
+		require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT xmin::text FROM image_apko WHERE id = 'backfill-3'`).Scan(&after))
+		require.Equal(t, before, after, "processed keys must not be rewritten or renumbered")
+	})
+
 }

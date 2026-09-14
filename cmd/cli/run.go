@@ -79,6 +79,9 @@ func runWorker(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize postgres connection: %w", err)
 	}
 
+	backfillBuildPriority(ctx)
+	go maintainBuildPriority(ctx)
+
 	if err := adminuser.EnsureInitialAdminUser(ctx); err != nil {
 		logger.Warnf("failed to ensure initial admin user: %v", err)
 	}

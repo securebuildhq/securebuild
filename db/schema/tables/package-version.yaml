@@ -8,6 +8,8 @@ schema:
       - columns: [package_id, version, apk_release]
         isUnique: true
     columns:
+      - name: version_sort_key
+        type: text
       - name: id
         type: text
         constraints:
