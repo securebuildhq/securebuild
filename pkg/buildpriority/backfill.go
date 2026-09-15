@@ -9,10 +9,12 @@ import (
 
 // Backfill fills missing keys in small transactions. Empty keys mark unsupported
 // versions as processed. Row locks prevent overwriting concurrent tag changes;
-// locked records are skipped and picked up by a later pass. SchemaHero adds the
-// nullable columns before this data migration runs.
+// locked records are skipped so other batches can progress. A final check fails
+// if any keys remain missing or stale; rerunning resumes the migration safely.
+// Run after SchemaHero adds the columns and all artifact writers are updated.
 func Backfill(ctx context.Context, db interface {
 	Begin(context.Context) (pgx.Tx, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
 }) error {
 	for _, table := range []string{"package_version", "image_apko"} {
 		source := "ARRAY[version]"
@@ -34,6 +36,20 @@ func Backfill(ctx context.Context, db interface {
 			}
 			cursor = next
 		}
+	}
+	// Check both tables together after all batches, including rows that were
+	// locked or became stale behind the cursor. Never report partial success.
+	var packages, images int64
+	err := db.QueryRow(ctx, `SELECT
+		(SELECT COUNT(*) FROM package_version WHERE version_sort_key IS NULL),
+		(SELECT COUNT(*) FROM image_apko
+		 WHERE version_sort_key IS NULL OR version_sort_tags IS DISTINCT FROM tags)
+	`).Scan(&packages, &images)
+	if err != nil {
+		return fmt.Errorf("verify version-key backfill: %w", err)
+	}
+	if packages != 0 || images != 0 {
+		return fmt.Errorf("version-key backfill incomplete: %d package versions and %d image APKOs remain; release conflicting locks and rerun", packages, images)
 	}
 	return nil
 }

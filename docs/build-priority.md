@@ -45,16 +45,30 @@ for every key comparison so database locale cannot change the order. Unsupported
 formats have an empty key; NULL marks records awaiting backfill. Both fall back
 to FIFO at rank zero.
 
-Apply the SchemaHero migrations before deploying the worker or web app. The
-worker backfills missing keys in transactions of at most 500 rows before starting
-its schedulers, with a one-minute timeout. It retries once a minute to handle
-locked records, interrupted migration, and records from older writers during a
-rolling deployment. The backfill does not rewrite already-current keys.
+Deploy and backfill in this order:
 
-Images also store `version_sort_tags`, the tags used to compute their key. If an
-older writer changes tags without updating the key, scheduling ignores the stale
-key and uses FIFO until the next backfill repairs it. Updated writers maintain
-tags, their snapshot, and their key in the same transaction.
+1. Apply the SchemaHero migrations.
+2. Deploy the updated workers and web app, and wait for older instances to stop.
+3. Run `securebuild-worker migrate-build-priority` once using the worker's usual
+   configuration, including its database connection.
+
+The command processes transactions of at most 500 rows and verifies that no
+missing or stale keys remain. It skips locked rows to let other batches progress,
+but exits unsuccessfully if any remain at the final check. Release the conflicting
+locks and rerun. Interrupted runs are also safe to resume: current keys are not
+rewritten. The default timeout is ten minutes and can be adjusted with
+`--timeout 20m`. Unsupported versions are marked processed with an empty key and
+continue using FIFO.
+
+Workers perform no startup or recurring backfill. Builds remain eligible through
+FIFO until the one-time migration fills their keys. Running the migration after
+all writers are updated prevents older instances from invalidating keys afterward.
+
+Images also store `version_sort_tags`, the tags used to compute their key. If tags
+and their snapshot differ, scheduling ignores the stale key and uses FIFO. Updated
+writers maintain tags, their snapshot, and their key in the same transaction. The
+migration can be rerun manually to repair any stale keys; there is no background
+repair loop.
 
 The work-queue claim is one SQL statement: select eligible jobs, join stored keys,
 compute a dense version rank within each family, sort by explicit priority/rank/

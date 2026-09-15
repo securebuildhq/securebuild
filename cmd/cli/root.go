@@ -23,5 +23,6 @@ func RootCmd() *cobra.Command {
 	rootCmd.AddCommand(DeleteAPKCmd())
 	rootCmd.AddCommand(BuildOrderCmd())
 	rootCmd.AddCommand(MigratePackageSelectorsCmd())
+	rootCmd.AddCommand(MigrateBuildPriorityCmd())
 	return &rootCmd
 }

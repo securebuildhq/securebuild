@@ -216,7 +216,7 @@ func TestBuildPriorityClaims(t *testing.T) {
 		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT version_sort_key FROM image_apko WHERE id = 'old' AND version_sort_tags = tags`).Scan(&key))
 		require.Equal(t, buildpriority.VersionKey("1.9.1"), key)
 	})
-	t.Run("backfill spans batches skips locks and is idempotent", func(t *testing.T) {
+	t.Run("backfill reports skipped locks resumes and is idempotent", func(t *testing.T) {
 		_, err := db.Pool.Exec(ctx, `INSERT INTO image_apko (id, image_id, name, tags, created_at, updated_at)
             SELECT 'backfill-' || n, 'go-image', 'backfill-' || n,
                 CASE WHEN n = 1 THEN ARRAY['nightly'] ELSE ARRAY['1.9.1'] END, NOW(), NOW()
@@ -227,7 +227,7 @@ func TestBuildPriorityClaims(t *testing.T) {
 		defer tx.Rollback(ctx)
 		_, err = tx.Exec(ctx, `UPDATE image_apko SET tags = ARRAY['1.33.6'] WHERE id = 'backfill-2'`)
 		require.NoError(t, err)
-		require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
+		require.ErrorContains(t, buildpriority.Backfill(ctx, db.Pool), "0 package versions and 1 image APKOs remain")
 		var missing int
 		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM image_apko WHERE version_sort_key IS NULL`).Scan(&missing))
 		require.Equal(t, 1, missing)
@@ -243,6 +243,30 @@ func TestBuildPriorityClaims(t *testing.T) {
 		require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
 		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT xmin::text FROM image_apko WHERE id = 'backfill-3'`).Scan(&after))
 		require.Equal(t, before, after, "processed keys must not be rewritten or renumbered")
+	})
+
+	t.Run("backfill rejects locked missing package keys and stale image keys", func(t *testing.T) {
+		_, err := db.Pool.Exec(ctx, `UPDATE package_version SET version_sort_key = NULL WHERE id = 'old-version';
+            UPDATE image_apko SET tags = ARRAY['1.9.2'] WHERE id = 'backfill-3'`)
+		require.NoError(t, err)
+		tx, err := db.Pool.Begin(ctx)
+		require.NoError(t, err)
+		defer tx.Rollback(ctx)
+		_, err = tx.Exec(ctx, `SELECT id FROM package_version WHERE id = 'old-version' FOR UPDATE;
+            SELECT id FROM image_apko WHERE id = 'backfill-3' FOR UPDATE`)
+		require.NoError(t, err)
+		require.ErrorContains(t, buildpriority.Backfill(ctx, db.Pool), "1 package versions and 1 image APKOs remain")
+		require.NoError(t, tx.Rollback(ctx))
+		require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
+		var key string
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT version_sort_key FROM image_apko WHERE id = 'backfill-3' AND version_sort_tags = tags`).Scan(&key))
+		require.Equal(t, buildpriority.VersionKey("1.9.2"), key)
+	})
+	t.Run("cancelled migration can be rerun", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		require.ErrorIs(t, buildpriority.Backfill(cancelled, db.Pool), context.Canceled)
+		require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
 	})
 
 }
