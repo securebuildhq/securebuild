@@ -4,7 +4,7 @@ import { getParam } from '../data/param';
 
 let s3Client: S3Client | null = null;
 
-async function getS3Client(): Promise<S3Client> {
+export async function getS3Client(): Promise<S3Client> {
   if (s3Client) {
     return s3Client;
   }
