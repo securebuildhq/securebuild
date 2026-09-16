@@ -319,12 +319,10 @@ func runApkoBuild(ctx context.Context, config *ImageBuildConfig) error {
 }
 
 func scanPushedImagesWithSyft(ctx context.Context, config *ImageBuildConfig) error {
-	// Keep scanner temporary layers inside the workspace for job cleanup.
-	tempDir, err := filepath.Abs(config.WorkDir)
+	workDir, err := filepath.Abs(config.WorkDir)
 	if err != nil {
-		return fmt.Errorf("failed to resolve scanner temporary directory: %w", err)
+		return fmt.Errorf("failed to resolve scan work directory: %w", err)
 	}
-
 	// Use the first tag since all tags point to the same image
 	if len(config.Tags) == 0 {
 		return fmt.Errorf("no tags specified for scanning")
@@ -397,7 +395,6 @@ func scanPushedImagesWithSyft(ctx context.Context, config *ImageBuildConfig) err
 			defer os.RemoveAll(tmpDir)
 			syftCmd.Env = append(os.Environ(), "TMPDIR="+tmpDir)
 			syftCmd.Dir = config.WorkDir
-			syftCmd.Env = append(syftCmd.Environ(), "TMPDIR="+tempDir)
 			syftCmd.Stdout = sbomFileHandle
 			syftCmd.Stderr = sbomStderrHandle
 
@@ -436,12 +433,10 @@ func scanPushedImagesWithSyft(ctx context.Context, config *ImageBuildConfig) err
 }
 
 func scanAlternateImage(ctx context.Context, config *ImageBuildConfig) error {
-	// Keep scanner temporary layers inside the workspace for job cleanup.
-	tempDir, err := filepath.Abs(config.WorkDir)
+	workDir, err := filepath.Abs(config.WorkDir)
 	if err != nil {
-		return fmt.Errorf("failed to resolve scanner temporary directory: %w", err)
+		return fmt.Errorf("failed to resolve scan work directory: %w", err)
 	}
-
 	arches := []string{"aarch64", "x86_64"}
 
 	var wg sync.WaitGroup
@@ -475,7 +470,6 @@ func scanAlternateImage(ctx context.Context, config *ImageBuildConfig) error {
 			defer os.RemoveAll(tmpDir)
 			cmd.Env = append(os.Environ(), "TMPDIR="+tmpDir)
 			cmd.Dir = config.WorkDir
-			cmd.Env = append(cmd.Environ(), "TMPDIR="+tempDir)
 
 			// Create output files
 			scanResultFileHandle, err := os.Create(scanResultPath)
