@@ -1,8 +1,8 @@
-import { HeadObjectCommand } from '@aws-sdk/client-s3';
+import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { getDB } from './data/db';
 import { getParam } from './data/param';
 import { getS3Client } from './externalimage/blobstore';
-import { isHealthy, R2_HEALTH_CHECK_KEY } from './health';
+import { isHealthy } from './health';
 
 jest.mock('./data/db');
 jest.mock('./data/param');
@@ -39,7 +39,7 @@ describe('API dependency health', () => {
     jest.useRealTimers();
   });
 
-  it('checks the shared database and the dedicated object with no writes', async () => {
+  it('checks the shared database and a bounded bucket listing with no writes', async () => {
     expect(await isHealthy()).toBe(true);
     expect(getDB).toHaveBeenCalledWith(params.DB_URI);
     expect(query).toHaveBeenCalledWith({
@@ -49,9 +49,19 @@ describe('API dependency health', () => {
     expect(query.mock.calls[0][0].text).toContain('NOT pg_is_in_recovery()');
     expect(release).toHaveBeenCalledWith(false);
     const [command, options] = send.mock.calls[0];
-    expect(command).toBeInstanceOf(HeadObjectCommand);
-    expect(command.input).toEqual({ Bucket: params.R2_IMAGE_SCANS_BUCKET_NAME, Key: R2_HEALTH_CHECK_KEY });
+    expect(command).toBeInstanceOf(ListObjectsV2Command);
+    expect(command.input).toEqual({ Bucket: params.R2_IMAGE_SCANS_BUCKET_NAME, MaxKeys: 1 });
     expect(options.abortSignal.aborted).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { KeyCount: 0, IsTruncated: false },
+    { Contents: [{ Key: 'private-customer/artifact.json' }], IsTruncated: true, NextContinuationToken: 'private-token' },
+  ])('accepts successful listings without exposing objects or fetching more pages (%j)', async listing => {
+    send.mockResolvedValue(listing);
+    expect(await isHealthy()).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -85,7 +95,7 @@ describe('API dependency health', () => {
     },
   );
 
-  it.each(['NotFound', 'AccessDenied', 'network failure'])(
+  it.each(['NoSuchBucket', 'AccessDenied', 'network failure'])(
     'reports an R2 %s as unhealthy', async message => {
       send.mockRejectedValue(new Error(message));
       expect(await isHealthy()).toBe(false);

@@ -1,11 +1,9 @@
-import { HeadObjectCommand } from '@aws-sdk/client-s3';
+import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { getDB } from './data/db';
 import { getParam } from './data/param';
 import { getS3Client } from './externalimage/blobstore';
 
 const CHECK_TIMEOUT_MS = 2000;
-// A dedicated, non-sensitive object provisioned once in the scans bucket.
-export const R2_HEALTH_CHECK_KEY = '_health/securebuild-api';
 
 async function checkPostgres(): Promise<void> {
   // The shared pool already bounds connection acquisition to two seconds.
@@ -49,9 +47,11 @@ async function checkR2(): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      client.send(new HeadObjectCommand({
+      // A single bounded listing also succeeds for an empty bucket. Discard
+      // the result: object names/metadata must never reach the public response.
+      client.send(new ListObjectsV2Command({
         Bucket: bucket,
-        Key: R2_HEALTH_CHECK_KEY,
+        MaxKeys: 1,
       }), { abortSignal: controller.signal }),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
