@@ -31,9 +31,9 @@ func TestBuildPriorityClaims(t *testing.T) {
 	_, err = db.Pool.Exec(ctx, `
 		INSERT INTO package (id, name, created_at) VALUES ('old', 'go-1.9', NOW()), ('new', 'go-1.10', NOW());
 		INSERT INTO package_family (id, name, created_at, updated_at, check_for_updates_at)
-		VALUES ('go', 'go', NOW(), NOW(), NOW());
+		VALUES ('go', 'go', NOW(), NOW(), NOW()), ('zzz-go', 'alternate-go', NOW(), NOW(), NOW());
 		INSERT INTO package_family_package (package_family_id, package_id, version_major, version_minor, created_at)
-		VALUES ('go', 'old', 1, 9, NOW()), ('go', 'new', 1, 10, NOW());
+		VALUES ('go', 'old', 1, 9, NOW()), ('go', 'new', 1, 10, NOW()), ('zzz-go', 'new', 1, 10, NOW());
 		INSERT INTO package_version (id, package_id, version, apk_release, created_at)
 		VALUES ('old-version', 'old', '1.9.0', 99, NOW()), ('new-version', 'new', '1.10.0', 0, NOW() - INTERVAL '1 day');
 		INSERT INTO image (id, name, created_at) VALUES ('go-image', 'go', NOW());
@@ -188,6 +188,20 @@ func TestBuildPriorityClaims(t *testing.T) {
 				require.Equal(t, []string{"new-last"}, ids(claim(p)))
 			})
 			if channel == "build_package" {
+				t.Run("unmapped package versions still rank within their package", func(t *testing.T) {
+					p := reset(2)
+					_, err := db.Pool.Exec(ctx, `INSERT INTO package (id, name, created_at) VALUES ('solo', 'solo', NOW());
+                        INSERT INTO package_version (id, package_id, version, apk_release, created_at)
+                        VALUES ('solo-version', 'solo', '1.9.0', 0, NOW()), ('solo-new-version', 'solo', '1.10.0', 0, NOW());`)
+					require.NoError(t, err)
+					require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
+					enqueue("solo-old-first", "solo", 0)
+					enqueue("solo-new-later", "solo", 0)
+					_, err = db.Pool.Exec(ctx, `UPDATE work_queue SET payload = jsonb_set(payload, '{packageVersionId}', '"solo-new-version"')
+                        WHERE id = 'solo-new-later'`)
+					require.NoError(t, err)
+					require.Equal(t, []string{"solo-new-later", "solo-old-first"}, ids(claim(p)))
+				})
 				t.Run("unspecified package version uses latest upstream version", func(t *testing.T) {
 					p := reset(1)
 					enqueue("old-first", "old", 0)

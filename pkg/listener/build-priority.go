@@ -8,7 +8,7 @@ func buildOrderCTE(channel string) string {
 	var metadata, joins string
 	switch channel {
 	case "build_package":
-		metadata = "family_metadata.family, version_metadata.version_key"
+		metadata = "COALESCE(family_metadata.family, candidate.package_id, '') AS family, version_metadata.version_key"
 		joins = buildpriority.PackageMetadataJoin
 	case "build_apko":
 		metadata = `ia.image_id AS family, CASE WHEN ia.version_sort_tags = ia.tags THEN NULLIF(ia.version_sort_key, '') END AS version_key`

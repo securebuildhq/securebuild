@@ -52,7 +52,8 @@ func ProcessRebuildChains(ctx context.Context) error {
 			AND (le.status IS NULL OR le.status != 'success')
 		)
 		), metadata AS (
-			SELECT candidate.*, family_metadata.family, version_metadata.version_key
+			SELECT candidate.*, COALESCE(family_metadata.family, candidate.package_id, '') AS family,
+				version_metadata.version_key
 			FROM candidate ` + buildpriority.PackageMetadataJoin + `
 		), ranked AS (
 			SELECT metadata.*, ` + buildpriority.VersionRank + ` AS version_rank FROM metadata

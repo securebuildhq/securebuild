@@ -30,9 +30,9 @@ func TestRebuildChainVersionPriority(t *testing.T) {
 		INSERT INTO package (id, name, created_at)
 		VALUES ('old', 'go-1.9', NOW()), ('new', 'go-1.10', NOW()), ('blocked', 'go-1.11', NOW());
 		INSERT INTO package_family (id, name, created_at, updated_at, check_for_updates_at)
-		VALUES ('go', 'go', NOW(), NOW(), NOW());
+		VALUES ('go', 'go', NOW(), NOW(), NOW()), ('zzz-go', 'alternate-go', NOW(), NOW(), NOW());
 		INSERT INTO package_family_package (package_family_id, package_id, version_major, version_minor, created_at)
-		VALUES ('go', 'old', 1, 9, NOW()), ('go', 'new', 1, 10, NOW()), ('go', 'blocked', 1, 11, NOW());
+		VALUES ('go', 'old', 1, 9, NOW()), ('go', 'new', 1, 10, NOW()), ('go', 'blocked', 1, 11, NOW()), ('zzz-go', 'new', 1, 10, NOW());
 		INSERT INTO package_version (id, package_id, version, apk_release, created_at, melange_yaml)
 		VALUES ('old-version', 'old', '1.9.0', 99, NOW(), E'package:\n  name: go-1.9\n  version: 1.9.0'),
 		       ('new-version', 'new', '1.10.0', 0, NOW() - INTERVAL '1 day', E'package:\n  name: go-1.10\n  version: 1.10.0'),
