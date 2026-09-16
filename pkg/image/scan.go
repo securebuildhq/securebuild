@@ -397,35 +397,13 @@ func WriteScanResult(ctx context.Context, imageName string, imageTag string, arc
 		return fmt.Errorf("failed to write scan result: %w", err)
 	}
 
-	// Upsert into last_image_scan table (latest result per image/tag/arch)
-	upsertQuery := `
-		INSERT INTO last_image_scan (
-			image_name, image_tag, image_arch, result, created_at, updated_at,
-			vuln_count_critical, vuln_count_high, vuln_count_medium, vuln_count_low, vuln_count_fixable
-		)
-		VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (image_name, image_tag, image_arch)
-		DO UPDATE SET
-			result = EXCLUDED.result,
-			updated_at = EXCLUDED.updated_at,
-			vuln_count_critical = EXCLUDED.vuln_count_critical,
-			vuln_count_high = EXCLUDED.vuln_count_high,
-			vuln_count_medium = EXCLUDED.vuln_count_medium,
-			vuln_count_low = EXCLUDED.vuln_count_low,
-			vuln_count_fixable = EXCLUDED.vuln_count_fixable`
-	_, err = conn.Exec(ctx, upsertQuery, imageName, imageTag, arch, scanResultRaw, now,
-		scanResult.CriticalCount, scanResult.HighCount, scanResult.MediumCount, scanResult.LowCount, scanResult.FixableCount)
-	if err != nil {
-		return fmt.Errorf("failed to upsert into last_image_scan: %w", err)
-	}
-
 	return nil
 }
 
-// GetFixedCVEsFromLastScan calculates the fixed CVE count by comparing the latest scan results
-// from last_image_scan table for the alternate image vs the current scan result.
+// GetFixedCVEsFromLatestScan calculates the fixed CVE count by comparing the latest scan result
+// from image_scan for the alternate image vs the current scan result.
 // Returns the fixed CVE count and the alternate image scan result.
-func GetFixedCVEsFromLastScan(ctx context.Context, alternateImageName, imageTag, arch string, currentScanResult string) (int, string, error) {
+func GetFixedCVEsFromLatestScan(ctx context.Context, alternateImageName, imageTag, arch string, currentScanResult string) (int, string, error) {
 	if alternateImageName == "" || currentScanResult == "" {
 		return 0, "", nil
 	}
@@ -433,8 +411,8 @@ func GetFixedCVEsFromLastScan(ctx context.Context, alternateImageName, imageTag,
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	// Get the latest alternate image scan result from last_image_scan table
-	query := `SELECT result FROM last_image_scan WHERE image_name = $1 AND image_tag = $2 AND image_arch = $3`
+	// Get the latest alternate image scan result from image_scan table
+	query := `SELECT result FROM image_scan WHERE image_name = $1 AND image_tag = $2 AND image_arch = $3 ORDER BY created_at DESC LIMIT 1`
 	var alternateResultRaw string
 	err := conn.QueryRow(ctx, query, alternateImageName, imageTag, arch).Scan(&alternateResultRaw)
 	if err != nil {
