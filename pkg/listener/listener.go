@@ -158,12 +158,13 @@ const (
 )
 
 type queueProcessor struct {
-	channel     string
-	handler     NotificationHandler
-	workerPool  chan struct{}
-	processing  atomic.Bool
-	maxWorkers  int
-	maxDuration time.Duration // Maximum time a task can be processing before considered failed
+	channel         string
+	handler         NotificationHandler
+	workerPool      chan struct{}
+	workerAvailable chan struct{}
+	processing      atomic.Bool
+	maxWorkers      int
+	maxDuration     time.Duration // Maximum time a task can be processing before considered failed
 }
 
 // NewListener creates a new Listener instance
@@ -183,11 +184,12 @@ func (l *Listener) AddHandler(ctx context.Context, channel string, maxWorkers in
 
 	// Initialize queue processor
 	l.processors[channel] = &queueProcessor{
-		channel:     channel,
-		handler:     handler,
-		workerPool:  make(chan struct{}, maxWorkers),
-		maxWorkers:  maxWorkers,
-		maxDuration: maxDuration,
+		channel:         channel,
+		handler:         handler,
+		workerPool:      make(chan struct{}, maxWorkers),
+		workerAvailable: make(chan struct{}, 1),
+		maxWorkers:      maxWorkers,
+		maxDuration:     maxDuration,
 	}
 
 	return nil
@@ -474,16 +476,8 @@ func (l *Listener) fetchAndLockMessages(ctx context.Context, processor *queuePro
 
 // processMessagesForQueue handles a single iteration of message processing
 func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queueProcessor) bool {
-	if len(processor.workerPool) >= processor.maxWorkers {
-		// Wait without reserving pending jobs; newer builds may arrive meanwhile.
-		timer := time.NewTimer(scheduledWorkPollInterval)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return false
-		case <-timer.C:
-			return true
-		}
+	if !processor.waitForCapacity(ctx) {
+		return false
 	}
 	messages, err := l.fetchAndLockMessages(ctx, processor)
 	if err != nil {
@@ -530,7 +524,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 		processor.workerPool <- struct{}{}
 
 		go func(messageID string, messagePayload []byte, attemptCount int, messageCreatedAt time.Time) {
-			defer func() { <-processor.workerPool }()
+			defer processor.releaseWorkerSlot()
 
 			startTime := time.Now()
 			// attempt_count from DB is 0-based; use 1-based for context so GetAttemptInfo matches tests and logs

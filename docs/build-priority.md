@@ -27,7 +27,10 @@ delay older builds; there is no aging override.
 Package dependency gates still apply before ranking. Running handlers and builds
 with assigned VMs are not preempted. The work queue claims only as many jobs as
 there are available handler slots and rechecks eligibility under PostgreSQL row
-locks. Rebuild chains rank the ready links at the start of each pass. Scheduling
+locks. A saturated queue wakes when a handler releases its slot and then ranks
+the current backlog; it does not wait for a polling timer. The separate five-second
+scheduled-retry poll still wakes queues whose retry deadlines have arrived.
+Rebuild chains rank the ready links at the start of each pass. Scheduling
 remains separate for each work-queue channel and the rebuild-chain processor.
 
 ## Stored keys and deployment

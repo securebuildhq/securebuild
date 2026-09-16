@@ -2,10 +2,12 @@ package listener
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/securebuildhq/securebuild/integration/testutil"
 	"github.com/securebuildhq/securebuild/pkg/buildpriority"
 	"github.com/securebuildhq/securebuild/pkg/param"
@@ -90,6 +92,58 @@ func TestBuildPriorityClaims(t *testing.T) {
 				<-p.workerPool
 				require.Equal(t, []string{"new-arrival"}, ids(claim(p)))
 				require.Equal(t, []string{"old-first"}, ids(claim(p)), "older work still drains")
+			})
+			t.Run("handler completion immediately admits newest pending work", func(t *testing.T) {
+				reset(1)
+				runCtx, cancel := context.WithCancel(ctx)
+				started := make(chan string, 3)
+				release := make(chan struct{})
+				l := NewListener(ctx)
+				require.NoError(t, l.AddHandler(ctx, channel, 1, time.Hour, func(ctx context.Context, notification *pgconn.Notification) error {
+					var payload struct {
+						PackageID string `json:"packageId"`
+					}
+					if err := json.Unmarshal([]byte(notification.Payload), &payload); err != nil {
+						return err
+					}
+					started <- payload.PackageID
+					select {
+					case <-release:
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}))
+				p := l.processors[channel]
+				defer func() {
+					cancel()
+					require.Eventually(t, func() bool { return !p.processing.Load() && len(p.workerPool) == 0 }, 2*time.Second, 10*time.Millisecond)
+				}()
+				expectStart := func(target string) {
+					t.Helper()
+					select {
+					case got := <-started:
+						require.Equal(t, target, got)
+					case <-time.After(2 * time.Second):
+						t.Fatal("handler did not start promptly after capacity became available")
+					}
+				}
+				enqueue("running", "old", 0)
+				// Run only this processor: no notifications or scheduled poll can
+				// mask a missing handler-completion signal.
+				l.startQueueProcessor(runCtx, p)
+				expectStart("old")
+				enqueue("old-pending", "old", 0)
+				enqueue("new-pending", "new", 0)
+				var claimed int
+				require.NoError(t, db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM work_queue
+                    WHERE id IN ('old-pending', 'new-pending') AND processing_started_at IS NOT NULL`).Scan(&claimed))
+				require.Zero(t, claimed, "saturated processors must leave pending jobs unclaimed")
+				release <- struct{}{}
+				expectStart("new")
+				release <- struct{}{}
+				expectStart("old")
+				release <- struct{}{}
 			})
 			t.Run("locked jobs are skipped and expired jobs retry", func(t *testing.T) {
 				p := reset(1)
