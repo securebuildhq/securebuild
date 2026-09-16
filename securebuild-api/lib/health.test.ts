@@ -69,7 +69,7 @@ describe('API dependency health', () => {
     query.mockResolvedValue({ rows: [{ healthy: false }] });
     expect(await isHealthy()).toBe(false);
     expect(release).toHaveBeenCalledWith(true);
-    expect(warn).toHaveBeenCalledWith('API health check failed: postgres');
+    expect(warn).toHaveBeenCalledWith('API health check failed: postgres', new Error('Postgres is not writable'));
   });
 
   it('fails closed on an unexpected database result', async () => {
@@ -100,7 +100,7 @@ describe('API dependency health', () => {
       send.mockRejectedValue(new Error(message));
       expect(await isHealthy()).toBe(false);
       expect(release).toHaveBeenCalledWith(false);
-      expect(warn).toHaveBeenCalledWith('API health check failed: r2');
+      expect(warn).toHaveBeenCalledWith('API health check failed: r2', new Error(message));
     },
   );
 
@@ -109,12 +109,15 @@ describe('API dependency health', () => {
       jest.mocked(getParam).mockImplementation(async key => key === missing ? '' : params[key]);
       expect(await isHealthy()).toBe(false);
       expect(send).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith('API health check failed: r2', new Error(`Missing R2 configuration: ${missing}`));
     },
   );
 
   it('aborts a stalled R2 request and releases the probe for subsequent requests', async () => {
     jest.useFakeTimers();
-    send.mockImplementationOnce(() => new Promise(() => {}));
+    send.mockImplementationOnce((_, { abortSignal }: { abortSignal: AbortSignal }) => new Promise((_, reject) => {
+      abortSignal.addEventListener('abort', () => reject(new Error('Request aborted')), { once: true });
+    }));
     const pending = isHealthy();
     await jest.advanceTimersByTimeAsync(1999);
     const signal = send.mock.calls[0][1].abortSignal;
@@ -122,6 +125,7 @@ describe('API dependency health', () => {
     await jest.advanceTimersByTimeAsync(1);
     expect(await pending).toBe(false);
     expect(signal.aborted).toBe(true);
+    expect(warn).toHaveBeenCalledWith('API health check failed: r2', new Error('R2 health check timed out'));
     expect(jest.getTimerCount()).toBe(0);
     expect(await isHealthy()).toBe(true);
   });
@@ -150,13 +154,26 @@ describe('API dependency health', () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
-  it('logs only dependency names even when both errors contain secrets', async () => {
-    query.mockRejectedValue(new Error(params.DB_URI));
-    send.mockRejectedValue(new Error(`${params.R2_ENDPOINT}/${params.R2_SECRET_KEY}`));
+  it('logs original dependency errors, preserving stacks, codes, and SDK metadata', async () => {
+    const postgresError = Object.assign(new Error('permission denied for database'), { code: '42501' });
+    const r2Error = Object.assign(new Error('Access Denied'), {
+      name: 'AccessDenied',
+      $metadata: { httpStatusCode: 403, requestId: 'r2-request-123' },
+    });
+    query.mockRejectedValue(postgresError);
+    send.mockRejectedValue(r2Error);
     expect(await isHealthy()).toBe(false);
     expect(warn.mock.calls).toEqual([
-      ['API health check failed: postgres'],
-      ['API health check failed: r2'],
+      ['API health check failed: postgres', postgresError],
+      ['API health check failed: r2', r2Error],
     ]);
+    expect(warn.mock.calls[0][1]).toBe(postgresError);
+    expect(warn.mock.calls[1][1]).toBe(r2Error);
+  });
+
+  it('handles a non-Error rejection without breaking health reporting', async () => {
+    send.mockRejectedValue('unexpected R2 failure');
+    expect(await isHealthy()).toBe(false);
+    expect(warn).toHaveBeenCalledWith('API health check failed: r2', 'unexpected R2 failure');
   });
 });

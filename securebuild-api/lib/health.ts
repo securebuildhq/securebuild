@@ -32,15 +32,13 @@ async function checkPostgres(): Promise<void> {
 }
 
 async function checkR2(): Promise<void> {
-  const [bucket, endpoint, accessKey, secretKey] = await Promise.all([
-    getParam('R2_IMAGE_SCANS_BUCKET_NAME'),
-    getParam('R2_ENDPOINT'),
-    getParam('R2_ACCESS_KEY'),
-    getParam('R2_SECRET_KEY'),
-  ]);
-  if (!bucket || !endpoint || !accessKey || !secretKey) {
-    throw new Error('R2 is not configured');
+  const keys = ['R2_IMAGE_SCANS_BUCKET_NAME', 'R2_ENDPOINT', 'R2_ACCESS_KEY', 'R2_SECRET_KEY'] as const;
+  const values = await Promise.all(keys.map(key => getParam(key)));
+  const missing = keys.filter((_, index) => !values[index]);
+  if (missing.length > 0) {
+    throw new Error(`Missing R2 configuration: ${missing.join(', ')}`);
   }
+  const [bucket] = values;
 
   const client = await getS3Client();
   const controller = new AbortController();
@@ -55,8 +53,9 @@ async function checkR2(): Promise<void> {
       }), { abortSignal: controller.signal }),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(() => {
-          controller.abort();
+          // Preserve the timeout explanation even if abort rejects send().
           reject(new Error('R2 health check timed out'));
+          controller.abort();
         }, CHECK_TIMEOUT_MS);
       }),
     ]);
@@ -70,8 +69,8 @@ async function runChecks(): Promise<boolean> {
   const dependencies = ['postgres', 'r2'];
   results.forEach((result, index) => {
     if (result.status === 'rejected') {
-      // Never log raw dependency errors: they can contain credentials/URLs.
-      console.warn(`API health check failed: ${dependencies[index]}`);
+      // Keep the full error in server logs; callers only receive aggregate health.
+      console.warn(`API health check failed: ${dependencies[index]}`, result.reason);
     }
   });
   return results.every(result => result.status === 'fulfilled');
