@@ -79,3 +79,11 @@ FIFO, and claim only the available handler capacity with `FOR UPDATE SKIP LOCKED
 Only claimed jobs are returned to Go. Rebuild chains use the same SQL version
 ranking after their dependency gates. No full backlog of versions or IDs is sent
 to Go for comparison or sent back to PostgreSQL.
+
+## Observability
+
+The `listener.process_messages_for_queue` tracing span covers queue ranking,
+claiming, and dispatch. It starts after the capacity wait and records
+`queue.channel`, `queue.available_workers`, and `queue.claimed_messages`, so
+ranking latency can be examined separately from time waiting for busy workers.
+Handler execution is outside this span.

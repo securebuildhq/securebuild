@@ -1,0 +1,55 @@
+database: securebuild
+name: package_family_package
+requires:
+  - package
+  - package_family
+seedData:
+  rows:
+    - columns:
+        - column: package_family_id
+          value:
+            str: "go"
+        - column: package_id
+          value:
+            str: "old"
+        - column: version_major
+          value:
+            str: "1"
+        - column: version_minor
+          value:
+            str: "9"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"
+    - columns:
+        - column: package_family_id
+          value:
+            str: "go"
+        - column: package_id
+          value:
+            str: "new"
+        - column: version_major
+          value:
+            str: "1"
+        - column: version_minor
+          value:
+            str: "10"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"
+    - columns:
+        - column: package_family_id
+          value:
+            str: "zzz-go"
+        - column: package_id
+          value:
+            str: "new"
+        - column: version_major
+          value:
+            str: "1"
+        - column: version_minor
+          value:
+            str: "10"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"

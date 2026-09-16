@@ -479,8 +479,16 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 	if !processor.waitForCapacity(ctx) {
 		return false
 	}
-	messages, err := l.fetchAndLockMessages(ctx, processor)
+	// Measure ranking and dispatch separately from time spent waiting for a worker.
+	span, claimCtx := telemetry.StartSpan(ctx, "listener.process_messages_for_queue")
+	defer span.Finish()
+	span.SetTag("queue.channel", processor.channel)
+	span.SetTag("queue.available_workers", processor.maxWorkers-len(processor.workerPool))
+	messages, err := l.fetchAndLockMessages(claimCtx, processor)
+	span.SetTag("queue.claimed_messages", len(messages))
 	if err != nil {
+		span.SetTag("error", true)
+		span.SetTag("error.message", err.Error())
 		logger.Warn("failed to fetch queue messages, continuing with next iteration", zap.String("channel", processor.channel), zap.Error(err))
 		return true
 	}

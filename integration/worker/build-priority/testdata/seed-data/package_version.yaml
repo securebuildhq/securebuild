@@ -1,0 +1,70 @@
+database: securebuild
+name: package_version
+requires:
+  - package
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "old-version"
+        - column: package_id
+          value:
+            str: "old"
+        - column: version
+          value:
+            str: "1.9.0"
+        - column: apk_release
+          value:
+            str: "99"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"
+    - columns:
+        - column: id
+          value:
+            str: "new-version"
+        - column: package_id
+          value:
+            str: "new"
+        - column: version
+          value:
+            str: "1.10.0"
+        - column: apk_release
+          value:
+            str: "0"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+    - columns:
+        - column: id
+          value:
+            str: "solo-version"
+        - column: package_id
+          value:
+            str: "solo"
+        - column: version
+          value:
+            str: "1.9.0"
+        - column: apk_release
+          value:
+            str: "0"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"
+    - columns:
+        - column: id
+          value:
+            str: "solo-new-version"
+        - column: package_id
+          value:
+            str: "solo"
+        - column: version
+          value:
+            str: "1.10.0"
+        - column: apk_release
+          value:
+            str: "0"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"

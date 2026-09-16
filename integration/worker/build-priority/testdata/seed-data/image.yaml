@@ -1,0 +1,14 @@
+database: securebuild
+name: image
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "go-image"
+        - column: name
+          value:
+            str: "go"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"

@@ -2,6 +2,7 @@ package worker_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/securebuildhq/securebuild/integration/testutil"
@@ -26,24 +27,10 @@ func TestRebuildChainVersionPriority(t *testing.T) {
 
 	// Omit the melange epoch deliberately: each ready link records a failed
 	// execution, letting us observe admission order without provisioning any VMs.
-	_, err = db.Pool.Exec(ctx, `
-		INSERT INTO package (id, name, created_at)
-		VALUES ('old', 'go-1.9', NOW()), ('new', 'go-1.10', NOW()), ('blocked', 'go-1.11', NOW());
-		INSERT INTO package_family (id, name, created_at, updated_at, check_for_updates_at)
-		VALUES ('go', 'go', NOW(), NOW(), NOW()), ('zzz-go', 'alternate-go', NOW(), NOW(), NOW());
-		INSERT INTO package_family_package (package_family_id, package_id, version_major, version_minor, created_at)
-		VALUES ('go', 'old', 1, 9, NOW()), ('go', 'new', 1, 10, NOW()), ('go', 'blocked', 1, 11, NOW()), ('zzz-go', 'new', 1, 10, NOW());
-		INSERT INTO package_version (id, package_id, version, apk_release, created_at, melange_yaml)
-		VALUES ('old-version', 'old', '1.9.0', 99, NOW(), E'package:\n  name: go-1.9\n  version: 1.9.0'),
-		       ('new-version', 'new', '1.10.0', 0, NOW() - INTERVAL '1 day', E'package:\n  name: go-1.10\n  version: 1.10.0'),
-		       ('blocked-version', 'blocked', '1.11.0', 0, NOW(), E'package:\n  name: go-1.11\n  version: 1.11.0');
-		INSERT INTO rebuild_chain (id, package_id, created_at, chain_name)
-		VALUES ('chain', 'old', NOW(), 'test-version-priority');
-		INSERT INTO rebuild_chain_link (link_id, rebuild_chain_id, package_id)
-		VALUES ('a-old', 'chain', 'old'), ('z-new', 'chain', 'new'), ('blocked', 'chain', 'blocked');
-		INSERT INTO rebuild_chain_dependency (link_id, dependency_id) VALUES ('blocked', 'z-new');
-	`)
+	root, err := testutil.FindProjectRoot()
 	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, db.ConnStr,
+		filepath.Join(root, "integration/worker/buildqueue/testdata/priority-seed-data"), true))
 	require.NoError(t, buildpriority.Backfill(ctx, db.Pool))
 	require.NoError(t, buildqueue.ProcessRebuildChains(ctx))
 	rows, err := db.Pool.Query(ctx, `SELECT cause_id, status FROM execution ORDER BY created_at`)

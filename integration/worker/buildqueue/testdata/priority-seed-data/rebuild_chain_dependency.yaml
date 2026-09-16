@@ -1,0 +1,13 @@
+database: securebuild
+name: rebuild_chain_dependency
+requires:
+  - rebuild_chain_link
+seedData:
+  rows:
+    - columns:
+        - column: link_id
+          value:
+            str: "blocked"
+        - column: dependency_id
+          value:
+            str: "z-new"

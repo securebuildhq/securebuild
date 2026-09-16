@@ -1,0 +1,37 @@
+database: securebuild
+name: rebuild_chain_link
+requires:
+  - rebuild_chain
+  - package
+seedData:
+  rows:
+    - columns:
+        - column: link_id
+          value:
+            str: "a-old"
+        - column: rebuild_chain_id
+          value:
+            str: "chain"
+        - column: package_id
+          value:
+            str: "old"
+    - columns:
+        - column: link_id
+          value:
+            str: "z-new"
+        - column: rebuild_chain_id
+          value:
+            str: "chain"
+        - column: package_id
+          value:
+            str: "new"
+    - columns:
+        - column: link_id
+          value:
+            str: "blocked"
+        - column: rebuild_chain_id
+          value:
+            str: "chain"
+        - column: package_id
+          value:
+            str: "blocked"

@@ -1,0 +1,44 @@
+database: securebuild
+name: image_apko
+requires:
+  - image
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "old"
+        - column: image_id
+          value:
+            str: "go-image"
+        - column: name
+          value:
+            str: "old"
+        - column: tags
+          value:
+            str: "{1.9.0}"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2026-01-02T00:00:00Z"
+    - columns:
+        - column: id
+          value:
+            str: "new"
+        - column: image_id
+          value:
+            str: "go-image"
+        - column: name
+          value:
+            str: "new"
+        - column: tags
+          value:
+            str: "{latest,1.10,1.10.0}"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2026-01-02T00:00:00Z"

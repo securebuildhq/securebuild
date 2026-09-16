@@ -1,0 +1,34 @@
+database: securebuild
+name: package
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "old"
+        - column: name
+          value:
+            str: "go-1.9"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"
+    - columns:
+        - column: id
+          value:
+            str: "new"
+        - column: name
+          value:
+            str: "go-1.10"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"
+    - columns:
+        - column: id
+          value:
+            str: "solo"
+        - column: name
+          value:
+            str: "solo"
+        - column: created_at
+          value:
+            str: "2026-01-02T00:00:00Z"
