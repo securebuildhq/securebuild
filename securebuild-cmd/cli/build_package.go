@@ -21,6 +21,10 @@ func BuildPackageCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "package",
 		Short: "Trigger and monitor a package build",
+		Long: `Trigger and monitor a package build for a git tag.
+Repeating the command reuses a successful or in-progress build. If the revision
+has never built successfully and its last build failed or its VM was deleted,
+it queues another build of the same package revision.`,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			v := viper.GetViper()
 			v.SetEnvPrefix("SECUREBUILD")

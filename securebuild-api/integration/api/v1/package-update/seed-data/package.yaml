@@ -1,0 +1,14 @@
+database: securebuild
+name: package
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "test-retry-package"
+        - column: name
+          value:
+            str: "test-retry-package"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"

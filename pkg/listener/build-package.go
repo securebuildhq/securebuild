@@ -23,10 +23,11 @@ var (
 )
 
 type BuildPackagePayload struct {
-	PackageID        string `json:"packageId"`
-	PackageVersionID string `json:"packageVersionId"`
-	Cause            string `json:"cause"`
-	CauseID          string `json:"causeId"`
+	PackageID          string `json:"packageId"`
+	PackageVersionID   string `json:"packageVersionId"`
+	Cause              string `json:"cause"`
+	CauseID            string `json:"causeId"`
+	RetryOfExecutionID string `json:"retryOfExecutionId,omitempty"`
 }
 
 func HandleBuildPackage(ctx context.Context, payload string) error {
@@ -95,6 +96,19 @@ func HandleBuildPackage(ctx context.Context, payload string) error {
 		}
 	}
 
+	var exe *executiontypes.Execution
+	if buildPackagePayload.RetryOfExecutionID != "" {
+		exe, err = execution.CreateRetryExecution(ctx, pkg.ID, pkgVersion, buildPackagePayload.Cause, buildPackagePayload.CauseID, buildPackagePayload.RetryOfExecutionID)
+		if err != nil {
+			return fmt.Errorf("failed to create retry execution: %w", err)
+		}
+		if exe == nil {
+			// The revision succeeded, another attempt is active, or this queue
+			// item has already been consumed. Never rebuild from a stale retry.
+			return nil
+		}
+	}
+
 	if err := updateDependenciesForPackageVersion(ctx, pkgVersion); err != nil {
 		logger.Warn("failed to update dependencies for package before building",
 			zap.String("package_version_id", pkgVersion.ID),
@@ -104,9 +118,11 @@ func HandleBuildPackage(ctx context.Context, payload string) error {
 			zap.Error(err))
 	}
 
-	exe, err := execution.CreateExecution(ctx, pkg.ID, pkgVersion, buildPackagePayload.Cause, buildPackagePayload.CauseID)
-	if err != nil {
-		return fmt.Errorf("failed to create execution: %w", err)
+	if exe == nil {
+		exe, err = execution.CreateExecution(ctx, pkg.ID, pkgVersion, buildPackagePayload.Cause, buildPackagePayload.CauseID)
+		if err != nil {
+			return fmt.Errorf("failed to create execution: %w", err)
+		}
 	}
 
 	// Get the active backend to determine architecture behavior
