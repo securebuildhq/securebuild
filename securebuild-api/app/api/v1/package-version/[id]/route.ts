@@ -46,12 +46,22 @@ export async function GET(
     const db = getDB(await getParam("DB_URI"));
 
     const result = await db.query(
-      `SELECT pv.id, pv.version, pv.apk_release, p.name as package_name, e.status, e.x86_64_status, e.aarch64_status
+      `SELECT pv.id, pv.version, pv.apk_release, p.name as package_name, e.status, e.x86_64_status, e.aarch64_status,
+         EXISTS (
+           SELECT 1 FROM work_queue w
+           WHERE w.channel = 'build_package' AND w.completed_at IS NULL
+             AND w.payload->>'packageVersionId' = pv.id
+             AND (
+               (w.payload->>'retryOfExecutionId' = e.id AND e.status IN ('failed', 'vm_deleted'))
+               OR (w.payload->>'retryOfExecutionId' IS NULL
+                   AND (e.created_at IS NULL OR w.created_at > e.created_at))
+             )
+         ) AS retry_queued
        FROM package_version pv
        INNER JOIN package p ON p.id = pv.package_id
        LEFT JOIN execution e ON e.package_version_id = pv.id
        WHERE pv.id = $1
-       ORDER BY e.created_at DESC
+       ORDER BY (e.status = 'success') DESC NULLS LAST, e.created_at DESC
        LIMIT 1`,
       [id]
     );
@@ -64,6 +74,17 @@ export async function GET(
     }
 
     const row = result.rows[0];
+
+    // A retry is visible before the build handler creates its execution. Do not
+    // return the previous attempt's terminal status during that interval.
+    if (row.retry_queued && row.status !== 'success') {
+      return NextResponse.json({
+        status: 'queued',
+        version: row.version,
+        package_name: row.package_name,
+        apk_release: row.apk_release,
+      });
+    }
 
     if (!row.status) {
       return NextResponse.json({

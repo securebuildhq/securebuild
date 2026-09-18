@@ -200,4 +200,56 @@ describe('GET /api/v1/package-version/<id>', () => {
     const data = res.data as Record<string, unknown>;
     expect(data.status).toBe('not_found');
   });
+
+  it.each(['failed', 'vm_deleted'])('reports a queued retry of a %s build until its new execution starts', async (failedStatus) => {
+    await env.pool.query('DELETE FROM execution WHERE package_version_id = $1', ['test-retry-version']);
+    await env.pool.query("DELETE FROM work_queue WHERE channel = 'build_package'");
+    await env.pool.query(`
+      INSERT INTO execution (id, package_id, package_version_id, version_label, status, created_at,
+                             x86_64_status, aarch64_status)
+      VALUES ('old-attempt', 'test-retry-package', 'test-retry-version', '1.0.0', $1,
+              '2025-01-01', $1, $1)`, [failedStatus]);
+
+    const status = async () => {
+      const res = await env.client.get('/api/v1/package-version/test-retry-version');
+      expect(res.status).toBe(200);
+      expect(res.data).toMatchObject({ version: '1.0.0', apk_release: 0 });
+      return res.data as Record<string, unknown>;
+    };
+    expect((await status()).status).toBe(failedStatus);
+
+    await env.pool.query(`
+      INSERT INTO work_queue (id, channel, payload, created_at)
+      VALUES ('retry-build', 'build_package', $1, '2025-01-02')`,
+      [JSON.stringify({ packageId: 'test-retry-package', packageVersionId: 'test-retry-version', retryOfExecutionId: 'old-attempt' })]);
+    const queued = await status();
+    expect(queued.status).toBe('queued');
+    expect(queued.x86_64_status).toBeUndefined();
+    expect(queued.aarch64_status).toBeUndefined();
+
+    // A completed queue item must no longer hide a failed execution.
+    await env.pool.query("UPDATE work_queue SET completed_at = NOW() WHERE id = 'retry-build'");
+    expect((await status()).status).toBe(failedStatus);
+    await env.pool.query("UPDATE work_queue SET completed_at = NULL WHERE id = 'retry-build'");
+
+    // Once the handler creates an execution, report it even while the work
+    // item remains in progress. A second failure must be visible to the CLI.
+    await env.pool.query(`
+      INSERT INTO execution (id, package_id, package_version_id, version_label, status, created_at)
+      VALUES ('new-attempt', 'test-retry-package', 'test-retry-version', '1.0.0', 'pending', '2025-01-03')`);
+    for (const nextStatus of ['pending', 'queued', 'building', 'failed', 'success']) {
+      await env.pool.query("UPDATE execution SET status = $1 WHERE id = 'new-attempt'", [nextStatus]);
+      expect((await status()).status).toBe(nextStatus);
+    }
+
+    // Historical success is authoritative even if a legacy later attempt
+    // failed and a retry was queued for that failure.
+    await env.pool.query(`
+      INSERT INTO execution (id, package_id, package_version_id, version_label, status, created_at)
+      VALUES ('later-failure', 'test-retry-package', 'test-retry-version', '1.0.0', 'failed', '2025-01-04')`);
+    await env.pool.query(`UPDATE work_queue SET payload = jsonb_set(payload, '{retryOfExecutionId}', '"later-failure"'),
+                         created_at = '2025-01-05' WHERE id = 'retry-build'`);
+    expect((await status()).status).toBe('success');
+  });
+
 });

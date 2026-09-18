@@ -300,6 +300,12 @@ func CreateExecution(ctx context.Context, packageID string, pkgVersion *sbpackag
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
+	return createExecution(ctx, conn, packageID, pkgVersion, cause, causeID)
+}
+
+func createExecution(ctx context.Context, conn interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, packageID string, pkgVersion *sbpackagetypes.PackageVersion, cause, causeID string) (*types.Execution, error) {
 	id, err := securerandom.Hex(24)
 	if err != nil {
 		return nil, err

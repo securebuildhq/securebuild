@@ -586,12 +586,9 @@ func performGitLinkedUpdateCheckForTag(ctx context.Context, githubClient *github
 	}
 
 	if existingVersionID != "" {
-		// Version already exists with the same SHA — no-op, just return the existing ID
-		logger.Info("Package version already exists for tag, no-op",
-			zap.String("tag", tagStr),
-			zap.String("commit_sha", currentSHA),
-			zap.String("package_version_id", existingVersionID))
-
+		if err := retryFailedPackageBuild(ctx, existingVersionID); err != nil {
+			return fmt.Errorf("failed to retry package version %s: %w", existingVersionID, err)
+		}
 		resultJSON, _ := json.Marshal(map[string]string{
 			"package_version_id": existingVersionID,
 		})

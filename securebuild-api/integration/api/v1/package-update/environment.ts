@@ -15,6 +15,7 @@ import { HttpClient } from '../../../fixtures/http-client';
 export const SEED_TEAM_ID = 'test-team-alpha';
 
 export interface PackageUpdateTestEnvironment {
+  pool: TestDatabase['pool'];
   client: HttpClient;
   systemClient: HttpClient;
   baseUrl: string;
@@ -50,6 +51,7 @@ export async function setupPackageUpdateTestEnvironment(seedDataDir: string): Pr
   };
 
   return {
+    pool: testDB.pool,
     client: systemClient,
     systemClient,
     baseUrl: server.baseUrl,
