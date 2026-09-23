@@ -58,10 +58,10 @@ func CorrelateVulnerabilityToPackage(ctx context.Context, cveMatch CVEPackageFix
 		return []CVEPackageFix{cveMatch}, nil
 	}
 
-	// Find the vulnerable artifact package in the SBOM
+	// Use a slice-backed lookup so an early break cannot leak an Enumerate goroutine.
 	var vulnerableArtifact *pkg.Package
-	for p := range sbomData.Artifacts.Packages.Enumerate() {
-		if p.Name == cveMatch.ArtifactName && p.Version == cveMatch.ArtifactVersion {
+	for _, p := range sbomData.Artifacts.Packages.PackagesByName(cveMatch.ArtifactName) {
+		if p.Version == cveMatch.ArtifactVersion {
 			vulnerableArtifact = &p
 			break
 		}
