@@ -39,6 +39,63 @@ describe('POST/GET /api/v1/external-image', () => {
       createdDigest = data.digest as string;
     });
 
+    it('deduplicates unfinished SBOM work for repeated submissions', async () => {
+      const responses = await Promise.all(
+        Array.from({ length: 5 }, () => env.client.post('/api/v1/external-image', {
+          image_url: env.createImage,
+        })),
+      );
+      for (const response of responses) {
+        expect(response.status).toBe(201);
+        expect((response.data as Record<string, unknown>).digest).toBe(createdDigest);
+      }
+
+      const result = await env.dbPool.query(
+        `SELECT COUNT(*)::int AS count, MAX(dedupe_key) AS dedupe_key
+         FROM work_queue
+         WHERE channel = 'external_image_sbom'
+           AND completed_at IS NULL
+           AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      expect(result.rows[0].count).toBe(1);
+      expect(result.rows[0].dedupe_key).toBe(createdDigest);
+
+      // Dispatch completion releases the queue key before asynchronous Syft
+      // generation completes. The generating status must still suppress a
+      // second job during that window.
+      await env.dbPool.query(
+        `UPDATE work_queue
+         SET completed_at = NOW(), dedupe_key = NULL
+         WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `UPDATE external_image_sbom_status SET status = 'generating' WHERE digest = $1`,
+        [createdDigest],
+      );
+
+      const generatingResponse = await env.client.post('/api/v1/external-image', {
+        image_url: env.createImage,
+      });
+      expect(generatingResponse.status).toBe(201);
+
+      const duringGeneration = await env.dbPool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM work_queue
+         WHERE channel = 'external_image_sbom'
+           AND completed_at IS NULL
+           AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      expect(duringGeneration.rows[0].count).toBe(0);
+
+      await env.dbPool.query(
+        `UPDATE external_image_sbom_status SET status = 'pending' WHERE digest = $1`,
+        [createdDigest],
+      );
+    });
+
     it('GET /external-image?sha=<createdDigest> returns status fields', async () => {
       // No worker runs — the created image has sbom_status='pending' immediately.
       const res = await env.client.get(`/api/v1/external-image?sha=${encodeURIComponent(createdDigest)}`);

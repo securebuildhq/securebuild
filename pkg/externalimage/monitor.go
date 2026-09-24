@@ -8,7 +8,6 @@ import (
 
 	listenertypes "github.com/securebuildhq/securebuild/pkg/listener/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
-	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"go.uber.org/zap"
 )
 
@@ -100,14 +99,12 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 				if hasExisting {
 					logger.Infof("skipping enqueueing SBOM work for digest %s because SBOM already exists", currentDigest)
 				} else {
-					// Initialize SBOM status to 'pending' before enqueuing
-					if err := InitializeSBOMStatusPending(ctx, currentDigest); err != nil {
-						logger.Warnf("failed to initialize SBOM status to pending for digest %s: %s", currentDigest, err.Error())
-						// Continue anyway - the job will still be enqueued
-					}
-
-					if err := persistence.EnqueueWork(ctx, "external_image_sbom", string(payload)); err != nil {
+					enqueued, err := EnqueueSBOMWork(ctx, string(payload), currentDigest)
+					if err != nil {
 						return fmt.Errorf("failed to enqueue external image SBOM work for digest %s: %w", currentDigest, err)
+					}
+					if !enqueued {
+						logger.Infof("skipping duplicate SBOM work for digest %s because unfinished work already exists", currentDigest)
 					}
 				}
 			}

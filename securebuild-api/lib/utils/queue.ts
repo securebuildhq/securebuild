@@ -33,6 +33,111 @@ export async function enqueueWorkWithPriority(channel: string, payload: QueuePay
   return id;
 }
 
+/**
+ * Enqueues work only when no unfinished item with the same channel and
+ * deduplication key exists. Returns null when the existing item wins.
+ */
+export async function enqueueUniqueWork(
+  channel: string,
+  payload: QueuePayload,
+  dedupeKey: string,
+  client?: PoolClient,
+): Promise<string | null> {
+  const db = client ?? getDB(await getParam("DB_URI"));
+
+  const id = srs.default({ length: 12, alphanumeric: true });
+  const now = new Date();
+
+  const result = await db.query(
+    `INSERT INTO work_queue (id, channel, payload, dedupe_key, created_at, priority) ` +
+    `VALUES ($1, $2, $3, $4, $5, $6) ` +
+    `ON CONFLICT (channel, dedupe_key) DO NOTHING ` +
+    `RETURNING id`,
+    [id, channel, payload, dedupeKey, now, PRIORITY_NORMAL],
+  );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  await db.query(`SELECT pg_notify($1, $2)`, [channel, id]);
+  return id;
+}
+
+/**
+ * Atomically creates pending external-image SBOM work unless the digest is
+ * already queued, generating, or stored. A failed digest can be submitted
+ * again after its previous queue item reaches a terminal state.
+ */
+export async function enqueueExternalImageSBOMWork(
+  payload: QueuePayload,
+  digest: string,
+): Promise<string | null> {
+  const pool = getDB(await getParam("DB_URI"));
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+      [`external_image_sbom:${digest}`],
+    );
+
+    const existing = await client.query(
+      `SELECT
+         EXISTS (
+           SELECT 1
+           FROM work_queue
+           WHERE channel = 'external_image_sbom'
+             AND completed_at IS NULL
+             AND (dedupe_key = $1 OR payload->>'digest' = $1)
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM external_image_sbom_status
+           WHERE digest = $1 AND status = 'generating'
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM external_image_sbom
+           WHERE digest = $1
+         ) AS blocked`,
+      [digest],
+    );
+    if (existing.rows[0]?.blocked === true) {
+      await client.query('COMMIT');
+      return null;
+    }
+
+    const id = await enqueueUniqueWork('external_image_sbom', payload, digest, client);
+    if (id === null) {
+      await client.query('COMMIT');
+      return null;
+    }
+
+    const now = new Date();
+    await client.query(
+      `INSERT INTO external_image_sbom_status
+         (digest, created_at, status, status_message, updated_at, status_updated_at)
+       VALUES ($1, $2, 'pending', NULL, $2, $2)
+       ON CONFLICT (digest) DO UPDATE
+       SET status = EXCLUDED.status,
+           status_message = NULL,
+           updated_at = EXCLUDED.updated_at,
+           status_updated_at = EXCLUDED.status_updated_at`,
+      [digest, now],
+    );
+
+    await client.query('COMMIT');
+    return id;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export interface WorkStatus {
   id: string;
   status: string;

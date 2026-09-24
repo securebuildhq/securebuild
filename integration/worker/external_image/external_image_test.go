@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"testing"
@@ -203,6 +204,96 @@ func TestExternalImageScanStatusTransitions(t *testing.T) {
 			missingSBOMDigest).Scan(&count))
 		assert.Zero(t, count, "scan metadata should roll back with the failed freshness update")
 	})
+}
+
+func TestExternalImageSbomWaitsForBuilderCapacity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
+		filepath.Join(projectRoot, "db", "schema", "tables"), false))
+
+	ctx, err = param.Init(param.InitSourceEnvironment, map[string]string{"DB_URI": testDB.ConnStr})
+	require.NoError(t, err)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	digest := "sha256:test-sbom-capacity-1234567890123456789012345678901234"
+	require.NoError(t, externalimage.AddExternalImage(ctx, "docker.io", "library/nginx", "capacity-test", digest, "", ""))
+	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest))
+
+	cache, err := sbom.InitSbomDownloadCapacityCache(ctx)
+	require.NoError(t, err)
+	ctx = listener.WithSbomDownloadCapacityCache(ctx, cache)
+
+	err = listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{Digest: digest})
+	require.Error(t, err)
+	var retryAfter *listener.RetryAfterError
+	require.True(t, errors.As(err, &retryAfter))
+	assert.Equal(t, 15*time.Second, retryAfter.Delay)
+	assert.Zero(t, retryAfter.MaxAge)
+
+	statuses := getSBOMStatuses(t, ctx, digest)
+	require.Len(t, statuses, 1)
+	assert.Equal(t, "pending", statuses[0].Status)
+	require.NotNil(t, statuses[0].StatusMessage)
+	assert.Equal(t, "waiting for builder capacity", *statuses[0].StatusMessage)
+}
+
+func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveGeneration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
+		filepath.Join(projectRoot, "db", "schema", "tables"), false))
+
+	ctx, err = param.Init(param.InitSourceEnvironment, map[string]string{"DB_URI": testDB.ConnStr})
+	require.NoError(t, err)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	digest := "sha256:test-sbom-enqueue-1234567890123456789012345678901234"
+	payload := `{"digest":"` + digest + `","team_id":"team-1"}`
+
+	enqueued, err := externalimage.EnqueueSBOMWork(ctx, payload, digest)
+	require.NoError(t, err)
+	require.True(t, enqueued)
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)
+	require.NoError(t, err)
+	require.False(t, enqueued, "pending work must be deduplicated")
+
+	_, err = testDB.Pool.Exec(ctx, `
+		UPDATE work_queue
+		SET completed_at = NOW(), dedupe_key = NULL
+		WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1
+	`, digest)
+	require.NoError(t, err)
+	require.NoError(t, externalimage.SetSBOMStatusGenerating(ctx, digest))
+
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)
+	require.NoError(t, err)
+	require.False(t, enqueued, "generating work must be deduplicated after dispatch completes")
+
+	require.NoError(t, externalimage.SetSBOMStatusFailed(ctx, digest, "terminal test failure"))
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)
+	require.NoError(t, err)
+	require.True(t, enqueued, "a terminally failed digest must allow a later retry")
 }
 
 func TestMigrateScanStatusColumn(t *testing.T) {

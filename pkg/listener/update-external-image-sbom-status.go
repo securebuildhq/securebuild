@@ -20,7 +20,6 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	listenertypes "github.com/securebuildhq/securebuild/pkg/listener/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
-	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/sbom"
 	"github.com/securebuildhq/securebuild/pkg/scan"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
@@ -640,8 +639,14 @@ func reenqueueSbomDownload(ctx context.Context, teamID, digest string) {
 		return
 	}
 
-	if err := persistence.EnqueueWork(ctx, "external_image_sbom", string(payloadBytes)); err != nil {
+	enqueued, err := externalimage.EnqueueSBOMWork(ctx, string(payloadBytes), digest)
+	if err != nil {
 		logger.Error(fmt.Errorf("failed to re-enqueue external image SBOM download: %w", err))
+		return
+	}
+	if !enqueued {
+		logger.Info("skipped duplicate external image SBOM re-enqueue because unfinished work already exists",
+			zap.String("digest", digest))
 		return
 	}
 

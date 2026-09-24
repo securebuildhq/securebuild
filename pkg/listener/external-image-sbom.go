@@ -107,10 +107,6 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		logger.Warnf("failed to initialize SBOM status for digest %s: %s", p.Digest, err.Error())
 	}
 
-	if err := externalimage.SetSBOMStatusGenerating(ctx, p.Digest); err != nil {
-		logger.Warnf("failed to set SBOM status to generating for digest %s: %s", p.Digest, err.Error())
-	}
-
 	// Dispatch SBOM generation to a builder VM.
 	return handleExternalImageSbomOnBuilder(ctx, p, externalImage)
 }

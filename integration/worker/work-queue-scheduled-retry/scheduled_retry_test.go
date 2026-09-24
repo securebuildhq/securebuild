@@ -44,6 +44,8 @@ func TestScheduledRetryEventuallyProcessesTheOriginalMessage(t *testing.T) {
 	staleRecovered := make(chan struct{})
 	const expiredChannel = "scheduled_retry_expired_test"
 	var expiredAttempts atomic.Int32
+	const uniqueChannel = "scheduled_retry_unique_test"
+	var uniqueAttempts atomic.Int32
 
 	l := listener.NewListener(ctx)
 	require.NoError(t, l.AddHandler(ctx, channel, 1, time.Second, func(context.Context, *pgconn.Notification) error {
@@ -62,6 +64,17 @@ func TestScheduledRetryEventuallyProcessesTheOriginalMessage(t *testing.T) {
 		expiredAttempts.Add(1)
 		return listener.NewRetryAfterError(errors.New("package was never published"), 100*time.Millisecond, time.Nanosecond)
 	}))
+	require.NoError(t, l.AddHandler(ctx, uniqueChannel, 1, time.Second, func(context.Context, *pgconn.Notification) error {
+		uniqueAttempts.Add(1)
+		return nil
+	}))
+
+	enqueued, err := persistence.EnqueueUniqueWork(ctx, uniqueChannel, map[string]string{"digest": "sha256:dedupe"}, "sha256:dedupe")
+	require.NoError(t, err)
+	require.True(t, enqueued)
+	enqueued, err = persistence.EnqueueUniqueWork(ctx, uniqueChannel, map[string]string{"digest": "sha256:dedupe"}, "sha256:dedupe")
+	require.NoError(t, err)
+	require.False(t, enqueued, "unfinished work with the same key must be deduplicated")
 
 	listenerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -135,4 +148,19 @@ func TestScheduledRetryEventuallyProcessesTheOriginalMessage(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 	require.True(t, staleCompleted)
 	require.Equal(t, 1, staleAttemptCount, "reclaiming stale work must count as a retry")
+
+	require.Eventually(t, func() bool {
+		return uniqueAttempts.Load() == 1
+	}, 2*time.Second, 10*time.Millisecond)
+	enqueued, err = persistence.EnqueueUniqueWork(ctx, uniqueChannel, map[string]string{"digest": "sha256:dedupe"}, "sha256:dedupe")
+	require.NoError(t, err)
+	require.True(t, enqueued, "completion must release the deduplication key")
+	require.Eventually(t, func() bool {
+		return uniqueAttempts.Load() == 2
+	}, 2*time.Second, 10*time.Millisecond)
+
+	var uniqueRows int
+	require.NoError(t, testDB.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM work_queue WHERE channel = $1`, uniqueChannel).Scan(&uniqueRows))
+	require.Equal(t, 2, uniqueRows)
 }

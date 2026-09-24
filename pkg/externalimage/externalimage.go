@@ -197,6 +197,32 @@ func InitializeSBOMStatusPending(ctx context.Context, digest string) error {
 	return nil
 }
 
+// SetSBOMStatusPending marks an existing SBOM request as waiting to start. It
+// also creates the status row when the enqueue path did not initialize one.
+func SetSBOMStatusPending(ctx context.Context, digest, statusMessage string) error {
+	logger.Debugf("setting SBOM status to pending for digest %s", digest)
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	now := time.Now()
+	query := `
+		INSERT INTO external_image_sbom_status
+			(digest, created_at, status, status_message, updated_at, status_updated_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $2, $2)
+		ON CONFLICT (digest) DO UPDATE
+		SET status = EXCLUDED.status,
+		    status_message = EXCLUDED.status_message,
+		    updated_at = EXCLUDED.updated_at,
+		    status_updated_at = EXCLUDED.status_updated_at
+	`
+
+	if _, err := conn.Exec(ctx, query, digest, now, string(SBOMStatusPending), statusMessage); err != nil {
+		return fmt.Errorf("failed to set SBOM status to pending for digest %s: %w", digest, err)
+	}
+
+	return nil
+}
+
 // SetSBOMStatusGenerating updates SBOM status to 'generating' for all architectures of a digest.
 // This is used when SBOM generation starts to indicate the download is in progress.
 func SetSBOMStatusGenerating(ctx context.Context, digest string) error {
@@ -209,6 +235,7 @@ func SetSBOMStatusGenerating(ctx context.Context, digest string) error {
 	query := `
 		UPDATE external_image_sbom_status
 		SET status = $1,
+		    status_message = NULL,
 		    updated_at = $2,
 		    status_updated_at = $2
 		WHERE digest = $3
