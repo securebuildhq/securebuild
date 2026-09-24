@@ -1012,6 +1012,152 @@ func TestExternalImageScanGenerationPublication(t *testing.T) {
 	current = readSelected(digest)
 	assert.Equal(t, "generation-new", current.generationID)
 	assertGenerationConsistent(current, "NEW", 5)
+
+	t.Run("pre-generation builder result is adopted and published", func(t *testing.T) {
+		legacyDigest := "sha256:legacy-builder-generation-123456789012345678901234567890"
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		_, err := conn.Exec(ctx, `
+			INSERT INTO external_image_sbom (digest, arch, source, created_at, is_in_object_store)
+			VALUES ($1, $2, 'syft', NOW(), false)
+		`, legacyDigest, arch)
+		require.NoError(t, err)
+		_, err = conn.Exec(ctx, `
+			INSERT INTO external_image_scan (
+				digest, arch, created_at, status, updated_at,
+				scan_attempted_at, scan_status_updated_at, is_in_object_store
+			)
+			VALUES ($1, $2, NOW(), 'running', NOW(), NOW(), NOW(), false)
+		`, legacyDigest, arch)
+		conn.Release()
+		require.NoError(t, err)
+
+		const legacyGeneration = "legacy-derived-generation"
+		require.NoError(t, externalimage.AdoptLegacyScanGeneration(ctx, legacyDigest, []string{arch}, legacyGeneration))
+		require.NoError(t, publish(ctx, legacyDigest, legacyGeneration, "LEGACY", 6))
+
+		selected := readSelected(legacyDigest)
+		assert.Equal(t, legacyGeneration, selected.generationID)
+		assertGenerationConsistent(selected, "LEGACY", 6)
+	})
+
+	t.Run("claim creates missing rows and remains all or nothing", func(t *testing.T) {
+		missingRowsDigest := "sha256:claim-missing-rows-123456789012345678901234567890123"
+		claimed, err := externalimage.ClaimScanGeneration(
+			ctx,
+			missingRowsDigest,
+			[]string{"x86_64", "aarch64"},
+			"all-architectures",
+			time.Hour,
+		)
+		require.NoError(t, err)
+		require.True(t, claimed)
+
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		var claimedRows int
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM external_image_scan
+			WHERE digest = $1
+			  AND status = 'running'
+			  AND current_scan_generation_id = 'all-architectures'
+		`, missingRowsDigest).Scan(&claimedRows))
+		conn.Release()
+		assert.Equal(t, 2, claimedRows)
+
+		partialDigest := "sha256:claim-partial-rollback-123456789012345678901234567890"
+		require.NoError(t, externalimage.InitializeScanStatusQueued(ctx, partialDigest, "x86_64"))
+		claimed, err = externalimage.ClaimScanGeneration(ctx, partialDigest, []string{"aarch64"}, "active-generation", time.Hour)
+		require.NoError(t, err)
+		require.True(t, claimed)
+
+		claimed, err = externalimage.ClaimScanGeneration(
+			ctx,
+			partialDigest,
+			[]string{"x86_64", "aarch64"},
+			"must-rollback",
+			time.Hour,
+		)
+		require.NoError(t, err)
+		assert.False(t, claimed)
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		rows, err := conn.Query(ctx, `
+			SELECT arch, status, COALESCE(current_scan_generation_id, '')
+			FROM external_image_scan
+			WHERE digest = $1
+			ORDER BY arch
+		`, partialDigest)
+		require.NoError(t, err)
+		states := make(map[string][2]string)
+		for rows.Next() {
+			var rowArch, status, generation string
+			require.NoError(t, rows.Scan(&rowArch, &status, &generation))
+			states[rowArch] = [2]string{status, generation}
+		}
+		require.NoError(t, rows.Err())
+		rows.Close()
+		conn.Release()
+		assert.Equal(t, [2]string{"running", "active-generation"}, states["aarch64"])
+		assert.Equal(t, [2]string{"queued", ""}, states["x86_64"])
+	})
+
+	t.Run("missing-builder recovery cannot requeue a newer generation", func(t *testing.T) {
+		recoveryDigest := "sha256:recovery-generation-fence-123456789012345678901234567890"
+		claimed, err := externalimage.ClaimScanGeneration(ctx, recoveryDigest, []string{arch}, "new-generation", time.Hour)
+		require.NoError(t, err)
+		require.True(t, claimed)
+
+		affected, err := externalimage.RequeueScanGeneration(
+			ctx,
+			recoveryDigest,
+			[]string{arch},
+			"old-generation",
+			"old builder disappeared",
+		)
+		require.NoError(t, err)
+		assert.Zero(t, affected)
+		err = externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
+			Digest:            recoveryDigest,
+			Arch:              arch,
+			Status:            externalimage.ScanStatusQueued,
+			ScanStatusMessage: "generationless recovery",
+		})
+		require.ErrorIs(t, err, externalimage.ErrStaleScanGeneration)
+
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		var status, generation string
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT status, current_scan_generation_id
+			FROM external_image_scan
+			WHERE digest = $1 AND arch = $2
+		`, recoveryDigest, arch).Scan(&status, &generation))
+		conn.Release()
+		assert.Equal(t, "running", status)
+		assert.Equal(t, "new-generation", generation)
+
+		err = externalimage.AdoptLegacyScanGeneration(ctx, recoveryDigest, []string{arch}, "legacy-generation")
+		require.ErrorIs(t, err, externalimage.ErrStaleScanGeneration)
+
+		affected, err = externalimage.RequeueScanGeneration(
+			ctx,
+			recoveryDigest,
+			[]string{arch},
+			"new-generation",
+			"matching builder disappeared",
+		)
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, affected)
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT status, COALESCE(current_scan_generation_id, '')
+			FROM external_image_scan
+			WHERE digest = $1 AND arch = $2
+		`, recoveryDigest, arch).Scan(&status, &generation))
+		conn.Release()
+		assert.Equal(t, "queued", status)
+		assert.Empty(t, generation)
+	})
 }
 
 // Helper functions

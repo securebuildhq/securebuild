@@ -3,12 +3,15 @@ package listener
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -122,22 +125,55 @@ func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm 
 		return
 	}
 
-	// Resync the cache for this builder with what's actually on the
-	// filesystem. This replaces all entries (including leaked placeholders
-	// and stale scans) with the current set of active scan dirs. Only
-	// scans that are still in progress (not all archs done) are counted
-	// toward capacity.
+	// Resync the cache and adopt scans dispatched before scan generation IDs
+	// were added to scan.json. The derived ID is stable across poller retries,
+	// and database adoption is fenced so an old directory cannot attach itself
+	// to a newer scan attempt.
 	activeScans := make([]scan.ScanDirInfo, 0)
+	processableDirs := make([]scan.ScanDirStatus, 0, len(scanDirs))
 	for _, sd := range scanDirs {
+		architectures := scanStatusArchitectures(sd)
+		if sd.Metadata.Digest != "" && sd.Metadata.ScanGenerationID == "" && len(architectures) > 0 {
+			generationID := legacyScanGenerationID(sd, architectures)
+			if err := externalimage.AdoptLegacyScanGeneration(ctx, sd.Metadata.Digest, architectures, generationID); err != nil {
+				if errors.Is(err, externalimage.ErrStaleScanGeneration) {
+					logger.Warn("discarding stale pre-generation scan directory",
+						zap.String("digest", sd.Metadata.Digest),
+						zap.String("workDir", sd.WorkDir),
+						zap.Error(err))
+					cleanupScanDir(ctx, runner, sd.WorkDir)
+					continue
+				}
+				logger.Warn("failed to adopt pre-generation scan directory; will retry",
+					zap.String("digest", sd.Metadata.Digest),
+					zap.String("workDir", sd.WorkDir),
+					zap.Error(err))
+				if !sd.AllArchsDone {
+					activeScans = append(activeScans, scan.ScanDirInfo{
+						Digest:        sd.Metadata.Digest,
+						Architectures: architectures,
+						WorkDir:       sd.WorkDir,
+						CreatedAt:     sd.Metadata.CreatedAt,
+					})
+				}
+				continue
+			}
+			sd.Metadata.ScanGenerationID = generationID
+		}
+
 		if sd.Metadata.Digest != "" && !sd.AllArchsDone {
 			activeScans = append(activeScans, scan.ScanDirInfo{
-				Digest:    sd.Metadata.Digest,
-				WorkDir:   sd.WorkDir,
-				CreatedAt: sd.Metadata.CreatedAt,
+				Digest:           sd.Metadata.Digest,
+				ScanGenerationID: sd.Metadata.ScanGenerationID,
+				Architectures:    architectures,
+				WorkDir:          sd.WorkDir,
+				CreatedAt:        sd.Metadata.CreatedAt,
 			})
 		}
+		processableDirs = append(processableDirs, sd)
 	}
 	cache.SetBuilderScans(vm.ID, activeScans)
+	scanDirs = processableDirs
 
 	// Partition scan dirs into completed (batch via tar) and in-progress
 	// (handle individually for timeout/kill).
@@ -160,6 +196,26 @@ func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm 
 	if len(completedDirs) > 0 {
 		processCompletedScansBatch(ctx, cache, vm, runner, baseDir, completedDirs)
 	}
+}
+
+func scanStatusArchitectures(status scan.ScanDirStatus) []string {
+	architectures := make([]string, 0, len(status.ArchStatuses))
+	for arch := range status.ArchStatuses {
+		architectures = append(architectures, arch)
+	}
+	sort.Strings(architectures)
+	return architectures
+}
+
+func legacyScanGenerationID(status scan.ScanDirStatus, architectures []string) string {
+	identity := strings.Join([]string{
+		status.Metadata.Digest,
+		status.WorkDir,
+		status.Metadata.CreatedAt.UTC().Format(time.RFC3339Nano),
+		strings.Join(architectures, ","),
+	}, "\x00")
+	sum := sha256.Sum256([]byte(identity))
+	return "legacy-" + hex.EncodeToString(sum[:24])
 }
 
 // processCompletedScansBatch transfers all completed scan results from the
@@ -625,18 +681,26 @@ func handleMissingBuilder(ctx context.Context, cache *scan.ScanCapacityCache, ma
 		zap.Int("scanCount", len(scans)))
 
 	for _, s := range scans {
-		for _, arch := range expectedArchs {
-			if err := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
-				Digest:            s.Digest,
-				Arch:              arch,
-				Status:            externalimage.ScanStatusQueued,
-				ScanStatusMessage: "builder VM no longer exists",
-			}); err != nil {
-				logger.Warn("failed to set scan status to queued for missing builder",
-					zap.String("digest", s.Digest),
-					zap.String("arch", arch),
-					zap.Error(err))
-			}
+		affected, err := externalimage.RequeueScanGeneration(
+			ctx,
+			s.Digest,
+			s.Architectures,
+			s.ScanGenerationID,
+			"builder VM no longer exists",
+		)
+		if err != nil {
+			logger.Warn("failed to requeue scan generation for missing builder",
+				zap.String("digest", s.Digest),
+				zap.String("generation_id", s.ScanGenerationID),
+				zap.Strings("architectures", s.Architectures),
+				zap.Error(err))
+			continue
+		}
+		if affected == 0 {
+			logger.Info("missing builder scan was already superseded; leaving current scan unchanged",
+				zap.String("digest", s.Digest),
+				zap.String("generation_id", s.ScanGenerationID))
+			continue
 		}
 
 		reenqueueScan(ctx, s.Digest)

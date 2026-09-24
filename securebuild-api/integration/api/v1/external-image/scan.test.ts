@@ -234,6 +234,41 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(res.headers.get('X-SecureBuild-Image_Digest')).toBe(digest());
     });
 
+    it('keeps SBOMs at deterministic keys when scan results use generations', async () => {
+      const removed = await env.dbPool.query(
+        `DELETE FROM external_image_sbom
+         WHERE digest = $1 AND arch = 'x86_64'
+         RETURNING *`,
+        [digest()],
+      );
+      const x86 = removed.rows[0];
+
+      try {
+        const res = await env.client.get(`/api/v1/external-image/sbom?digest=${encodeURIComponent(digest())}`);
+        expect(res.status).toBe(200);
+        expect(res.data.SPDXID).toBeDefined();
+        expect(Array.isArray(res.data.packages)).toBe(true);
+      } finally {
+        await env.dbPool.query(
+          `INSERT INTO external_image_sbom (
+             digest, arch, sbom, created_at, source, image_size_bytes,
+             last_security_scanned_at, image_digest, is_in_object_store
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            x86.digest,
+            x86.arch,
+            x86.sbom,
+            x86.created_at,
+            x86.source,
+            x86.image_size_bytes,
+            x86.last_security_scanned_at,
+            x86.image_digest,
+            x86.is_in_object_store,
+          ],
+        );
+      }
+    });
+
     it('GET /sbom?image_url returns SPDX SBOM', async () => {
       const res = await env.client.get(`/api/v1/external-image/sbom?image_url=${encodeURIComponent(image())}`);
       expect(res.status).toBe(200);

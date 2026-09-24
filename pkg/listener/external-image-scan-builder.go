@@ -251,9 +251,11 @@ func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, d
 	// SetBuilderScans call will reconcile on the next cycle.
 	slotReserved = false
 	cache.AddScan(builderVM.ID, scan.ScanDirInfo{
-		Digest:    digest,
-		WorkDir:   workDir,
-		CreatedAt: metadata.CreatedAt,
+		Digest:           digest,
+		ScanGenerationID: scanGenerationID,
+		Architectures:    append([]string(nil), archsToScan...),
+		WorkDir:          workDir,
+		CreatedAt:        metadata.CreatedAt,
 	})
 
 	logger.Info("dispatched external image scan to builder",
@@ -409,29 +411,16 @@ func isScanAlreadyRunning(ctx context.Context, digest string) bool {
 // the caller returns the error so the listener retries the message instead of
 // dispatching without a durable claim.
 func claimScanForDispatch(ctx context.Context, digest string, archs []string) (string, bool, error) {
-	conn := persistence.MustGetPooledPostgresSession(ctx)
-	defer conn.Release()
-
-	staleThreshold := fmt.Sprintf("%d minutes", int(scan.ScanStalenessThreshold.Minutes()))
 	scanGenerationID, err := securerandom.Hex(24)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to generate scan generation ID: %w", err)
 	}
 
-	tag, err := conn.Exec(ctx,
-		`UPDATE external_image_scan
-		 SET status = 'running',
-		     scan_status_updated_at = NOW(),
-		     scan_status_message = NULL,
-		     scan_attempted_at = COALESCE(scan_attempted_at, NOW()),
-		     current_scan_generation_id = $3
-		 WHERE digest = $1 AND arch = ANY($2::text[])
-		   AND (status != 'running' OR scan_status_updated_at <= NOW() - interval '`+staleThreshold+`')`,
-		digest, archs, scanGenerationID)
+	claimed, err := externalimage.ClaimScanGeneration(ctx, digest, archs, scanGenerationID, scan.ScanStalenessThreshold)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to claim scan rows: %w", err)
 	}
-	return scanGenerationID, tag.RowsAffected() > 0, nil
+	return scanGenerationID, claimed, nil
 }
 
 // revertScanToQueued transitions scan rows from "running" back to "queued"

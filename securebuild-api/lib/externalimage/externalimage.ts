@@ -238,6 +238,36 @@ export async function decryptPassword(encryptedPassword: string): Promise<string
   return new TextDecoder().decode(decrypted);
 }
 
+type PublishedScanResultRow = {
+  is_in_object_store: boolean;
+  selected_scan_generation_id?: string | null;
+  raw_object_key?: string | null;
+  details_object_key?: string | null;
+};
+
+async function getPublishedScanResult(
+  row: PublishedScanResultRow,
+  digest: string,
+  arch: string,
+  format: 'raw' | 'parsed',
+): Promise<string | null> {
+  if (row.selected_scan_generation_id) {
+    const selectedKey = format === 'raw' ? row.raw_object_key : row.details_object_key;
+    if (!selectedKey) {
+      throw new Error(`Selected scan generation ${row.selected_scan_generation_id} has no ${format} object key for digest=${digest} arch=${arch}`);
+    }
+    return getScanResultObject(selectedKey);
+  }
+
+  if (!row.is_in_object_store) {
+    return null;
+  }
+
+  return format === 'raw'
+    ? getRawResult(digest, arch)
+    : getParsedResultsDetails(digest, arch);
+}
+
 /**
  * Get stored credentials for an external image from the database.
  * Returns decrypted credentials if found, or null if no credentials exist.
@@ -437,26 +467,7 @@ export const getExternalImageScan = traceFunction('lib.externalimage.getExternal
     // is_in_object_store records whether a completed result is available. A
     // subsequent rescan may move status back to queued/running/failed while
     // preserving that previous result, so status must not gate blob reads.
-    let scanResult: string | null = null
-    if (row.selected_scan_generation_id) {
-      const selectedKey = format === 'raw' ? row.raw_object_key : row.details_object_key
-      if (!selectedKey) {
-        throw new Error(`getExternalImageScan: selected generation ${row.selected_scan_generation_id} has no ${format} object key`)
-      }
-      try {
-        scanResult = await getScanResultObject(selectedKey)
-      } catch (err) {
-        throw new Error(`getExternalImageScan: failed to fetch ${format} generation blob for digest=${digest} arch=${arch}: ${err}`)
-      }
-    } else if (row.is_in_object_store) {
-      try {
-        scanResult = format === 'raw'
-          ? await getRawResult(digest, arch)
-          : await getParsedResultsDetails(digest, arch)
-      } catch (err) {
-        throw new Error(`getExternalImageScan: failed to fetch ${format} blob for digest=${digest} arch=${arch}: ${err}`)
-      }
-    }
+    const scanResult = await getPublishedScanResult(row, digest, arch, format)
 
     return {
       scanResult,
@@ -953,26 +964,7 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
       // Process scan results. A queued/running/failed rescan may still have a
       // result from the previous successful scan in object storage.
       for (const row of scanResult.rows) {
-        let scanResultBlob: string | null = null
-        if (row.selected_scan_generation_id) {
-          const selectedKey = format === 'raw' ? row.raw_object_key : row.details_object_key
-          if (!selectedKey) {
-            throw new Error(`getBatchExternalImageScans: selected generation ${row.selected_scan_generation_id} has no ${format} object key`)
-          }
-          try {
-            scanResultBlob = await getScanResultObject(selectedKey)
-          } catch (err) {
-            throw new Error(`getBatchExternalImageScans: failed to fetch ${format} generation blob for digest=${row.digest} arch=${arch}: ${err}`)
-          }
-        } else if (row.is_in_object_store) {
-          try {
-            scanResultBlob = format === 'raw'
-              ? await getRawResult(row.digest, arch)
-              : await getParsedResultsDetails(row.digest, arch)
-          } catch (err) {
-            throw new Error(`getBatchExternalImageScans: failed to fetch ${format} blob for digest=${row.digest} arch=${arch}: ${err}`)
-          }
-        }
+        const scanResultBlob = await getPublishedScanResult(row, row.digest, arch, format)
         resultMap.set(row.digest, {
           digest: row.digest,
           scanResult: scanResultBlob,
