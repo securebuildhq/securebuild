@@ -21,8 +21,8 @@ type scanCandidateIdentity struct {
 }
 
 // StartScanCandidateCleanup removes failed, abandoned, and superseded scan
-// generations after their grace period. Selected generations are protected by
-// the same scan-row lock used during selection.
+// generations after their grace period. Current and selected generations are
+// protected by the same scan-row lock used during selection.
 func StartScanCandidateCleanup(ctx context.Context) {
 	ticker := time.NewTicker(scanCandidateCleanupInterval)
 	defer ticker.Stop()
@@ -99,13 +99,13 @@ func cleanupExternalImageScanCandidate(ctx context.Context, candidate scanCandid
 	}
 	defer tx.Rollback(ctx)
 
-	var selectedGeneration sql.NullString
+	var currentGeneration, selectedGeneration sql.NullString
 	err = tx.QueryRow(ctx, `
-		SELECT selected_scan_generation_id
+		SELECT current_scan_generation_id, selected_scan_generation_id
 		FROM external_image_scan
 		WHERE digest = $1 AND arch = $2
 		FOR UPDATE
-	`, candidate.digest, candidate.arch).Scan(&selectedGeneration)
+	`, candidate.digest, candidate.arch).Scan(&currentGeneration, &selectedGeneration)
 	if err != nil && err != pgx.ErrNoRows {
 		return fmt.Errorf("failed to lock scan row during candidate cleanup: %w", err)
 	}
@@ -129,6 +129,17 @@ func cleanupExternalImageScanCandidate(ctx context.Context, candidate scanCandid
 			SET state = 'selected', cleanup_after = NULL
 			WHERE generation_id = $1 AND digest = $2 AND arch = $3
 		`, candidate.generationID, candidate.digest, candidate.arch)
+		if err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	if currentGeneration.Valid && currentGeneration.String == candidate.generationID {
+		_, err = tx.Exec(ctx, `
+			UPDATE external_image_scan_generation
+			SET cleanup_after = $4
+			WHERE generation_id = $1 AND digest = $2 AND arch = $3
+		`, candidate.generationID, candidate.digest, candidate.arch, time.Now().Add(scanCandidateCleanupDelay))
 		if err != nil {
 			return err
 		}

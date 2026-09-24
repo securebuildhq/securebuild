@@ -210,7 +210,11 @@ func markScanCandidateState(ctx context.Context, candidate scanCandidate, state 
 		UPDATE external_image_scan_generation
 		SET state = $4,
 		    validated_at = CASE WHEN $4 = 'validated' THEN NOW() ELSE validated_at END,
-		    cleanup_after = CASE WHEN $4 = 'selected' THEN NULL ELSE COALESCE(cleanup_after, NOW() + INTERVAL '24 hours') END
+		    cleanup_after = CASE
+		        WHEN $4 = 'selected' THEN NULL
+		        WHEN $4 = 'validated' THEN NOW() + INTERVAL '24 hours'
+		        ELSE COALESCE(cleanup_after, NOW() + INTERVAL '24 hours')
+		    END
 		WHERE generation_id = $1 AND digest = $2 AND arch = $3
 		  AND state != 'deleting'
 	`, candidate.generationID, candidate.digest, candidate.arch, state)
