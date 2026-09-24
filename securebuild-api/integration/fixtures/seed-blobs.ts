@@ -139,6 +139,7 @@ const SBOM = JSON.stringify({
 export interface SeedBlob {
   digest: string;
   arch: string;
+  generationId?: string;
   rawResult?: string;
   parsedResultsDetails?: string;
   sbom?: string;
@@ -156,6 +157,7 @@ export const SEED_BLOBS: SeedBlob[] = [
   {
     digest: EXISTING_DIGEST,
     arch: 'aarch64',
+    generationId: 'api-generation-a',
     rawResult: RAW_RESULT,
     parsedResultsDetails: PARSED_RESULTS_DETAILS,
     sbom: SBOM,

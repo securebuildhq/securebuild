@@ -50,9 +50,10 @@ var ErrNoBuilderAvailable = errors.New("no builder available for scan")
 // ScanMetadata is the JSON metadata file written to each scan directory on the
 // builder. It allows the poller to discover scans and know which DB rows to update.
 type ScanMetadata struct {
-	Digest     string    `json:"digest"`
-	CreatedAt  time.Time `json:"created_at"`
-	RetryCount int       `json:"retry_count"`
+	Digest           string    `json:"digest"`
+	ScanGenerationID string    `json:"scan_generation_id"`
+	CreatedAt        time.Time `json:"created_at"`
+	RetryCount       int       `json:"retry_count"`
 }
 
 // ScanDirInfo tracks a single active scan directory on a builder.

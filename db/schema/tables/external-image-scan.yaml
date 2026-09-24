@@ -40,3 +40,9 @@ schema:
       default: "false"
       constraints:
         notNull: true
+    - name: current_scan_generation_id
+      type: text
+      comment: "Generation currently authorized to publish for this digest and architecture"
+    - name: selected_scan_generation_id
+      type: text
+      comment: "Complete immutable generation currently served by scan result readers"

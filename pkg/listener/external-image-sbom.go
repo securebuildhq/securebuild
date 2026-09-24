@@ -17,6 +17,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/sbom"
 	"github.com/securebuildhq/securebuild/pkg/scan"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
+	"github.com/tuvistavie/securerandom"
 	"go.uber.org/zap"
 )
 
@@ -245,7 +246,7 @@ func extractArchFromPlatform(platform string) string {
 // storeScanResults parses and stores scan results per architecture.
 // The span is started inside this function so the traced operation is the function itself.
 // Returns the list of architectures that were successfully stored.
-func storeScanResults(ctx context.Context, digest string, scanResults map[string]string, attempt, maxAttempts int) (successArchs []string, err error) {
+func storeScanResults(ctx context.Context, digest, scanGenerationID string, scanResults map[string]string, attempt, maxAttempts int) (successArchs []string, err error) {
 	span, ctx := telemetry.StartSpan(ctx, "listener.external_image_scan.store_results")
 	defer func() {
 		if err != nil {
@@ -257,31 +258,32 @@ func storeScanResults(ctx context.Context, digest string, scanResults map[string
 	for arch, scanResult := range scanResults {
 		parsedResults, parseErr := image.ParseScanResultDetails(scanResult)
 		if parseErr != nil {
-			recordScanFailure(ctx, digest, arch, externalimage.NewScanFailureError(externalimage.ErrParseScanResult, fmt.Sprintf("failed to parse scan result: %s", parseErr.Error())), false, attempt, maxAttempts)
+			recordScanFailure(ctx, digest, arch, scanGenerationID, externalimage.NewScanFailureError(externalimage.ErrParseScanResult, fmt.Sprintf("failed to parse scan result: %s", parseErr.Error())), false, attempt, maxAttempts)
 			continue
 		}
 
 		countsJSON, marshalErr := json.Marshal(parsedResults.Counts)
 		if marshalErr != nil {
-			recordScanFailure(ctx, digest, arch, externalimage.NewScanFailureError(externalimage.ErrMarshalScanCounts, fmt.Sprintf("failed to marshal scan counts: %s", marshalErr.Error())), false, attempt, maxAttempts)
+			recordScanFailure(ctx, digest, arch, scanGenerationID, externalimage.NewScanFailureError(externalimage.ErrMarshalScanCounts, fmt.Sprintf("failed to marshal scan counts: %s", marshalErr.Error())), false, attempt, maxAttempts)
 			continue
 		}
 
 		summaryJSON, marshalErr := json.Marshal(parsedResults)
 		if marshalErr != nil {
-			recordScanFailure(ctx, digest, arch, externalimage.NewScanFailureError(externalimage.ErrMarshalScanSummary, fmt.Sprintf("failed to marshal scan summary: %s", marshalErr.Error())), false, attempt, maxAttempts)
+			recordScanFailure(ctx, digest, arch, scanGenerationID, externalimage.NewScanFailureError(externalimage.ErrMarshalScanSummary, fmt.Sprintf("failed to marshal scan summary: %s", marshalErr.Error())), false, attempt, maxAttempts)
 			continue
 		}
 
 		if setErr := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
 			Digest:               digest,
 			Arch:                 arch,
+			ScanGenerationID:     scanGenerationID,
 			Status:               externalimage.ScanStatusSucceeded,
 			ParsedResults:        string(countsJSON),
 			ParsedResultsDetails: string(summaryJSON),
 			RawResult:            scanResult,
 		}); setErr != nil {
-			recordScanFailure(ctx, digest, arch, externalimage.NewScanFailureError(externalimage.ErrSaveScanStatus, fmt.Sprintf("scan completed but failed to save results: %s", setErr.Error())), false, attempt, maxAttempts)
+			recordScanFailure(ctx, digest, arch, scanGenerationID, externalimage.NewScanFailureError(externalimage.ErrSaveScanStatus, fmt.Sprintf("scan completed but failed to save results: %s", setErr.Error())), false, attempt, maxAttempts)
 			continue
 		}
 
@@ -377,8 +379,13 @@ func runScanForDigestInProcess(ctx context.Context, digest string, attempt, maxA
 		return NewNonRetryableError(fmt.Errorf("RunScanForDigest called but no SBOMs found for digest %s", digest))
 	}
 
+	scanGenerationID, err := securerandom.Hex(24)
+	if err != nil {
+		return fmt.Errorf("failed to generate scan generation ID: %w", err)
+	}
+
 	for _, s := range storedSBOMs {
-		if err := externalimage.SetScanStatusRunning(ctx, digest, s.Arch); err != nil {
+		if err := externalimage.SetScanStatusRunning(ctx, digest, s.Arch, scanGenerationID); err != nil {
 			logger.Warn("failed to set scan status to running", zap.String("digest", digest), zap.String("arch", s.Arch), zap.Error(err), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", true))
 		}
 	}
@@ -391,12 +398,12 @@ func runScanForDigestInProcess(ctx context.Context, digest string, attempt, maxA
 		}
 		scanErr := externalimage.NewScanFailureError(externalimage.ErrScanExecutionFailed, err.Error())
 		for _, s := range storedSBOMsForFail {
-			recordScanFailure(ctx, digest, s.Arch, scanErr, false, attempt, maxAttempts)
+			recordScanFailure(ctx, digest, s.Arch, scanGenerationID, scanErr, false, attempt, maxAttempts)
 		}
 		return nil
 	}
 
-	successArchs, err := storeScanResults(ctx, digest, scanResults, attempt, maxAttempts)
+	successArchs, err := storeScanResults(ctx, digest, scanGenerationID, scanResults, attempt, maxAttempts)
 	if err != nil {
 		logger.Warn("all architectures failed to store scan results; failures recorded, not retrying",
 			zap.String("digest", digest),
@@ -410,7 +417,7 @@ func runScanForDigestInProcess(ctx context.Context, digest string, attempt, maxA
 	allExpectedArchsGotScanResults := true
 	for _, sbom := range storedSBOMs {
 		if _, hasResult := scanResults[sbom.Arch]; !hasResult {
-			recordScanFailure(ctx, digest, sbom.Arch, externalimage.NewScanFailureError(externalimage.ErrNoScanResultForArch, fmt.Sprintf("scan did not return results for this architecture: %s", sbom.Arch)), false, attempt, maxAttempts)
+			recordScanFailure(ctx, digest, sbom.Arch, scanGenerationID, externalimage.NewScanFailureError(externalimage.ErrNoScanResultForArch, fmt.Sprintf("scan did not return results for this architecture: %s", sbom.Arch)), false, attempt, maxAttempts)
 			allExpectedArchsGotScanResults = false
 		}
 	}
@@ -438,11 +445,12 @@ func recordSBOMFailure(ctx context.Context, digest string, reason error, retryab
 }
 
 // recordScanFailure records scan failure in the DB and increments the failed metric only for non-retryable failures.
-func recordScanFailure(ctx context.Context, digest, arch string, reason error, retryable bool, attempt, maxAttempts int) {
+func recordScanFailure(ctx context.Context, digest, arch, scanGenerationID string, reason error, retryable bool, attempt, maxAttempts int) {
 	logger.Warn("scan failed", zap.String("digest", digest), zap.String("arch", arch), zap.Error(reason), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", retryable))
 	if recordErr := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
 		Digest:            digest,
 		Arch:              arch,
+		ScanGenerationID:  scanGenerationID,
 		Status:            externalimage.ScanStatusFailed,
 		ScanStatusMessage: reason.Error(),
 	}); recordErr != nil {

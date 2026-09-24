@@ -46,6 +46,14 @@ func parsedResultsDetailsKey(digest, arch string) string {
 	return fmt.Sprintf("%s/%s/parsed_results_details.json.gz", stripDigestAlgo(digest), arch)
 }
 
+func generationRawResultKey(digest, arch, generationID string) string {
+	return fmt.Sprintf("%s/%s/scan-generations/%s/raw_result.json.gz", stripDigestAlgo(digest), arch, generationID)
+}
+
+func generationParsedResultsDetailsKey(digest, arch, generationID string) string {
+	return fmt.Sprintf("%s/%s/scan-generations/%s/parsed_results_details.json.gz", stripDigestAlgo(digest), arch, generationID)
+}
+
 func sbomKey(digest, arch string) string {
 	return fmt.Sprintf("%s/%s/sbom.json.gz", stripDigestAlgo(digest), arch)
 }
@@ -95,6 +103,10 @@ func (s *blobStore) putParsedResultsDetails(ctx context.Context, digest, arch, d
 	return s.client.PutObject(ctx, parsedResultsDetailsKey(digest, arch), bytes.NewReader(compressed))
 }
 
+func (s *blobStore) putCompressed(ctx context.Context, key string, data []byte) error {
+	return s.client.PutObject(ctx, key, bytes.NewReader(data))
+}
+
 func (s *blobStore) putSBOM(ctx context.Context, digest, arch, data string) error {
 	compressed, err := gzipData(data)
 	if err != nil {
@@ -119,6 +131,14 @@ func (s *blobStore) getParsedResultsDetails(ctx context.Context, digest, arch st
 		return "", err
 	}
 	return gunzipData(data)
+}
+
+func (s *blobStore) getCompressed(ctx context.Context, key string) ([]byte, error) {
+	return s.client.GetObjectData(ctx, key)
+}
+
+func (s *blobStore) delete(ctx context.Context, key string) error {
+	return s.client.DeleteObject(ctx, key)
 }
 
 func (s *blobStore) getSBOM(ctx context.Context, digest, arch string) (string, error) {

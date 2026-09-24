@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"path/filepath"
 	"testing"
@@ -184,9 +186,12 @@ func TestExternalImageScanStatusTransitions(t *testing.T) {
 
 	t.Run("Successful metadata rolls back when freshness cannot be published", func(t *testing.T) {
 		missingSBOMDigest := "sha256:test-missing-sbom-1234567890123456789012345678901234"
+		generationID := "missing-sbom-generation"
+		require.NoError(t, externalimage.SetScanStatusRunning(ctx, missingSBOMDigest, "x86_64", generationID))
 		err := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
 			Digest:               missingSBOMDigest,
 			Arch:                 "x86_64",
+			ScanGenerationID:     generationID,
 			Status:               externalimage.ScanStatusSucceeded,
 			ParsedResults:        `{"total":0}`,
 			ParsedResultsDetails: `{"counts":{"total":0}}`,
@@ -197,11 +202,15 @@ func TestExternalImageScanStatusTransitions(t *testing.T) {
 
 		conn := persistence.MustGetPooledPostgresSession(ctx)
 		defer conn.Release()
-		var count int
+		var status string
+		var selectedGeneration, parsedResults *string
 		require.NoError(t, conn.QueryRow(ctx,
-			`SELECT COUNT(*) FROM external_image_scan WHERE digest = $1`,
-			missingSBOMDigest).Scan(&count))
-		assert.Zero(t, count, "scan metadata should roll back with the failed freshness update")
+			`SELECT status, selected_scan_generation_id, parsed_results
+			 FROM external_image_scan WHERE digest = $1 AND arch = 'x86_64'`,
+			missingSBOMDigest).Scan(&status, &selectedGeneration, &parsedResults))
+		assert.Equal(t, "running", status, "successful status should roll back with the failed freshness update")
+		assert.Nil(t, selectedGeneration, "candidate must not become selected")
+		assert.Nil(t, parsedResults, "compact counts must not publish")
 	})
 }
 
@@ -749,8 +758,23 @@ func TestExternalImageScanBlobUpload(t *testing.T) {
 		require.Len(t, scanStatuses, 1)
 		assert.Equal(t, "succeeded", scanStatuses[0].Status)
 
-		// Verify raw_result.json.gz exists in object storage
-		rawResultKey := "test-blob-upload-digest-12345678901234567890123456/x86_64/raw_result.json.gz"
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		defer conn.Release()
+		var selectedGeneration, rawResultKey, parsedDetailsKey string
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT scan.selected_scan_generation_id,
+			       generation.raw_object_key,
+			       generation.details_object_key
+			FROM external_image_scan scan
+			JOIN external_image_scan_generation generation
+			  ON generation.generation_id = scan.selected_scan_generation_id
+			 AND generation.digest = scan.digest
+			 AND generation.arch = scan.arch
+			WHERE scan.digest = $1 AND scan.arch = 'x86_64'
+		`, testDigest).Scan(&selectedGeneration, &rawResultKey, &parsedDetailsKey))
+		assert.NotEmpty(t, selectedGeneration)
+
+		// Verify generation-specific raw_result.json.gz exists in object storage
 		getOutput, err := minioStorage.S3Client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String("image-scans"),
 			Key:    aws.String(rawResultKey),
@@ -772,8 +796,7 @@ func TestExternalImageScanBlobUpload(t *testing.T) {
 		assert.Equal(t, rawScanResult, string(decompressed),
 			"decompressed raw_result should match the original scan result")
 
-		// Verify parsed_results_details.json.gz exists in object storage
-		parsedDetailsKey := "test-blob-upload-digest-12345678901234567890123456/x86_64/parsed_results_details.json.gz"
+		// Verify generation-specific parsed_results_details.json.gz exists in object storage
 		getOutput2, err := minioStorage.S3Client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String("image-scans"),
 			Key:    aws.String(parsedDetailsKey),
@@ -792,6 +815,203 @@ func TestExternalImageScanBlobUpload(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, string(decompressed2), "parsed_results_details should not be empty")
 	})
+}
+
+func TestExternalImageScanGenerationPublication(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr, filepath.Join(projectRoot, "db", "schema", "tables"), false))
+
+	ctx, minioStorage := setupMinIOOverrides(ctx, t, testDB.ConnStr)
+	defer testutil.TeardownMinIO(ctx, t, minioStorage)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	const arch = "x86_64"
+	digest := "sha256:generation-publication-123456789012345678901234567890"
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	_, err = conn.Exec(ctx, `
+		INSERT INTO external_image_sbom (digest, arch, source, created_at, is_in_object_store)
+		VALUES ($1, $2, 'syft', NOW(), false)
+	`, digest, arch)
+	conn.Release()
+	require.NoError(t, err)
+
+	type selectedResult struct {
+		generationID string
+		counts       string
+		raw          string
+		details      string
+		available    bool
+	}
+	fetchObject := func(key string) string {
+		output, err := minioStorage.S3Client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String("image-scans"),
+			Key:    aws.String(key),
+		})
+		require.NoError(t, err)
+		defer output.Body.Close()
+		compressed, err := io.ReadAll(output.Body)
+		require.NoError(t, err)
+		reader, err := gzip.NewReader(bytes.NewReader(compressed))
+		require.NoError(t, err)
+		defer reader.Close()
+		payload, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		return string(payload)
+	}
+	readSelected := func(targetDigest string) selectedResult {
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		defer conn.Release()
+		var result selectedResult
+		var generationID, counts, rawKey, detailsKey *string
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT scan.selected_scan_generation_id, scan.parsed_results,
+			       scan.is_in_object_store,
+			       generation.raw_object_key, generation.details_object_key
+			FROM external_image_scan scan
+			LEFT JOIN external_image_scan_generation generation
+			  ON generation.generation_id = scan.selected_scan_generation_id
+			 AND generation.digest = scan.digest
+			 AND generation.arch = scan.arch
+			WHERE scan.digest = $1 AND scan.arch = $2
+		`, targetDigest, arch).Scan(&generationID, &counts, &result.available, &rawKey, &detailsKey))
+		if generationID != nil {
+			result.generationID = *generationID
+		}
+		if counts != nil {
+			result.counts = *counts
+		}
+		if rawKey != nil {
+			result.raw = fetchObject(*rawKey)
+		}
+		if detailsKey != nil {
+			result.details = fetchObject(*detailsKey)
+		}
+		return result
+	}
+	publish := func(callCtx context.Context, targetDigest, generationID, marker string, count int) error {
+		matches := make([]map[string]any, count)
+		for i := range matches {
+			matches[i] = map[string]any{"id": fmt.Sprintf("%s-%d", marker, i)}
+		}
+		rawJSON, err := json.Marshal(map[string]any{"marker": marker, "matches": matches})
+		if err != nil {
+			return err
+		}
+		return externalimage.SetExternalImageScanStatus(callCtx, externalimage.SetExternalImageScanStatusParams{
+			Digest:               targetDigest,
+			Arch:                 arch,
+			ScanGenerationID:     generationID,
+			Status:               externalimage.ScanStatusSucceeded,
+			ParsedResults:        fmt.Sprintf(`{"total":%d}`, count),
+			ParsedResultsDetails: fmt.Sprintf(`{"marker":%q,"counts":{"total":%d}}`, marker, count),
+			RawResult:            string(rawJSON),
+		})
+	}
+	assertGenerationConsistent := func(result selectedResult, marker string, count int) {
+		var compact struct {
+			Total int `json:"total"`
+		}
+		var raw struct {
+			Marker  string           `json:"marker"`
+			Matches []map[string]any `json:"matches"`
+		}
+		var details struct {
+			Marker string `json:"marker"`
+			Counts struct {
+				Total int `json:"total"`
+			} `json:"counts"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(result.counts), &compact))
+		require.NoError(t, json.Unmarshal([]byte(result.raw), &raw))
+		require.NoError(t, json.Unmarshal([]byte(result.details), &details))
+		assert.Equal(t, marker, raw.Marker)
+		assert.Equal(t, marker, details.Marker)
+		assert.Equal(t, count, len(raw.Matches), "raw-derived count must match the selected generation")
+		assert.Equal(t, count, details.Counts.Total, "detailed count must match the selected generation")
+		assert.Equal(t, count, compact.Total, "PostgreSQL count must match the selected generation")
+	}
+
+	require.NoError(t, externalimage.SetScanStatusRunning(ctx, digest, arch, "generation-a"))
+	require.NoError(t, publish(ctx, digest, "generation-a", "A", 1))
+	resultA := readSelected(digest)
+	require.Equal(t, "generation-a", resultA.generationID)
+	assertGenerationConsistent(resultA, "A", 1)
+	require.True(t, resultA.available)
+
+	failureStages := []externalimage.ScanPublicationFailureStage{
+		externalimage.ScanPublicationFailureBeforeRawUpload,
+		externalimage.ScanPublicationFailureBetweenUploads,
+		externalimage.ScanPublicationFailureValidation,
+		externalimage.ScanPublicationFailureSelection,
+	}
+	for _, stage := range failureStages {
+		t.Run(string(stage), func(t *testing.T) {
+			generationID := "generation-b-" + string(stage)
+			require.NoError(t, externalimage.SetScanStatusRunning(ctx, digest, arch, generationID))
+			failedCtx := externalimage.WithScanPublicationFailure(ctx, stage)
+			require.Error(t, publish(failedCtx, digest, generationID, "B", 2))
+
+			current := readSelected(digest)
+			assert.Equal(t, resultA.generationID, current.generationID)
+			assert.JSONEq(t, resultA.counts, current.counts)
+			assert.JSONEq(t, resultA.raw, current.raw)
+			assert.JSONEq(t, resultA.details, current.details)
+			assert.True(t, current.available)
+		})
+	}
+
+	firstDigest := "sha256:first-generation-publication-123456789012345678901234567"
+	conn = persistence.MustGetPooledPostgresSession(ctx)
+	_, err = conn.Exec(ctx, `
+		INSERT INTO external_image_sbom (digest, arch, source, created_at, is_in_object_store)
+		VALUES ($1, $2, 'syft', NOW(), false)
+	`, firstDigest, arch)
+	conn.Release()
+	require.NoError(t, err)
+	require.NoError(t, externalimage.SetScanStatusRunning(ctx, firstDigest, arch, "first-generation"))
+	failedCtx := externalimage.WithScanPublicationFailure(ctx, externalimage.ScanPublicationFailureBetweenUploads)
+	require.Error(t, publish(failedCtx, firstDigest, "first-generation", "FIRST", 3))
+	firstResult := readSelected(firstDigest)
+	assert.Empty(t, firstResult.generationID)
+	assert.Empty(t, firstResult.counts)
+	assert.Empty(t, firstResult.raw)
+	assert.Empty(t, firstResult.details)
+	assert.False(t, firstResult.available)
+
+	require.NoError(t, externalimage.SetScanStatusRunning(ctx, digest, arch, "generation-old"))
+	selectionFailureCtx := externalimage.WithScanPublicationFailure(ctx, externalimage.ScanPublicationFailureSelection)
+	require.Error(t, publish(selectionFailureCtx, digest, "generation-old", "OLD", 4))
+	require.NoError(t, externalimage.SetScanStatusRunning(ctx, digest, arch, "generation-new"))
+	require.NoError(t, publish(ctx, digest, "generation-new", "NEW", 5))
+	require.ErrorIs(t, publish(ctx, digest, "generation-old", "OLD", 4), externalimage.ErrStaleScanGeneration)
+	current := readSelected(digest)
+	assert.Equal(t, "generation-new", current.generationID)
+	assertGenerationConsistent(current, "NEW", 5)
+
+	// Even corrupted cleanup metadata cannot make the selected generation eligible.
+	conn = persistence.MustGetPooledPostgresSession(ctx)
+	_, err = conn.Exec(ctx, `
+		UPDATE external_image_scan_generation
+		SET state = 'failed', cleanup_after = NOW() - INTERVAL '1 minute'
+		WHERE generation_id = 'generation-new' AND digest = $1 AND arch = $2
+	`, digest, arch)
+	conn.Release()
+	require.NoError(t, err)
+	require.NoError(t, externalimage.CleanupExternalImageScanCandidates(ctx, 100))
+	current = readSelected(digest)
+	assert.Equal(t, "generation-new", current.generationID)
+	assertGenerationConsistent(current, "NEW", 5)
 }
 
 // Helper functions

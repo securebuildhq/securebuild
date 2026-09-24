@@ -63,6 +63,14 @@ async function getObjectKey(digest: string, arch: string, filename: string): Pro
   return `${prefix}${stripDigestAlgo(digest)}/${arch}/${filename}`;
 }
 
+async function qualifyObjectKey(key: string): Promise<string> {
+  const folder = await getDynamicFolder();
+  if (!folder || key.startsWith(`${folder}/`)) {
+    return key;
+  }
+  return `${folder}/${key}`;
+}
+
 async function fetchAndDecompress(key: string, bucket: string): Promise<string> {
   const client = await getS3Client();
   const response = await client.send(new GetObjectCommand({
@@ -97,6 +105,12 @@ export async function getParsedResultsDetails(digest: string, arch: string): Pro
   const bucket = await getParam('R2_IMAGE_SCANS_BUCKET_NAME');
   const key = await getObjectKey(digest, arch, 'parsed_results_details.json.gz');
   return fetchAndDecompress(key, bucket);
+}
+
+/** Fetches a generation-specific scan object using the relative key stored in PostgreSQL. */
+export async function getScanResultObject(key: string): Promise<string> {
+  const bucket = await getParam('R2_IMAGE_SCANS_BUCKET_NAME');
+  return fetchAndDecompress(await qualifyObjectKey(key), bucket);
 }
 
 export async function getSBOM(digest: string, arch: string): Promise<string> {

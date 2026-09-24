@@ -54,6 +54,43 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(res.headers.get('X-SecureBuild-Architecture')).toBe('amd64');
     });
 
+    it('reads generation-specific raw and parsed documents for the selected generation', async () => {
+      const parsedRes = await env.client.get(
+        `/api/v1/external-image/scan?digest=${encodeURIComponent(digest())}&arch=arm64&format=parsed`,
+      );
+      expect(parsedRes.status).toBe(200);
+      expect(parsedRes.data.counts.total).toBe(1);
+      expect(Array.isArray(parsedRes.data.vulnerability_details)).toBe(true);
+
+      const rawRes = await env.client.get(
+        `/api/v1/external-image/scan?digest=${encodeURIComponent(digest())}&arch=arm64&format=raw`,
+      );
+      expect(rawRes.status).toBe(200);
+      expect(Array.isArray(rawRes.data.matches)).toBe(true);
+      expect(rawRes.data.descriptor.name).toBe('grype');
+    });
+
+    it('reads the selected generation through the batch endpoint', async () => {
+      const parsedRes = await env.client.post('/api/v1/external-image/scan', {
+        digests: [digest()],
+        arch: 'arm64',
+        format: 'parsed',
+      });
+      expect(parsedRes.status).toBe(200);
+      expect(parsedRes.data[0].not_found).toBe(false);
+      expect(parsedRes.data[0].result.counts.total).toBe(1);
+
+      const rawRes = await env.client.post('/api/v1/external-image/scan', {
+        digests: [digest()],
+        arch: 'arm64',
+        format: 'raw',
+      });
+      expect(rawRes.status).toBe(200);
+      expect(rawRes.data[0].not_found).toBe(false);
+      expect(Array.isArray(rawRes.data[0].result.matches)).toBe(true);
+      expect(rawRes.data[0].result.descriptor.name).toBe('grype');
+    });
+
     it('POST /scan {digests} returns array with expected shape', async () => {
       const res = await env.client.post('/api/v1/external-image/scan', {
         digests: [digest()],

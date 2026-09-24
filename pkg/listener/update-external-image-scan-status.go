@@ -175,11 +175,12 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 	// completed scan dir, include grype-scan.json and grype.stderr for
 	// every arch that has an exit_code file (i.e., grype finished).
 	type archResult struct {
-		digest    string
-		arch      string
-		exitCode  int
-		grypePath string
-		stderrRel string
+		digest           string
+		arch             string
+		scanGenerationID string
+		exitCode         int
+		grypePath        string
+		stderrRel        string
 	}
 	var results []archResult
 	var tarRelPaths []string
@@ -204,11 +205,12 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 			stderrRel := filepath.Join(relDir, arch, "output", "grype.stderr")
 			tarRelPaths = append(tarRelPaths, grypeRel, stderrRel)
 			results = append(results, archResult{
-				digest:    sd.Metadata.Digest,
-				arch:      arch,
-				exitCode:  exitCode,
-				grypePath: grypeRel,
-				stderrRel: stderrRel,
+				digest:           sd.Metadata.Digest,
+				arch:             arch,
+				scanGenerationID: sd.Metadata.ScanGenerationID,
+				exitCode:         exitCode,
+				grypePath:        grypeRel,
+				stderrRel:        stderrRel,
 			})
 		}
 	}
@@ -260,19 +262,19 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 
 		if r.exitCode == 0 {
 			if strings.TrimSpace(grypeJSON) == "" {
-				recordScanFailure(ctx, r.digest, r.arch,
+				recordScanFailure(ctx, r.digest, r.arch, r.scanGenerationID,
 					externalimage.NewScanFailureError(externalimage.ErrParseScanResult,
 						"grype JSON result is empty"),
 					false, 0, 0)
 				logger.Warn("grype JSON result is empty",
 					zap.String("digest", r.digest),
 					zap.String("arch", r.arch))
-			} else if err := storeBuilderScanResult(ctx, r.digest, r.arch, grypeJSON); err != nil {
+			} else if err := storeBuilderScanResult(ctx, r.digest, r.arch, r.scanGenerationID, grypeJSON); err != nil {
 				logger.Warn("failed to store scan result",
 					zap.String("digest", r.digest),
 					zap.String("arch", r.arch),
 					zap.Error(err))
-				recordScanFailure(ctx, r.digest, r.arch, err, false, 0, 0)
+				recordScanFailure(ctx, r.digest, r.arch, r.scanGenerationID, err, false, 0, 0)
 			} else {
 				logger.Info("stored scan result",
 					zap.String("digest", r.digest),
@@ -289,7 +291,7 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 			if stderr != "" {
 				msg = fmt.Sprintf("grype exited with code %d: %s", r.exitCode, stderr)
 			}
-			recordScanFailure(ctx, r.digest, r.arch,
+			recordScanFailure(ctx, r.digest, r.arch, r.scanGenerationID,
 				externalimage.NewScanFailureError(externalimage.ErrScanExecutionFailed, msg),
 				false, 0, 0)
 			logger.Warn("scan failed",
@@ -420,7 +422,7 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 			}
 
 			if exitCode == 0 {
-				err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch)
+				err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch, sd.Metadata.ScanGenerationID)
 				if err != nil {
 					if errors.Is(err, builder.ErrSSH) {
 						logger.Warn("transient SSH error reading grype result, will retry next cycle",
@@ -433,13 +435,13 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 							zap.String("digest", digest),
 							zap.String("arch", arch),
 							zap.Error(err))
-						recordScanFailure(ctx, digest, arch, err, false, 0, 0)
+						recordScanFailure(ctx, digest, arch, sd.Metadata.ScanGenerationID, err, false, 0, 0)
 					}
 				} else {
 					successArchs = append(successArchs, arch)
 				}
 			} else {
-				handleFailedScan(ctx, runner, sd.WorkDir, digest, arch, exitCode)
+				handleFailedScan(ctx, runner, sd.WorkDir, digest, arch, sd.Metadata.ScanGenerationID, exitCode)
 			}
 		} else {
 			age := now.Sub(sd.Metadata.CreatedAt)
@@ -451,7 +453,7 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 					zap.Duration("timeout", scan.ScanTimeout))
 				killGrypeProcess(ctx, runner, sd.WorkDir, arch)
 				writeExitCode(ctx, runner, sd.WorkDir, arch, 124)
-				handleFailedScan(ctx, runner, sd.WorkDir, digest, arch, 124)
+				handleFailedScan(ctx, runner, sd.WorkDir, digest, arch, sd.Metadata.ScanGenerationID, 124)
 				status.Done = true
 				status.ExitCode = "124"
 			} else {
@@ -478,7 +480,7 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 //     without marking the scan as failed or cleaning up the scan dir.
 //   - All other errors (permanent): the caller should call recordScanFailure
 //     and clean up the scan dir.
-func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string) error {
+func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch, scanGenerationID string) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.handle_successful_scan")
 	defer span.Finish()
 
@@ -493,7 +495,7 @@ func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workD
 			"grype JSON result is empty")
 	}
 
-	if err := storeBuilderScanResult(ctx, digest, arch, grypeJSON); err != nil {
+	if err := storeBuilderScanResult(ctx, digest, arch, scanGenerationID, grypeJSON); err != nil {
 		return err
 	}
 
@@ -505,7 +507,7 @@ func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workD
 
 // handleFailedScan reads the grype stderr and records the scan failure.
 // Grype failures are non-retryable (same SBOM gives same result).
-func handleFailedScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string, exitCode int) {
+func handleFailedScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch, scanGenerationID string, exitCode int) {
 	span, ctx := telemetry.StartSpan(ctx, "listener.handle_failed_scan")
 	defer span.Finish()
 
@@ -520,7 +522,7 @@ func handleFailedScan(ctx context.Context, runner buildbackend.Runner, workDir, 
 		msg = fmt.Sprintf("grype exited with code %d: %s", exitCode, stderr)
 	}
 
-	recordScanFailure(ctx, digest, arch,
+	recordScanFailure(ctx, digest, arch, scanGenerationID,
 		externalimage.NewScanFailureError(externalimage.ErrScanExecutionFailed, msg),
 		false, 0, 0)
 
