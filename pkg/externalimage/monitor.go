@@ -19,6 +19,9 @@ func StartMonitor(ctx context.Context) error {
 	// Run initial check immediately
 	go func() {
 		if err := checkTagsForUpdatedDigests(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			logger.Errorf("failed to check tags for updated digests: %s", err)
 		}
 	}()
@@ -29,6 +32,9 @@ func StartMonitor(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			if err := checkTagsForUpdatedDigests(ctx); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				logger.Errorf("failed to check tags for updated digests: %s", err)
 			}
 		}
@@ -44,10 +50,16 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 	for _, externalImage := range externalImages {
 		username, password, err := GetExternalImageCredentials(ctx, externalImage.TeamID, externalImage.Registry, externalImage.ImageName)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			logger.Info("failed to get credentials", zap.String("registry", externalImage.Registry), zap.String("image_name", externalImage.ImageName), zap.Error(err))
 			// Update next_check_digest_at for all tags of this image to delay retry by 24 hours
 			nextCheck := time.Now().Add(time.Hour * 24).UTC()
 			if err := UpdateExternalImageTagNextCheckDigestAt(ctx, externalImage.Registry, externalImage.ImageName, externalImage.Tags, nextCheck); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				logger.Warn("failed to update next check digest time", zap.String("registry", externalImage.Registry), zap.String("image_name", externalImage.ImageName), zap.Error(err))
 			}
 			continue
@@ -60,10 +72,16 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 		for _, tag := range externalImage.Tags {
 			currentDigest, err := GetImageDigest(ctx, externalImage.Registry, externalImage.ImageName, tag, username, password)
 			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				logger.Info("failed to get digest", zap.String("registry", externalImage.Registry), zap.String("image_name", externalImage.ImageName), zap.String("tag", tag), zap.Error(err))
 				// Update next_check_digest_at for this specific tag to delay retry by 24 hours
 				nextCheck := time.Now().Add(time.Hour * 24).UTC()
 				if err := UpdateExternalImageTagNextCheckDigestAt(ctx, externalImage.Registry, externalImage.ImageName, []string{tag}, nextCheck); err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
 					logger.Warn("failed to update next check digest time", zap.String("registry", externalImage.Registry), zap.String("image_name", externalImage.ImageName), zap.String("tag", tag), zap.Error(err))
 				}
 				continue
@@ -91,6 +109,9 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 				// Do not enqueue duplicate SBOM work if SBOM already exists for this digest.
 				hasExisting, err := HasExistingSBOM(ctx, currentDigest)
 				if err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
 					logger.Warnf("failed to check for existing SBOM for digest %s: %s", currentDigest, err.Error())
 					// If for some reason we fail to check, we will enqueue
 					// the work as a safety net as hasExisting will be false.

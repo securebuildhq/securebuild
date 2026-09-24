@@ -1,4 +1,4 @@
-import { getDB } from "../data/db";
+import { getDB, withTransaction } from "../data/db";
 import { getParam } from "../data/param";
 import * as srs from "secure-random-string";
 import { PoolClient } from "pg";
@@ -73,11 +73,9 @@ export async function enqueueExternalImageSBOMWork(
   payload: QueuePayload,
   digest: string,
 ): Promise<string | null> {
-  const pool = getDB(await getParam("DB_URI"));
-  const client = await pool.connect();
+  const db = getDB(await getParam("DB_URI"));
 
-  try {
-    await client.query('BEGIN');
+  return withTransaction(db, async (client) => {
     await client.query(
       `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
       [`external_image_sbom:${digest}`],
@@ -105,13 +103,11 @@ export async function enqueueExternalImageSBOMWork(
       [digest],
     );
     if (existing.rows[0]?.blocked === true) {
-      await client.query('COMMIT');
       return null;
     }
 
     const id = await enqueueUniqueWork('external_image_sbom', payload, digest, client);
     if (id === null) {
-      await client.query('COMMIT');
       return null;
     }
 
@@ -128,14 +124,8 @@ export async function enqueueExternalImageSBOMWork(
       [digest, now],
     );
 
-    await client.query('COMMIT');
     return id;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export interface WorkStatus {
