@@ -495,6 +495,31 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 	defer tx.Rollback(ctx)
 
 	if params.ScanGenerationID != "" {
+		var currentGeneration string
+		var selectedGeneration sql.NullString
+		var currentStatus string
+		err := tx.QueryRow(ctx, `
+			SELECT COALESCE(current_scan_generation_id, ''), selected_scan_generation_id, status
+			FROM external_image_scan
+			WHERE digest = $1 AND arch = $2
+			FOR UPDATE
+		`, params.Digest, params.Arch).Scan(&currentGeneration, &selectedGeneration, &currentStatus)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				return fmt.Errorf("%w: no scan row exists for %s/%s", ErrStaleScanGeneration, params.Digest, params.Arch)
+			}
+			return fmt.Errorf("failed to lock scan status for digest %s, arch %s: %w", params.Digest, params.Arch, err)
+		}
+		if currentGeneration != params.ScanGenerationID {
+			return fmt.Errorf("%w: generation %s cannot update status for %s/%s", ErrStaleScanGeneration, params.ScanGenerationID, params.Digest, params.Arch)
+		}
+		if selectedGeneration.Valid && selectedGeneration.String == params.ScanGenerationID && currentStatus == string(ScanStatusSucceeded) {
+			if err := tx.Commit(ctx); err != nil {
+				return fmt.Errorf("failed to commit idempotent scan status for digest %s, arch %s: %w", params.Digest, params.Arch, err)
+			}
+			return nil
+		}
+
 		result, err := tx.Exec(ctx, `
 			UPDATE external_image_scan
 			SET status = $4,

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,6 +28,13 @@ const (
 )
 
 type scanPublicationFailureContextKey struct{}
+type scanPublicationPauseContextKey struct{}
+
+type scanPublicationPause struct {
+	stage   ScanPublicationFailureStage
+	reached chan<- struct{}
+	resume  <-chan struct{}
+}
 
 // WithScanPublicationFailure returns a context that fails publication at a
 // named stage. It is intended for integration tests and is context-local so
@@ -35,7 +43,30 @@ func WithScanPublicationFailure(ctx context.Context, stage ScanPublicationFailur
 	return context.WithValue(ctx, scanPublicationFailureContextKey{}, stage)
 }
 
+// WithScanPublicationPause returns a context that pauses publication at a
+// named stage until resume is closed or receives a value. It is intended for
+// integration tests that need to synchronize concurrent publishers.
+func WithScanPublicationPause(ctx context.Context, stage ScanPublicationFailureStage, reached chan<- struct{}, resume <-chan struct{}) context.Context {
+	return context.WithValue(ctx, scanPublicationPauseContextKey{}, scanPublicationPause{
+		stage:   stage,
+		reached: reached,
+		resume:  resume,
+	})
+}
+
 func injectScanPublicationFailure(ctx context.Context, stage ScanPublicationFailureStage) error {
+	if pause, ok := ctx.Value(scanPublicationPauseContextKey{}).(scanPublicationPause); ok && pause.stage == stage {
+		select {
+		case pause.reached <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		select {
+		case <-pause.resume:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if configured, ok := ctx.Value(scanPublicationFailureContextKey{}).(ScanPublicationFailureStage); ok && configured == stage {
 		return fmt.Errorf("injected scan publication failure at %s", stage)
 	}
@@ -171,8 +202,13 @@ func ensureScanCandidate(ctx context.Context, candidate *scanCandidate) error {
 	if err != nil {
 		return fmt.Errorf("failed to read scan publication candidate: %w", err)
 	}
-	if stored.state == "deleting" ||
-		stored.raw.key != candidate.raw.key || stored.raw.size != candidate.raw.size || stored.raw.sha256 != candidate.raw.sha256 ||
+	if stored.state == "deleting" {
+		return fmt.Errorf("%w: generation %s is being deleted", ErrInvalidScanCandidate, candidate.generationID)
+	}
+	if stored.state == "superseded" {
+		return fmt.Errorf("%w: generation %s has already been superseded", ErrStaleScanGeneration, candidate.generationID)
+	}
+	if stored.raw.key != candidate.raw.key || stored.raw.size != candidate.raw.size || stored.raw.sha256 != candidate.raw.sha256 ||
 		stored.details.key != candidate.details.key || stored.details.size != candidate.details.size || stored.details.sha256 != candidate.details.sha256 {
 		return fmt.Errorf("%w: generation %s was reused with different object metadata", ErrInvalidScanCandidate, candidate.generationID)
 	}
@@ -202,11 +238,12 @@ func validateStoredScanArtifact(ctx context.Context, store scanObjectStore, arti
 	return nil
 }
 
-func markScanCandidateState(ctx context.Context, candidate scanCandidate, state string) error {
+func markScanCandidateState(ctx context.Context, candidate scanCandidate, state string) (string, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	result, err := conn.Exec(ctx, `
+	var actualState string
+	err := conn.QueryRow(ctx, `
 		UPDATE external_image_scan_generation
 		SET state = $4,
 		    validated_at = CASE WHEN $4 = 'validated' THEN NOW() ELSE validated_at END,
@@ -216,57 +253,87 @@ func markScanCandidateState(ctx context.Context, candidate scanCandidate, state 
 		        ELSE COALESCE(cleanup_after, NOW() + INTERVAL '24 hours')
 		    END
 		WHERE generation_id = $1 AND digest = $2 AND arch = $3
-		  AND state != 'deleting'
-	`, candidate.generationID, candidate.digest, candidate.arch, state)
+		  AND state IN ('uploading', 'failed')
+		RETURNING state
+	`, candidate.generationID, candidate.digest, candidate.arch, state).Scan(&actualState)
+	if err == nil {
+		return actualState, nil
+	}
+	if err != pgx.ErrNoRows {
+		return "", fmt.Errorf("failed to mark scan candidate %s: %w", state, err)
+	}
+
+	err = conn.QueryRow(ctx, `
+		SELECT state
+		FROM external_image_scan_generation
+		WHERE generation_id = $1 AND digest = $2 AND arch = $3
+	`, candidate.generationID, candidate.digest, candidate.arch).Scan(&actualState)
 	if err != nil {
-		return fmt.Errorf("failed to mark scan candidate %s: %w", state, err)
+		return "", fmt.Errorf("failed to read scan candidate after rejected %s transition: %w", state, err)
 	}
-	if result.RowsAffected() != 1 {
-		return fmt.Errorf("%w: generation %s cannot transition to %s", ErrInvalidScanCandidate, candidate.generationID, state)
+	switch actualState {
+	case "validated", "selected":
+		return actualState, nil
+	case "superseded":
+		return actualState, fmt.Errorf("%w: generation %s has already been superseded", ErrStaleScanGeneration, candidate.generationID)
+	case "deleting":
+		return actualState, fmt.Errorf("%w: generation %s is being deleted", ErrInvalidScanCandidate, candidate.generationID)
+	default:
+		return actualState, fmt.Errorf("%w: generation %s in state %s cannot transition to %s", ErrInvalidScanCandidate, candidate.generationID, actualState, state)
 	}
-	return nil
+}
+
+func failScanCandidate(ctx context.Context, candidate *scanCandidate, cause error) error {
+	actualState, err := markScanCandidateState(ctx, *candidate, "failed")
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	candidate.state = actualState
+	if actualState == "validated" || actualState == "selected" {
+		return nil
+	}
+	return cause
 }
 
 func uploadAndValidateScanCandidate(ctx context.Context, candidate *scanCandidate) error {
-	if candidate.state == "validated" || candidate.state == "selected" {
+	switch candidate.state {
+	case "validated", "selected":
 		return nil
+	case "superseded":
+		return fmt.Errorf("%w: generation %s has already been superseded", ErrStaleScanGeneration, candidate.generationID)
+	case "deleting":
+		return fmt.Errorf("%w: generation %s is being deleted", ErrInvalidScanCandidate, candidate.generationID)
 	}
 	store, err := getScanObjectStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create blob store: %w", err)
 	}
 	if err := injectScanPublicationFailure(ctx, ScanPublicationFailureBeforeRawUpload); err != nil {
-		_ = markScanCandidateState(ctx, *candidate, "failed")
-		return err
+		return failScanCandidate(ctx, candidate, err)
 	}
 	if err := store.putCompressed(ctx, candidate.raw.key, candidate.raw.compressed); err != nil {
-		_ = markScanCandidateState(ctx, *candidate, "failed")
-		return fmt.Errorf("failed to upload raw_result candidate: %w", err)
+		return failScanCandidate(ctx, candidate, fmt.Errorf("failed to upload raw_result candidate: %w", err))
 	}
 	if err := injectScanPublicationFailure(ctx, ScanPublicationFailureBetweenUploads); err != nil {
-		_ = markScanCandidateState(ctx, *candidate, "failed")
-		return err
+		return failScanCandidate(ctx, candidate, err)
 	}
 	if err := store.putCompressed(ctx, candidate.details.key, candidate.details.compressed); err != nil {
-		_ = markScanCandidateState(ctx, *candidate, "failed")
-		return fmt.Errorf("failed to upload parsed_results_details candidate: %w", err)
+		return failScanCandidate(ctx, candidate, fmt.Errorf("failed to upload parsed_results_details candidate: %w", err))
 	}
 	if err := injectScanPublicationFailure(ctx, ScanPublicationFailureValidation); err != nil {
-		_ = markScanCandidateState(ctx, *candidate, "failed")
-		return err
+		return failScanCandidate(ctx, candidate, err)
 	}
 	if err := validateStoredScanArtifact(ctx, store, candidate.raw); err != nil {
-		_ = markScanCandidateState(ctx, *candidate, "failed")
-		return err
+		return failScanCandidate(ctx, candidate, err)
 	}
 	if err := validateStoredScanArtifact(ctx, store, candidate.details); err != nil {
-		_ = markScanCandidateState(ctx, *candidate, "failed")
+		return failScanCandidate(ctx, candidate, err)
+	}
+	actualState, err := markScanCandidateState(ctx, *candidate, "validated")
+	if err != nil {
 		return err
 	}
-	if err := markScanCandidateState(ctx, *candidate, "validated"); err != nil {
-		return err
-	}
-	candidate.state = "validated"
+	candidate.state = actualState
 	return nil
 }
 

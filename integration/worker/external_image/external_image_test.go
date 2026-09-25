@@ -1052,6 +1052,100 @@ func TestExternalImageScanGenerationPublication(t *testing.T) {
 	assert.Equal(t, completedBefore, completedAfter, "re-publishing the selected generation must be a no-op")
 	assert.Equal(t, scannedBefore, scannedAfter, "re-publishing the selected generation must preserve SBOM freshness")
 
+	t.Run("concurrent failure cannot downgrade a selected generation", func(t *testing.T) {
+		concurrentDigest := "sha256:concurrent-generation-123456789012345678901234567890"
+		const concurrentGeneration = "concurrent-generation"
+
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		_, err := conn.Exec(ctx, `
+			INSERT INTO external_image_sbom (digest, arch, source, created_at, is_in_object_store)
+			VALUES ($1, $2, 'syft', NOW(), false)
+		`, concurrentDigest, arch)
+		conn.Release()
+		require.NoError(t, err)
+		require.NoError(t, externalimage.SetScanStatusRunning(ctx, concurrentDigest, arch, concurrentGeneration))
+
+		reached := make(chan struct{})
+		resume := make(chan struct{})
+		defer close(resume)
+		pausedCtx := externalimage.WithScanPublicationPause(
+			externalimage.WithScanPublicationFailure(ctx, externalimage.ScanPublicationFailureBeforeRawUpload),
+			externalimage.ScanPublicationFailureBeforeRawUpload,
+			reached,
+			resume,
+		)
+		publisherResult := make(chan error, 1)
+		go func() {
+			publisherResult <- publish(pausedCtx, concurrentDigest, concurrentGeneration, "CONCURRENT", 7)
+		}()
+
+		select {
+		case <-reached:
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "timed out waiting for the first publisher to pause")
+		}
+
+		require.NoError(t, publish(ctx, concurrentDigest, concurrentGeneration, "CONCURRENT", 7))
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		var completedBeforeFailure time.Time
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT scan_completed_at
+			FROM external_image_scan
+			WHERE digest = $1 AND arch = $2
+		`, concurrentDigest, arch).Scan(&completedBeforeFailure))
+		conn.Release()
+
+		resume <- struct{}{}
+		select {
+		case err := <-publisherResult:
+			require.NoError(t, err, "a concurrent publisher must accept that its generation was already selected")
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "timed out waiting for the paused publisher to finish")
+		}
+
+		// A caller that observes a late error must also be unable to downgrade the
+		// already-selected successful scan row.
+		require.NoError(t, externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
+			Digest:            concurrentDigest,
+			Arch:              arch,
+			ScanGenerationID:  concurrentGeneration,
+			Status:            externalimage.ScanStatusFailed,
+			ScanStatusMessage: "late concurrent failure",
+		}))
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		var status, selectedGeneration, candidateState string
+		var completedAfterFailure time.Time
+		var cleanupDisabled bool
+		var statusMessage *string
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT scan.status, scan.selected_scan_generation_id, scan.scan_completed_at,
+			       scan.scan_status_message, generation.state,
+			       generation.cleanup_after IS NULL
+			FROM external_image_scan scan
+			JOIN external_image_scan_generation generation
+			  ON generation.generation_id = scan.selected_scan_generation_id
+			 AND generation.digest = scan.digest
+			 AND generation.arch = scan.arch
+			WHERE scan.digest = $1 AND scan.arch = $2
+		`, concurrentDigest, arch).Scan(
+			&status,
+			&selectedGeneration,
+			&completedAfterFailure,
+			&statusMessage,
+			&candidateState,
+			&cleanupDisabled,
+		))
+		conn.Release()
+		assert.Equal(t, string(externalimage.ScanStatusSucceeded), status)
+		assert.Equal(t, concurrentGeneration, selectedGeneration)
+		assert.Equal(t, completedBeforeFailure, completedAfterFailure)
+		assert.Nil(t, statusMessage)
+		assert.Equal(t, "selected", candidateState)
+		assert.True(t, cleanupDisabled, "a selected generation must not regain a cleanup deadline")
+		assertGenerationConsistent(readSelected(concurrentDigest), "CONCURRENT", 7)
+	})
+
 	t.Run("retried current candidate survives expired cleanup", func(t *testing.T) {
 		retryDigest := "sha256:cleanup-retry-generation-123456789012345678901234567890"
 		const retryGeneration = "cleanup-retry-generation"
