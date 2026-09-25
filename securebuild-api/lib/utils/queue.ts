@@ -12,6 +12,11 @@ interface QueuePayload {
 export const PRIORITY_NORMAL = 0
 export const PRIORITY_HIGH = 1
 
+// Syft downloads time out after 30 minutes. The extra minute lets the status
+// poller record that timeout before a later submission recovers an orphaned
+// generation. Keep this aligned with pkg/externalimage/sbom_queue.go.
+const EXTERNAL_IMAGE_SBOM_GENERATING_STALE_AFTER_MS = 31 * 60 * 1000;
+
 export async function enqueueWork(channel: string, payload: QueuePayload, client?: PoolClient): Promise<string> {
   return enqueueWorkWithPriority(channel, payload, PRIORITY_NORMAL, client)
 }
@@ -66,8 +71,8 @@ export async function enqueueUniqueWork(
 
 /**
  * Atomically creates pending external-image SBOM work unless the digest is
- * already queued, generating, or stored. A failed digest can be submitted
- * again after its previous queue item reaches a terminal state.
+ * already queued, actively generating, or stored. A failed or stale digest can
+ * be submitted again after its previous queue item is no longer active.
  */
 export async function enqueueExternalImageSBOMWork(
   payload: QueuePayload,
@@ -81,6 +86,9 @@ export async function enqueueExternalImageSBOMWork(
       [`external_image_sbom:${digest}`],
     );
 
+    const generatingCutoff = new Date(
+      Date.now() - EXTERNAL_IMAGE_SBOM_GENERATING_STALE_AFTER_MS,
+    );
     const existing = await client.query(
       `SELECT
          EXISTS (
@@ -93,14 +101,16 @@ export async function enqueueExternalImageSBOMWork(
          OR EXISTS (
            SELECT 1
            FROM external_image_sbom_status
-           WHERE digest = $1 AND status = 'generating'
+           WHERE digest = $1
+             AND status = 'generating'
+             AND COALESCE(status_updated_at, updated_at, created_at) > $2
          )
          OR EXISTS (
            SELECT 1
            FROM external_image_sbom
            WHERE digest = $1
          ) AS blocked`,
-      [digest],
+      [digest, generatingCutoff],
     );
     if (existing.rows[0]?.blocked === true) {
       return null;

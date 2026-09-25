@@ -248,7 +248,7 @@ func TestExternalImageSbomWaitsForBuilderCapacity(t *testing.T) {
 	assert.Equal(t, "waiting for builder capacity", *statuses[0].StatusMessage)
 }
 
-func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveGeneration(t *testing.T) {
+func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
@@ -289,6 +289,32 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveGeneration(t *testing.T) 
 	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)
 	require.NoError(t, err)
 	require.False(t, enqueued, "generating work must be deduplicated after dispatch completes")
+
+	_, err = testDB.Pool.Exec(ctx, `
+		UPDATE external_image_sbom_status
+		SET status_updated_at = NOW() - INTERVAL '32 minutes'
+		WHERE digest = $1
+	`, digest)
+	require.NoError(t, err)
+
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)
+	require.NoError(t, err)
+	require.True(t, enqueued, "a stale generating digest must allow recovery")
+
+	var status string
+	require.NoError(t, testDB.Pool.QueryRow(ctx, `
+		SELECT status FROM external_image_sbom_status WHERE digest = $1
+	`, digest).Scan(&status))
+	require.Equal(t, string(externalimage.SBOMStatusPending), status)
+
+	_, err = testDB.Pool.Exec(ctx, `
+		UPDATE work_queue
+		SET completed_at = NOW(), dedupe_key = NULL
+		WHERE channel = 'external_image_sbom'
+		  AND completed_at IS NULL
+		  AND payload->>'digest' = $1
+	`, digest)
+	require.NoError(t, err)
 
 	require.NoError(t, externalimage.SetSBOMStatusFailed(ctx, digest, "terminal test failure"))
 	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)

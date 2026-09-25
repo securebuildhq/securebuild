@@ -10,12 +10,19 @@ import (
 	"github.com/tuvistavie/securerandom"
 )
 
-const externalImageSBOMChannel = "external_image_sbom"
+const (
+	externalImageSBOMChannel = "external_image_sbom"
+
+	// Syft downloads time out after 30 minutes. Keep fresh generating rows
+	// deduplicated for one additional minute so the status poller can record the
+	// timeout before a later submission recovers an orphaned generation.
+	externalImageSBOMGeneratingStaleAfter = 31 * time.Minute
+)
 
 // EnqueueSBOMWork atomically creates pending SBOM work when the digest is not
-// already queued, generating, or stored. The advisory lock coordinates all
-// enqueue paths, while the queue's unique dedupe key is a final database-level
-// guard against duplicate unfinished work.
+// already queued, actively generating, or stored. The advisory lock coordinates
+// all enqueue paths, while the queue's unique dedupe key is a final
+// database-level guard against duplicate unfinished work.
 func EnqueueSBOMWork(ctx context.Context, payload, digest string) (bool, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
@@ -31,6 +38,7 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest string) (bool, error) 
 		return false, fmt.Errorf("failed to lock SBOM enqueue for digest %s: %w", digest, err)
 	}
 
+	generatingCutoff := time.Now().UTC().Add(-externalImageSBOMGeneratingStaleAfter)
 	var blocked bool
 	if err := tx.QueryRow(ctx, `
 		SELECT
@@ -44,14 +52,16 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest string) (bool, error) 
 			OR EXISTS (
 				SELECT 1
 				FROM external_image_sbom_status
-				WHERE digest = $2 AND status = $3
+				WHERE digest = $2
+				  AND status = $3
+				  AND COALESCE(status_updated_at, updated_at, created_at) > $4
 			)
 			OR EXISTS (
 				SELECT 1
 				FROM external_image_sbom
 				WHERE digest = $2
 			)
-	`, externalImageSBOMChannel, digest, string(SBOMStatusGenerating)).Scan(&blocked); err != nil {
+	`, externalImageSBOMChannel, digest, string(SBOMStatusGenerating), generatingCutoff).Scan(&blocked); err != nil {
 		return false, fmt.Errorf("failed to check existing SBOM work for digest %s: %w", digest, err)
 	}
 	if blocked {
