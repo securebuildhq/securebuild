@@ -11,6 +11,7 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	image "github.com/securebuildhq/securebuild/pkg/image"
+	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
 	"github.com/securebuildhq/securebuild/pkg/listener/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
@@ -327,8 +328,17 @@ func buildGrypeLaunchCommand(workDir, arch string) string {
 // single architecture. Returns an error if parsing, marshalling, or DB
 // storage fails. The error is wrapped in a ScanFailureError with the
 // appropriate error code for the caller to pass to recordScanFailure.
-func storeBuilderScanResult(ctx context.Context, digest, arch, scanGenerationID, scanResult string) error {
+func parseBuilderScanResultDetails(scanResult string, scanCreatedAt time.Time) (*imagetypes.ImageScanResultDetails, error) {
 	parsedResults, err := image.ParseScanResultDetails(scanResult)
+	if err != nil {
+		return nil, err
+	}
+	parsedResults.CreatedAt = scanCreatedAt.UTC()
+	return parsedResults, nil
+}
+
+func storeBuilderScanResult(ctx context.Context, digest, arch, scanGenerationID string, scanCreatedAt time.Time, scanResult string) error {
+	parsedResults, err := parseBuilderScanResultDetails(scanResult, scanCreatedAt)
 	if err != nil {
 		return externalimage.NewScanFailureError(externalimage.ErrParseScanResult,
 			fmt.Sprintf("failed to parse scan result: %s", err.Error()))

@@ -1,6 +1,7 @@
 package listener
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -33,4 +34,22 @@ func TestLegacyScanGenerationID(t *testing.T) {
 
 	status.WorkDir = "/builders/scans/sha256:other"
 	assert.NotEqual(t, first, legacyScanGenerationID(status, scanStatusArchitectures(status)))
+}
+
+func TestParseBuilderScanResultDetailsUsesGenerationTime(t *testing.T) {
+	createdAt := time.Date(2026, time.September, 25, 10, 30, 0, 123, time.UTC)
+	grypeResult := `{"matches":[],"descriptor":{"name":"grype","version":"0.95.0"}}`
+
+	first, err := parseBuilderScanResultDetails(grypeResult, createdAt)
+	require.NoError(t, err)
+	second, err := parseBuilderScanResultDetails(grypeResult, createdAt)
+	require.NoError(t, err)
+
+	firstJSON, err := json.Marshal(first)
+	require.NoError(t, err)
+	secondJSON, err := json.Marshal(second)
+	require.NoError(t, err)
+
+	assert.Equal(t, createdAt, first.CreatedAt)
+	assert.Equal(t, firstJSON, secondJSON, "re-polling the same generation must produce identical details")
 }

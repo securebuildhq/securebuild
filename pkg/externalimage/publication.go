@@ -311,6 +311,12 @@ func selectScanCandidate(ctx context.Context, params SetExternalImageScanStatusP
 	if candidateState != "validated" && candidateState != "selected" {
 		return fmt.Errorf("%w: generation %s has state %s", ErrInvalidScanCandidate, candidate.generationID, candidateState)
 	}
+	if selectedGeneration.Valid && selectedGeneration.String == candidate.generationID && candidateState == "selected" {
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("failed to commit idempotent scan generation selection: %w", err)
+		}
+		return nil
+	}
 
 	result, err := tx.Exec(ctx, `
 		UPDATE external_image_scan

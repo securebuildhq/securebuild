@@ -999,6 +999,28 @@ func TestExternalImageScanGenerationPublication(t *testing.T) {
 	assert.Equal(t, "generation-new", current.generationID)
 	assertGenerationConsistent(current, "NEW", 5)
 
+	conn = persistence.MustGetPooledPostgresSession(ctx)
+	var completedBefore, scannedBefore time.Time
+	require.NoError(t, conn.QueryRow(ctx, `
+		SELECT scan.scan_completed_at, sbom.last_security_scanned_at
+		FROM external_image_scan scan
+		JOIN external_image_sbom sbom USING (digest, arch)
+		WHERE scan.digest = $1 AND scan.arch = $2
+	`, digest, arch).Scan(&completedBefore, &scannedBefore))
+	conn.Release()
+	require.NoError(t, publish(ctx, digest, "generation-new", "NEW", 5))
+	conn = persistence.MustGetPooledPostgresSession(ctx)
+	var completedAfter, scannedAfter time.Time
+	require.NoError(t, conn.QueryRow(ctx, `
+		SELECT scan.scan_completed_at, sbom.last_security_scanned_at
+		FROM external_image_scan scan
+		JOIN external_image_sbom sbom USING (digest, arch)
+		WHERE scan.digest = $1 AND scan.arch = $2
+	`, digest, arch).Scan(&completedAfter, &scannedAfter))
+	conn.Release()
+	assert.Equal(t, completedBefore, completedAfter, "re-publishing the selected generation must be a no-op")
+	assert.Equal(t, scannedBefore, scannedAfter, "re-publishing the selected generation must preserve SBOM freshness")
+
 	t.Run("retried current candidate survives expired cleanup", func(t *testing.T) {
 		retryDigest := "sha256:cleanup-retry-generation-123456789012345678901234567890"
 		const retryGeneration = "cleanup-retry-generation"
@@ -1083,25 +1105,53 @@ func TestExternalImageScanGenerationPublication(t *testing.T) {
 
 	t.Run("pre-generation builder result is adopted and published", func(t *testing.T) {
 		legacyDigest := "sha256:legacy-builder-generation-123456789012345678901234567890"
+		const pendingArch = "aarch64"
 		conn := persistence.MustGetPooledPostgresSession(ctx)
 		_, err := conn.Exec(ctx, `
 			INSERT INTO external_image_sbom (digest, arch, source, created_at, is_in_object_store)
-			VALUES ($1, $2, 'syft', NOW(), false)
-		`, legacyDigest, arch)
+			VALUES ($1, $2, 'syft', NOW(), false),
+			       ($1, $3, 'syft', NOW(), false)
+		`, legacyDigest, arch, pendingArch)
 		require.NoError(t, err)
 		_, err = conn.Exec(ctx, `
 			INSERT INTO external_image_scan (
 				digest, arch, created_at, status, updated_at,
 				scan_attempted_at, scan_status_updated_at, is_in_object_store
 			)
-			VALUES ($1, $2, NOW(), 'running', NOW(), NOW(), NOW(), false)
-		`, legacyDigest, arch)
+			VALUES ($1, $2, NOW(), 'running', NOW(), NOW(), NOW(), false),
+			       ($1, $3, NOW(), 'running', NOW(), NOW(), NOW(), false)
+		`, legacyDigest, arch, pendingArch)
 		conn.Release()
 		require.NoError(t, err)
 
 		const legacyGeneration = "legacy-derived-generation"
-		require.NoError(t, externalimage.AdoptLegacyScanGeneration(ctx, legacyDigest, []string{arch}, legacyGeneration))
+		legacyArchs := []string{arch, pendingArch}
+		require.NoError(t, externalimage.AdoptLegacyScanGeneration(ctx, legacyDigest, legacyArchs, legacyGeneration))
 		require.NoError(t, publish(ctx, legacyDigest, legacyGeneration, "LEGACY", 6))
+		require.NoError(t, externalimage.AdoptLegacyScanGeneration(ctx, legacyDigest, legacyArchs, legacyGeneration))
+		require.ErrorIs(t,
+			externalimage.AdoptLegacyScanGeneration(ctx, legacyDigest, legacyArchs, "different-generation"),
+			externalimage.ErrStaleScanGeneration,
+		)
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		rows, err := conn.Query(ctx, `
+			SELECT arch, status, current_scan_generation_id
+			FROM external_image_scan
+			WHERE digest = $1
+		`, legacyDigest)
+		require.NoError(t, err)
+		legacyStates := make(map[string][2]string)
+		for rows.Next() {
+			var rowArch, status, generation string
+			require.NoError(t, rows.Scan(&rowArch, &status, &generation))
+			legacyStates[rowArch] = [2]string{status, generation}
+		}
+		require.NoError(t, rows.Err())
+		rows.Close()
+		conn.Release()
+		assert.Equal(t, [2]string{"succeeded", legacyGeneration}, legacyStates[arch])
+		assert.Equal(t, [2]string{"running", legacyGeneration}, legacyStates[pendingArch])
 
 		selected := readSelected(legacyDigest)
 		assert.Equal(t, legacyGeneration, selected.generationID)

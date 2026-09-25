@@ -237,9 +237,9 @@ func ClaimScanGeneration(ctx context.Context, digest string, archs []string, gen
 }
 
 // AdoptLegacyScanGeneration assigns a stable generation fence to a builder
-// scan created before generation IDs were written to scan.json. Adoption only
-// succeeds while every requested row is still running and either unclaimed or
-// already assigned to the same derived generation.
+// scan created before generation IDs were written to scan.json. An unclaimed
+// row must still be running, while a row already owned by the same derived
+// generation remains adoptable after that architecture finishes.
 func AdoptLegacyScanGeneration(ctx context.Context, digest string, archs []string, generationID string) error {
 	archs = uniqueArchitectures(archs)
 	if digest == "" || generationID == "" || len(archs) == 0 {
@@ -260,8 +260,10 @@ func AdoptLegacyScanGeneration(ctx context.Context, digest string, archs []strin
 		SET current_scan_generation_id = $3
 		WHERE digest = $1
 		  AND arch = ANY($2::text[])
-		  AND status = 'running'
-		  AND (current_scan_generation_id IS NULL OR current_scan_generation_id = $3)
+		  AND (
+		    (current_scan_generation_id IS NULL AND status = 'running')
+		    OR current_scan_generation_id = $3
+		  )
 	`, digest, archs, generationID)
 	if err != nil {
 		return fmt.Errorf("failed to adopt legacy scan generation: %w", err)

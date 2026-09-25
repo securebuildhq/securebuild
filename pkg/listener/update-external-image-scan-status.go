@@ -234,6 +234,7 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 		digest           string
 		arch             string
 		scanGenerationID string
+		scanCreatedAt    time.Time
 		exitCode         int
 		grypePath        string
 		stderrRel        string
@@ -264,6 +265,7 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 				digest:           sd.Metadata.Digest,
 				arch:             arch,
 				scanGenerationID: sd.Metadata.ScanGenerationID,
+				scanCreatedAt:    sd.Metadata.CreatedAt,
 				exitCode:         exitCode,
 				grypePath:        grypeRel,
 				stderrRel:        stderrRel,
@@ -325,7 +327,7 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 				logger.Warn("grype JSON result is empty",
 					zap.String("digest", r.digest),
 					zap.String("arch", r.arch))
-			} else if err := storeBuilderScanResult(ctx, r.digest, r.arch, r.scanGenerationID, grypeJSON); err != nil {
+			} else if err := storeBuilderScanResult(ctx, r.digest, r.arch, r.scanGenerationID, r.scanCreatedAt, grypeJSON); err != nil {
 				logger.Warn("failed to store scan result",
 					zap.String("digest", r.digest),
 					zap.String("arch", r.arch),
@@ -478,7 +480,7 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 			}
 
 			if exitCode == 0 {
-				err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch, sd.Metadata.ScanGenerationID)
+				err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch, sd.Metadata.ScanGenerationID, sd.Metadata.CreatedAt)
 				if err != nil {
 					if errors.Is(err, builder.ErrSSH) {
 						logger.Warn("transient SSH error reading grype result, will retry next cycle",
@@ -536,7 +538,7 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 //     without marking the scan as failed or cleaning up the scan dir.
 //   - All other errors (permanent): the caller should call recordScanFailure
 //     and clean up the scan dir.
-func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch, scanGenerationID string) error {
+func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch, scanGenerationID string, scanCreatedAt time.Time) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.handle_successful_scan")
 	defer span.Finish()
 
@@ -551,7 +553,7 @@ func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workD
 			"grype JSON result is empty")
 	}
 
-	if err := storeBuilderScanResult(ctx, digest, arch, scanGenerationID, grypeJSON); err != nil {
+	if err := storeBuilderScanResult(ctx, digest, arch, scanGenerationID, scanCreatedAt, grypeJSON); err != nil {
 		return err
 	}
 
