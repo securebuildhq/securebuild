@@ -514,6 +514,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 				updateConn.Exec(ctx, fmt.Sprintf(`
 				UPDATE %s
 				SET completed_at = NOW(),
+				    dedupe_key = NULL,
 				    last_error = $2
 				WHERE id = $1`, WorkQueueTable), msg.id, "max retry attempts exceeded")
 				updateConn.Release()
@@ -580,6 +581,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 						_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
 							UPDATE %s
 							SET completed_at = NOW(),
+							    dedupe_key = NULL,
 							    last_error = $2
 							WHERE id = $1`, WorkQueueTable),
 							messageID, fmt.Sprintf("scheduled retry timed out after %s: %s", retryAfter.MaxAge, retryAfter.Err))
@@ -614,6 +616,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 					_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
 						UPDATE %s
 						SET completed_at = NOW(),
+						    dedupe_key = NULL,
 						    last_error = $2
 						WHERE id = $1`, WorkQueueTable),
 						messageID, handlerErr.Error())
@@ -643,6 +646,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 			_, err = updateConn.Exec(ctx, fmt.Sprintf(`
 				UPDATE %s
 				SET completed_at = NOW(),
+				    dedupe_key = NULL,
 				    result = $2,
 				    last_error = NULL
 				WHERE id = $1`, WorkQueueTable), messageID, result)

@@ -16,6 +16,11 @@ schema:
       - completed_at
       - processing_started_at
       - created_at
+    - name: work_queue_active_dedupe_idx
+      columns:
+      - channel
+      - dedupe_key
+      isUnique: true
     columns:
     - name: id
       type: text
@@ -27,6 +32,8 @@ schema:
         notNull: true
     - name: payload
       type: jsonb
+    - name: dedupe_key
+      type: text
     - name: created_at
       type: timestamp with time zone
       constraints:
