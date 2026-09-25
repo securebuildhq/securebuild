@@ -971,6 +971,37 @@ func TestExternalImageScanGenerationPublication(t *testing.T) {
 		})
 	}
 
+	t.Run("cleanup drains more than one bulk batch", func(t *testing.T) {
+		generations := []string{
+			"generation-b-before_raw_upload",
+			"generation-b-between_uploads",
+			"generation-b-validation",
+		}
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		result, err := conn.Exec(ctx, `
+			UPDATE external_image_scan_generation
+			SET cleanup_after = NOW() - INTERVAL '1 minute'
+			WHERE digest = $1 AND arch = $2
+			  AND generation_id = ANY($3::text[])
+		`, digest, arch, generations)
+		conn.Release()
+		require.NoError(t, err)
+		require.EqualValues(t, len(generations), result.RowsAffected())
+
+		require.NoError(t, externalimage.CleanupExternalImageScanCandidates(ctx, 2))
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		var remaining int
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM external_image_scan_generation
+			WHERE digest = $1 AND arch = $2
+			  AND generation_id = ANY($3::text[])
+		`, digest, arch, generations).Scan(&remaining))
+		conn.Release()
+		assert.Zero(t, remaining)
+	})
+
 	firstDigest := "sha256:first-generation-publication-123456789012345678901234567"
 	conn = persistence.MustGetPooledPostgresSession(ctx)
 	_, err = conn.Exec(ctx, `

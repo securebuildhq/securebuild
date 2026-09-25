@@ -45,7 +45,7 @@ func injectScanPublicationFailure(ctx context.Context, stage ScanPublicationFail
 type scanObjectStore interface {
 	putCompressed(context.Context, string, []byte) error
 	getCompressed(context.Context, string) ([]byte, error)
-	delete(context.Context, string) error
+	deleteMany(context.Context, []string) error
 }
 
 type scanObjectStoreContextKey struct{}

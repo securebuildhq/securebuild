@@ -205,14 +205,25 @@ func (r *R2Client) DeleteObjects(ctx context.Context, keys []string) error {
 			}
 		}
 
-		_, err := r.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		output, err := r.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 			Bucket: aws.String(r.bucket),
 			Delete: &types.Delete{
 				Objects: objectIdentifiers,
+				Quiet:   aws.Bool(true),
 			},
 		})
 		if err != nil {
 			return fmt.Errorf("failed to delete objects from R2 bucket: %w", err)
+		}
+		if len(output.Errors) > 0 {
+			first := output.Errors[0]
+			return fmt.Errorf(
+				"failed to delete %d object(s) from R2 bucket; first error for %q: %s: %s",
+				len(output.Errors),
+				aws.ToString(first.Key),
+				aws.ToString(first.Code),
+				aws.ToString(first.Message),
+			)
 		}
 	}
 

@@ -137,8 +137,8 @@ func (s *blobStore) getCompressed(ctx context.Context, key string) ([]byte, erro
 	return s.client.GetObjectData(ctx, key)
 }
 
-func (s *blobStore) delete(ctx context.Context, key string) error {
-	return s.client.DeleteObject(ctx, key)
+func (s *blobStore) deleteMany(ctx context.Context, keys []string) error {
+	return s.client.DeleteObjects(ctx, keys)
 }
 
 func (s *blobStore) getSBOM(ctx context.Context, digest, arch string) (string, error) {
