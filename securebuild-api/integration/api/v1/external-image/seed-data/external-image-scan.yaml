@@ -84,6 +84,9 @@ seedData:
         - column: is_in_object_store
           value:
             str: "true"
+        - column: selected_scan_generation_id
+          value:
+            str: "api-generation-a"
     # Successful but stale scan used by the on-demand scan tests
     - columns:
         - column: digest

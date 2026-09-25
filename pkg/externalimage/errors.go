@@ -15,6 +15,8 @@ var (
 	ErrSaveScanStatus        = errors.New("failed to save scan status")
 	ErrNoScanResultForArch   = errors.New("scan did not return results for this architecture")
 	ErrScanExecutionFailed   = errors.New("scan execution failed")
+	ErrStaleScanGeneration   = errors.New("scan generation is no longer current")
+	ErrInvalidScanCandidate  = errors.New("invalid scan publication candidate")
 )
 
 // ScanFailureError carries a sentinel reason (for metrics/tagging) and a full

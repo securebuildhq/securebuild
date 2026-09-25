@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"path/filepath"
 	"testing"
@@ -184,9 +186,12 @@ func TestExternalImageScanStatusTransitions(t *testing.T) {
 
 	t.Run("Successful metadata rolls back when freshness cannot be published", func(t *testing.T) {
 		missingSBOMDigest := "sha256:test-missing-sbom-1234567890123456789012345678901234"
+		generationID := "missing-sbom-generation"
+		require.NoError(t, externalimage.SetScanStatusRunning(ctx, missingSBOMDigest, "x86_64", generationID))
 		err := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
 			Digest:               missingSBOMDigest,
 			Arch:                 "x86_64",
+			ScanGenerationID:     generationID,
 			Status:               externalimage.ScanStatusSucceeded,
 			ParsedResults:        `{"total":0}`,
 			ParsedResultsDetails: `{"counts":{"total":0}}`,
@@ -197,11 +202,15 @@ func TestExternalImageScanStatusTransitions(t *testing.T) {
 
 		conn := persistence.MustGetPooledPostgresSession(ctx)
 		defer conn.Release()
-		var count int
+		var status string
+		var selectedGeneration, parsedResults *string
 		require.NoError(t, conn.QueryRow(ctx,
-			`SELECT COUNT(*) FROM external_image_scan WHERE digest = $1`,
-			missingSBOMDigest).Scan(&count))
-		assert.Zero(t, count, "scan metadata should roll back with the failed freshness update")
+			`SELECT status, selected_scan_generation_id, parsed_results
+			 FROM external_image_scan WHERE digest = $1 AND arch = 'x86_64'`,
+			missingSBOMDigest).Scan(&status, &selectedGeneration, &parsedResults))
+		assert.Equal(t, "running", status, "successful status should roll back with the failed freshness update")
+		assert.Nil(t, selectedGeneration, "candidate must not become selected")
+		assert.Nil(t, parsedResults, "compact counts must not publish")
 	})
 }
 
@@ -749,8 +758,23 @@ func TestExternalImageScanBlobUpload(t *testing.T) {
 		require.Len(t, scanStatuses, 1)
 		assert.Equal(t, "succeeded", scanStatuses[0].Status)
 
-		// Verify raw_result.json.gz exists in object storage
-		rawResultKey := "test-blob-upload-digest-12345678901234567890123456/x86_64/raw_result.json.gz"
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		defer conn.Release()
+		var selectedGeneration, rawResultKey, parsedDetailsKey string
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT scan.selected_scan_generation_id,
+			       generation.raw_object_key,
+			       generation.details_object_key
+			FROM external_image_scan scan
+			JOIN external_image_scan_generation generation
+			  ON generation.generation_id = scan.selected_scan_generation_id
+			 AND generation.digest = scan.digest
+			 AND generation.arch = scan.arch
+			WHERE scan.digest = $1 AND scan.arch = 'x86_64'
+		`, testDigest).Scan(&selectedGeneration, &rawResultKey, &parsedDetailsKey))
+		assert.NotEmpty(t, selectedGeneration)
+
+		// Verify generation-specific raw_result.json.gz exists in object storage
 		getOutput, err := minioStorage.S3Client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String("image-scans"),
 			Key:    aws.String(rawResultKey),
@@ -772,8 +796,7 @@ func TestExternalImageScanBlobUpload(t *testing.T) {
 		assert.Equal(t, rawScanResult, string(decompressed),
 			"decompressed raw_result should match the original scan result")
 
-		// Verify parsed_results_details.json.gz exists in object storage
-		parsedDetailsKey := "test-blob-upload-digest-12345678901234567890123456/x86_64/parsed_results_details.json.gz"
+		// Verify generation-specific parsed_results_details.json.gz exists in object storage
 		getOutput2, err := minioStorage.S3Client.GetObject(ctx, &s3.GetObjectInput{
 			Bucket: aws.String("image-scans"),
 			Key:    aws.String(parsedDetailsKey),
@@ -791,6 +814,592 @@ func TestExternalImageScanBlobUpload(t *testing.T) {
 		decompressed2, err := io.ReadAll(gzReader2)
 		require.NoError(t, err)
 		assert.NotEmpty(t, string(decompressed2), "parsed_results_details should not be empty")
+	})
+}
+
+func TestExternalImageScanGenerationPublication(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr, filepath.Join(projectRoot, "db", "schema", "tables"), false))
+
+	ctx, minioStorage := setupMinIOOverrides(ctx, t, testDB.ConnStr)
+	defer testutil.TeardownMinIO(ctx, t, minioStorage)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	const arch = "x86_64"
+	digest := "sha256:generation-publication-123456789012345678901234567890"
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	_, err = conn.Exec(ctx, `
+		INSERT INTO external_image_sbom (digest, arch, source, created_at, is_in_object_store)
+		VALUES ($1, $2, 'syft', NOW(), false)
+	`, digest, arch)
+	conn.Release()
+	require.NoError(t, err)
+
+	type selectedResult struct {
+		generationID string
+		counts       string
+		raw          string
+		details      string
+		available    bool
+	}
+	fetchObject := func(key string) string {
+		output, err := minioStorage.S3Client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String("image-scans"),
+			Key:    aws.String(key),
+		})
+		require.NoError(t, err)
+		defer output.Body.Close()
+		compressed, err := io.ReadAll(output.Body)
+		require.NoError(t, err)
+		reader, err := gzip.NewReader(bytes.NewReader(compressed))
+		require.NoError(t, err)
+		defer reader.Close()
+		payload, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		return string(payload)
+	}
+	readSelected := func(targetDigest string) selectedResult {
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		defer conn.Release()
+		var result selectedResult
+		var generationID, counts, rawKey, detailsKey *string
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT scan.selected_scan_generation_id, scan.parsed_results,
+			       scan.is_in_object_store,
+			       generation.raw_object_key, generation.details_object_key
+			FROM external_image_scan scan
+			LEFT JOIN external_image_scan_generation generation
+			  ON generation.generation_id = scan.selected_scan_generation_id
+			 AND generation.digest = scan.digest
+			 AND generation.arch = scan.arch
+			WHERE scan.digest = $1 AND scan.arch = $2
+		`, targetDigest, arch).Scan(&generationID, &counts, &result.available, &rawKey, &detailsKey))
+		if generationID != nil {
+			result.generationID = *generationID
+		}
+		if counts != nil {
+			result.counts = *counts
+		}
+		if rawKey != nil {
+			result.raw = fetchObject(*rawKey)
+		}
+		if detailsKey != nil {
+			result.details = fetchObject(*detailsKey)
+		}
+		return result
+	}
+	publish := func(callCtx context.Context, targetDigest, generationID, marker string, count int) error {
+		matches := make([]map[string]any, count)
+		for i := range matches {
+			matches[i] = map[string]any{"id": fmt.Sprintf("%s-%d", marker, i)}
+		}
+		rawJSON, err := json.Marshal(map[string]any{"marker": marker, "matches": matches})
+		if err != nil {
+			return err
+		}
+		return externalimage.SetExternalImageScanStatus(callCtx, externalimage.SetExternalImageScanStatusParams{
+			Digest:               targetDigest,
+			Arch:                 arch,
+			ScanGenerationID:     generationID,
+			Status:               externalimage.ScanStatusSucceeded,
+			ParsedResults:        fmt.Sprintf(`{"total":%d}`, count),
+			ParsedResultsDetails: fmt.Sprintf(`{"marker":%q,"counts":{"total":%d}}`, marker, count),
+			RawResult:            string(rawJSON),
+		})
+	}
+	assertGenerationConsistent := func(result selectedResult, marker string, count int) {
+		var compact struct {
+			Total int `json:"total"`
+		}
+		var raw struct {
+			Marker  string           `json:"marker"`
+			Matches []map[string]any `json:"matches"`
+		}
+		var details struct {
+			Marker string `json:"marker"`
+			Counts struct {
+				Total int `json:"total"`
+			} `json:"counts"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(result.counts), &compact))
+		require.NoError(t, json.Unmarshal([]byte(result.raw), &raw))
+		require.NoError(t, json.Unmarshal([]byte(result.details), &details))
+		assert.Equal(t, marker, raw.Marker)
+		assert.Equal(t, marker, details.Marker)
+		assert.Equal(t, count, len(raw.Matches), "raw-derived count must match the selected generation")
+		assert.Equal(t, count, details.Counts.Total, "detailed count must match the selected generation")
+		assert.Equal(t, count, compact.Total, "PostgreSQL count must match the selected generation")
+	}
+
+	require.NoError(t, externalimage.SetScanStatusRunning(ctx, digest, arch, "generation-a"))
+	require.NoError(t, publish(ctx, digest, "generation-a", "A", 1))
+	resultA := readSelected(digest)
+	require.Equal(t, "generation-a", resultA.generationID)
+	assertGenerationConsistent(resultA, "A", 1)
+	require.True(t, resultA.available)
+
+	failureStages := []externalimage.ScanPublicationFailureStage{
+		externalimage.ScanPublicationFailureBeforeRawUpload,
+		externalimage.ScanPublicationFailureBetweenUploads,
+		externalimage.ScanPublicationFailureValidation,
+		externalimage.ScanPublicationFailureSelection,
+	}
+	for _, stage := range failureStages {
+		t.Run(string(stage), func(t *testing.T) {
+			generationID := "generation-b-" + string(stage)
+			require.NoError(t, externalimage.SetScanStatusRunning(ctx, digest, arch, generationID))
+			failedCtx := externalimage.WithScanPublicationFailure(ctx, stage)
+			require.Error(t, publish(failedCtx, digest, generationID, "B", 2))
+
+			current := readSelected(digest)
+			assert.Equal(t, resultA.generationID, current.generationID)
+			assert.JSONEq(t, resultA.counts, current.counts)
+			assert.JSONEq(t, resultA.raw, current.raw)
+			assert.JSONEq(t, resultA.details, current.details)
+			assert.True(t, current.available)
+		})
+	}
+
+	t.Run("cleanup drains more than one bulk batch", func(t *testing.T) {
+		generations := []string{
+			"generation-b-before_raw_upload",
+			"generation-b-between_uploads",
+			"generation-b-validation",
+		}
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		result, err := conn.Exec(ctx, `
+			UPDATE external_image_scan_generation
+			SET cleanup_after = NOW() - INTERVAL '1 minute'
+			WHERE digest = $1 AND arch = $2
+			  AND generation_id = ANY($3::text[])
+		`, digest, arch, generations)
+		conn.Release()
+		require.NoError(t, err)
+		require.EqualValues(t, len(generations), result.RowsAffected())
+
+		require.NoError(t, externalimage.CleanupExternalImageScanCandidates(ctx, 2))
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		var remaining int
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM external_image_scan_generation
+			WHERE digest = $1 AND arch = $2
+			  AND generation_id = ANY($3::text[])
+		`, digest, arch, generations).Scan(&remaining))
+		conn.Release()
+		assert.Zero(t, remaining)
+	})
+
+	firstDigest := "sha256:first-generation-publication-123456789012345678901234567"
+	conn = persistence.MustGetPooledPostgresSession(ctx)
+	_, err = conn.Exec(ctx, `
+		INSERT INTO external_image_sbom (digest, arch, source, created_at, is_in_object_store)
+		VALUES ($1, $2, 'syft', NOW(), false)
+	`, firstDigest, arch)
+	conn.Release()
+	require.NoError(t, err)
+	require.NoError(t, externalimage.SetScanStatusRunning(ctx, firstDigest, arch, "first-generation"))
+	failedCtx := externalimage.WithScanPublicationFailure(ctx, externalimage.ScanPublicationFailureBetweenUploads)
+	require.Error(t, publish(failedCtx, firstDigest, "first-generation", "FIRST", 3))
+	firstResult := readSelected(firstDigest)
+	assert.Empty(t, firstResult.generationID)
+	assert.Empty(t, firstResult.counts)
+	assert.Empty(t, firstResult.raw)
+	assert.Empty(t, firstResult.details)
+	assert.False(t, firstResult.available)
+
+	require.NoError(t, externalimage.SetScanStatusRunning(ctx, digest, arch, "generation-old"))
+	selectionFailureCtx := externalimage.WithScanPublicationFailure(ctx, externalimage.ScanPublicationFailureSelection)
+	require.Error(t, publish(selectionFailureCtx, digest, "generation-old", "OLD", 4))
+	require.NoError(t, externalimage.SetScanStatusRunning(ctx, digest, arch, "generation-new"))
+	require.NoError(t, publish(ctx, digest, "generation-new", "NEW", 5))
+	require.ErrorIs(t, publish(ctx, digest, "generation-old", "OLD", 4), externalimage.ErrStaleScanGeneration)
+	current := readSelected(digest)
+	assert.Equal(t, "generation-new", current.generationID)
+	assertGenerationConsistent(current, "NEW", 5)
+
+	conn = persistence.MustGetPooledPostgresSession(ctx)
+	var completedBefore, scannedBefore time.Time
+	require.NoError(t, conn.QueryRow(ctx, `
+		SELECT scan.scan_completed_at, sbom.last_security_scanned_at
+		FROM external_image_scan scan
+		JOIN external_image_sbom sbom USING (digest, arch)
+		WHERE scan.digest = $1 AND scan.arch = $2
+	`, digest, arch).Scan(&completedBefore, &scannedBefore))
+	conn.Release()
+	require.NoError(t, publish(ctx, digest, "generation-new", "NEW", 5))
+	conn = persistence.MustGetPooledPostgresSession(ctx)
+	var completedAfter, scannedAfter time.Time
+	require.NoError(t, conn.QueryRow(ctx, `
+		SELECT scan.scan_completed_at, sbom.last_security_scanned_at
+		FROM external_image_scan scan
+		JOIN external_image_sbom sbom USING (digest, arch)
+		WHERE scan.digest = $1 AND scan.arch = $2
+	`, digest, arch).Scan(&completedAfter, &scannedAfter))
+	conn.Release()
+	assert.Equal(t, completedBefore, completedAfter, "re-publishing the selected generation must be a no-op")
+	assert.Equal(t, scannedBefore, scannedAfter, "re-publishing the selected generation must preserve SBOM freshness")
+
+	t.Run("concurrent failure cannot downgrade a selected generation", func(t *testing.T) {
+		concurrentDigest := "sha256:concurrent-generation-123456789012345678901234567890"
+		const concurrentGeneration = "concurrent-generation"
+
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		_, err := conn.Exec(ctx, `
+			INSERT INTO external_image_sbom (digest, arch, source, created_at, is_in_object_store)
+			VALUES ($1, $2, 'syft', NOW(), false)
+		`, concurrentDigest, arch)
+		conn.Release()
+		require.NoError(t, err)
+		require.NoError(t, externalimage.SetScanStatusRunning(ctx, concurrentDigest, arch, concurrentGeneration))
+
+		reached := make(chan struct{})
+		resume := make(chan struct{})
+		defer close(resume)
+		pausedCtx := externalimage.WithScanPublicationPause(
+			externalimage.WithScanPublicationFailure(ctx, externalimage.ScanPublicationFailureBeforeRawUpload),
+			externalimage.ScanPublicationFailureBeforeRawUpload,
+			reached,
+			resume,
+		)
+		publisherResult := make(chan error, 1)
+		go func() {
+			publisherResult <- publish(pausedCtx, concurrentDigest, concurrentGeneration, "CONCURRENT", 7)
+		}()
+
+		select {
+		case <-reached:
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "timed out waiting for the first publisher to pause")
+		}
+
+		require.NoError(t, publish(ctx, concurrentDigest, concurrentGeneration, "CONCURRENT", 7))
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		var completedBeforeFailure time.Time
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT scan_completed_at
+			FROM external_image_scan
+			WHERE digest = $1 AND arch = $2
+		`, concurrentDigest, arch).Scan(&completedBeforeFailure))
+		conn.Release()
+
+		resume <- struct{}{}
+		select {
+		case err := <-publisherResult:
+			require.NoError(t, err, "a concurrent publisher must accept that its generation was already selected")
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "timed out waiting for the paused publisher to finish")
+		}
+
+		// A caller that observes a late error must also be unable to downgrade the
+		// already-selected successful scan row.
+		require.NoError(t, externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
+			Digest:            concurrentDigest,
+			Arch:              arch,
+			ScanGenerationID:  concurrentGeneration,
+			Status:            externalimage.ScanStatusFailed,
+			ScanStatusMessage: "late concurrent failure",
+		}))
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		var status, selectedGeneration, candidateState string
+		var completedAfterFailure time.Time
+		var cleanupDisabled bool
+		var statusMessage *string
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT scan.status, scan.selected_scan_generation_id, scan.scan_completed_at,
+			       scan.scan_status_message, generation.state,
+			       generation.cleanup_after IS NULL
+			FROM external_image_scan scan
+			JOIN external_image_scan_generation generation
+			  ON generation.generation_id = scan.selected_scan_generation_id
+			 AND generation.digest = scan.digest
+			 AND generation.arch = scan.arch
+			WHERE scan.digest = $1 AND scan.arch = $2
+		`, concurrentDigest, arch).Scan(
+			&status,
+			&selectedGeneration,
+			&completedAfterFailure,
+			&statusMessage,
+			&candidateState,
+			&cleanupDisabled,
+		))
+		conn.Release()
+		assert.Equal(t, string(externalimage.ScanStatusSucceeded), status)
+		assert.Equal(t, concurrentGeneration, selectedGeneration)
+		assert.Equal(t, completedBeforeFailure, completedAfterFailure)
+		assert.Nil(t, statusMessage)
+		assert.Equal(t, "selected", candidateState)
+		assert.True(t, cleanupDisabled, "a selected generation must not regain a cleanup deadline")
+		assertGenerationConsistent(readSelected(concurrentDigest), "CONCURRENT", 7)
+	})
+
+	t.Run("retried current candidate survives expired cleanup", func(t *testing.T) {
+		retryDigest := "sha256:cleanup-retry-generation-123456789012345678901234567890"
+		const retryGeneration = "cleanup-retry-generation"
+
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		_, err := conn.Exec(ctx, `
+			INSERT INTO external_image_sbom (digest, arch, source, created_at, is_in_object_store)
+			VALUES ($1, $2, 'syft', NOW(), false)
+		`, retryDigest, arch)
+		conn.Release()
+		require.NoError(t, err)
+		require.NoError(t, externalimage.SetScanStatusRunning(ctx, retryDigest, arch, retryGeneration))
+
+		validationFailureCtx := externalimage.WithScanPublicationFailure(ctx, externalimage.ScanPublicationFailureValidation)
+		require.Error(t, publish(validationFailureCtx, retryDigest, retryGeneration, "RETRY", 6))
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		_, err = conn.Exec(ctx, `
+			UPDATE external_image_scan_generation
+			SET cleanup_after = NOW() - INTERVAL '1 minute'
+			WHERE generation_id = $1 AND digest = $2 AND arch = $3
+		`, retryGeneration, retryDigest, arch)
+		conn.Release()
+		require.NoError(t, err)
+
+		selectionFailureCtx := externalimage.WithScanPublicationFailure(ctx, externalimage.ScanPublicationFailureSelection)
+		require.Error(t, publish(selectionFailureCtx, retryDigest, retryGeneration, "RETRY", 6))
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		var state string
+		var cleanupExtended bool
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT state, cleanup_after > NOW()
+			FROM external_image_scan_generation
+			WHERE generation_id = $1 AND digest = $2 AND arch = $3
+		`, retryGeneration, retryDigest, arch).Scan(&state, &cleanupExtended))
+		conn.Release()
+		assert.Equal(t, "validated", state)
+		assert.True(t, cleanupExtended, "validation must refresh the candidate cleanup deadline")
+
+		// Simulate cleanup having listed the candidate from a stale deadline. The
+		// scan-row lock and current-generation check must keep its objects alive.
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		_, err = conn.Exec(ctx, `
+			UPDATE external_image_scan_generation
+			SET cleanup_after = NOW() - INTERVAL '1 minute'
+			WHERE generation_id = $1 AND digest = $2 AND arch = $3
+		`, retryGeneration, retryDigest, arch)
+		conn.Release()
+		require.NoError(t, err)
+		require.NoError(t, externalimage.CleanupExternalImageScanCandidates(ctx, 100))
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT state, cleanup_after > NOW()
+			FROM external_image_scan_generation
+			WHERE generation_id = $1 AND digest = $2 AND arch = $3
+		`, retryGeneration, retryDigest, arch).Scan(&state, &cleanupExtended))
+		conn.Release()
+		assert.Equal(t, "validated", state)
+		assert.True(t, cleanupExtended, "cleanup must defer deletion of the current generation")
+
+		require.NoError(t, publish(ctx, retryDigest, retryGeneration, "RETRY", 6))
+		retried := readSelected(retryDigest)
+		assert.Equal(t, retryGeneration, retried.generationID)
+		assertGenerationConsistent(retried, "RETRY", 6)
+	})
+
+	// Even corrupted cleanup metadata cannot make the selected generation eligible.
+	conn = persistence.MustGetPooledPostgresSession(ctx)
+	_, err = conn.Exec(ctx, `
+		UPDATE external_image_scan_generation
+		SET state = 'failed', cleanup_after = NOW() - INTERVAL '1 minute'
+		WHERE generation_id = 'generation-new' AND digest = $1 AND arch = $2
+	`, digest, arch)
+	conn.Release()
+	require.NoError(t, err)
+	require.NoError(t, externalimage.CleanupExternalImageScanCandidates(ctx, 100))
+	current = readSelected(digest)
+	assert.Equal(t, "generation-new", current.generationID)
+	assertGenerationConsistent(current, "NEW", 5)
+
+	t.Run("pre-generation builder result is adopted and published", func(t *testing.T) {
+		legacyDigest := "sha256:legacy-builder-generation-123456789012345678901234567890"
+		const pendingArch = "aarch64"
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		_, err := conn.Exec(ctx, `
+			INSERT INTO external_image_sbom (digest, arch, source, created_at, is_in_object_store)
+			VALUES ($1, $2, 'syft', NOW(), false),
+			       ($1, $3, 'syft', NOW(), false)
+		`, legacyDigest, arch, pendingArch)
+		require.NoError(t, err)
+		_, err = conn.Exec(ctx, `
+			INSERT INTO external_image_scan (
+				digest, arch, created_at, status, updated_at,
+				scan_attempted_at, scan_status_updated_at, is_in_object_store
+			)
+			VALUES ($1, $2, NOW(), 'running', NOW(), NOW(), NOW(), false),
+			       ($1, $3, NOW(), 'running', NOW(), NOW(), NOW(), false)
+		`, legacyDigest, arch, pendingArch)
+		conn.Release()
+		require.NoError(t, err)
+
+		const legacyGeneration = "legacy-derived-generation"
+		legacyArchs := []string{arch, pendingArch}
+		require.NoError(t, externalimage.AdoptLegacyScanGeneration(ctx, legacyDigest, legacyArchs, legacyGeneration))
+		require.NoError(t, publish(ctx, legacyDigest, legacyGeneration, "LEGACY", 6))
+		require.NoError(t, externalimage.AdoptLegacyScanGeneration(ctx, legacyDigest, legacyArchs, legacyGeneration))
+		require.ErrorIs(t,
+			externalimage.AdoptLegacyScanGeneration(ctx, legacyDigest, legacyArchs, "different-generation"),
+			externalimage.ErrStaleScanGeneration,
+		)
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		rows, err := conn.Query(ctx, `
+			SELECT arch, status, current_scan_generation_id
+			FROM external_image_scan
+			WHERE digest = $1
+		`, legacyDigest)
+		require.NoError(t, err)
+		legacyStates := make(map[string][2]string)
+		for rows.Next() {
+			var rowArch, status, generation string
+			require.NoError(t, rows.Scan(&rowArch, &status, &generation))
+			legacyStates[rowArch] = [2]string{status, generation}
+		}
+		require.NoError(t, rows.Err())
+		rows.Close()
+		conn.Release()
+		assert.Equal(t, [2]string{"succeeded", legacyGeneration}, legacyStates[arch])
+		assert.Equal(t, [2]string{"running", legacyGeneration}, legacyStates[pendingArch])
+
+		selected := readSelected(legacyDigest)
+		assert.Equal(t, legacyGeneration, selected.generationID)
+		assertGenerationConsistent(selected, "LEGACY", 6)
+	})
+
+	t.Run("claim creates missing rows and remains all or nothing", func(t *testing.T) {
+		missingRowsDigest := "sha256:claim-missing-rows-123456789012345678901234567890123"
+		claimed, err := externalimage.ClaimScanGeneration(
+			ctx,
+			missingRowsDigest,
+			[]string{"x86_64", "aarch64"},
+			"all-architectures",
+			time.Hour,
+		)
+		require.NoError(t, err)
+		require.True(t, claimed)
+
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		var claimedRows int
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM external_image_scan
+			WHERE digest = $1
+			  AND status = 'running'
+			  AND current_scan_generation_id = 'all-architectures'
+		`, missingRowsDigest).Scan(&claimedRows))
+		conn.Release()
+		assert.Equal(t, 2, claimedRows)
+
+		partialDigest := "sha256:claim-partial-rollback-123456789012345678901234567890"
+		require.NoError(t, externalimage.InitializeScanStatusQueued(ctx, partialDigest, "x86_64"))
+		claimed, err = externalimage.ClaimScanGeneration(ctx, partialDigest, []string{"aarch64"}, "active-generation", time.Hour)
+		require.NoError(t, err)
+		require.True(t, claimed)
+
+		claimed, err = externalimage.ClaimScanGeneration(
+			ctx,
+			partialDigest,
+			[]string{"x86_64", "aarch64"},
+			"must-rollback",
+			time.Hour,
+		)
+		require.NoError(t, err)
+		assert.False(t, claimed)
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		rows, err := conn.Query(ctx, `
+			SELECT arch, status, COALESCE(current_scan_generation_id, '')
+			FROM external_image_scan
+			WHERE digest = $1
+			ORDER BY arch
+		`, partialDigest)
+		require.NoError(t, err)
+		states := make(map[string][2]string)
+		for rows.Next() {
+			var rowArch, status, generation string
+			require.NoError(t, rows.Scan(&rowArch, &status, &generation))
+			states[rowArch] = [2]string{status, generation}
+		}
+		require.NoError(t, rows.Err())
+		rows.Close()
+		conn.Release()
+		assert.Equal(t, [2]string{"running", "active-generation"}, states["aarch64"])
+		assert.Equal(t, [2]string{"queued", ""}, states["x86_64"])
+	})
+
+	t.Run("missing-builder recovery cannot requeue a newer generation", func(t *testing.T) {
+		recoveryDigest := "sha256:recovery-generation-fence-123456789012345678901234567890"
+		claimed, err := externalimage.ClaimScanGeneration(ctx, recoveryDigest, []string{arch}, "new-generation", time.Hour)
+		require.NoError(t, err)
+		require.True(t, claimed)
+
+		affected, err := externalimage.RequeueScanGeneration(
+			ctx,
+			recoveryDigest,
+			[]string{arch},
+			"old-generation",
+			"old builder disappeared",
+		)
+		require.NoError(t, err)
+		assert.Zero(t, affected)
+		err = externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
+			Digest:            recoveryDigest,
+			Arch:              arch,
+			Status:            externalimage.ScanStatusQueued,
+			ScanStatusMessage: "generationless recovery",
+		})
+		require.ErrorIs(t, err, externalimage.ErrStaleScanGeneration)
+
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		var status, generation string
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT status, current_scan_generation_id
+			FROM external_image_scan
+			WHERE digest = $1 AND arch = $2
+		`, recoveryDigest, arch).Scan(&status, &generation))
+		conn.Release()
+		assert.Equal(t, "running", status)
+		assert.Equal(t, "new-generation", generation)
+
+		err = externalimage.AdoptLegacyScanGeneration(ctx, recoveryDigest, []string{arch}, "legacy-generation")
+		require.ErrorIs(t, err, externalimage.ErrStaleScanGeneration)
+
+		affected, err = externalimage.RequeueScanGeneration(
+			ctx,
+			recoveryDigest,
+			[]string{arch},
+			"new-generation",
+			"matching builder disappeared",
+		)
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, affected)
+
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		require.NoError(t, conn.QueryRow(ctx, `
+			SELECT status, COALESCE(current_scan_generation_id, '')
+			FROM external_image_scan
+			WHERE digest = $1 AND arch = $2
+		`, recoveryDigest, arch).Scan(&status, &generation))
+		conn.Release()
+		assert.Equal(t, "queued", status)
+		assert.Empty(t, generation)
 	})
 }
 

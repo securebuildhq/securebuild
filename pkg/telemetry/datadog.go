@@ -27,10 +27,16 @@ const (
 	MetricExternalImageScanBacklog  = "securebuild.external_image.scan.backlog"
 	MetricExternalImageScansRunning = "securebuild.external_image.scan.running"
 
-	MetricExternalImageScanCapacityTotal = "securebuild.external_image.scan.capacity.total"
-	MetricExternalImageScanCapacityUsed  = "securebuild.external_image.scan.capacity.used"
+	MetricExternalImageScanCapacityTotal        = "securebuild.external_image.scan.capacity.total"
+	MetricExternalImageScanCapacityUsed         = "securebuild.external_image.scan.capacity.used"
+	MetricExternalImageScanCleanupPending       = "securebuild.external_image.scan.cleanup.pending"
+	MetricExternalImageScanCleanupPendingBytes  = "securebuild.external_image.scan.cleanup.pending_bytes"
+	MetricExternalImageScanCleanupOverdue       = "securebuild.external_image.scan.cleanup.overdue"
+	MetricExternalImageScanCleanupOldestSeconds = "securebuild.external_image.scan.cleanup.oldest_overdue_seconds"
+	MetricExternalImageScanCleanupDeleted       = "securebuild.external_image.scan.cleanup.deleted"
+	MetricExternalImageScanCleanupFailed        = "securebuild.external_image.scan.cleanup.failed"
 
-	MetricExternalImageSbomBacklog  = "securebuild.external_image.sbom.backlog"
+	MetricExternalImageSbomBacklog          = "securebuild.external_image.sbom.backlog"
 	MetricExternalImageSbomDownloadsRunning = "securebuild.external_image.sbom.downloads_running"
 
 	MetricExternalImageSbomDownloadCapacityTotal = "securebuild.external_image.sbom_download.capacity.total"
@@ -164,6 +170,21 @@ func incrementDatadog(name string, tags []string) {
 	if err := client.Incr(name, tags, 1); err != nil {
 		logger.Warn("failed to send increment metric",
 			zap.String("name", name),
+			zap.Strings("tags", tags),
+			zap.Error(err))
+	}
+}
+
+func countDatadog(name string, value int64, tags []string) {
+	client := getStatsClient()
+	if client == nil {
+		return
+	}
+
+	if err := client.Count(name, value, tags, 1); err != nil {
+		logger.Warn("failed to send count metric",
+			zap.String("name", name),
+			zap.Int64("value", value),
 			zap.Strings("tags", tags),
 			zap.Error(err))
 	}

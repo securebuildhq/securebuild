@@ -1,0 +1,46 @@
+database: securebuild
+name: external_image_scan_generation
+requires:
+  - external-image-scan
+seedData:
+  rows:
+    - columns:
+        - column: generation_id
+          value:
+            str: "api-generation-a"
+        - column: digest
+          value:
+            str: "sha256:abc123def456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "aarch64"
+        - column: state
+          value:
+            str: "selected"
+        - column: raw_object_key
+          value:
+            str: "abc123def456789012345678901234567890123456789012345678901234/aarch64/scan-generations/api-generation-a/raw_result.json.gz"
+        - column: raw_size_bytes
+          value:
+            str: "1"
+        - column: raw_sha256
+          value:
+            str: "fixture"
+        - column: details_object_key
+          value:
+            str: "abc123def456789012345678901234567890123456789012345678901234/aarch64/scan-generations/api-generation-a/parsed_results_details.json.gz"
+        - column: details_size_bytes
+          value:
+            str: "1"
+        - column: details_sha256
+          value:
+            str: "fixture"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: validated_at
+          value:
+            str: "2024-01-01T00:04:00Z"
+        - column: selected_at
+          value:
+            str: "2024-01-01T00:05:00Z"

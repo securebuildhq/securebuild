@@ -138,6 +138,7 @@ func GetExternalImageForDigest(ctx context.Context, digest string) (*types.Exter
 type SetExternalImageScanStatusParams struct {
 	Digest               string
 	Arch                 string
+	ScanGenerationID     string // Claimed scan generation (required for worker results)
 	Status               ScanStatus
 	ParsedResults        string // JSON with vulnerability counts (for success)
 	ParsedResultsDetails string // JSON with vulnerability details (for success)
@@ -148,28 +149,186 @@ type SetExternalImageScanStatusParams struct {
 // SetScanStatusRunning marks a scan as running for a specific digest and architecture.
 // This should be called immediately before starting the actual scan.
 // Sets scan_attempted_at to the current time (both on insert and update).
-func SetScanStatusRunning(ctx context.Context, digest, arch string) error {
+func SetScanStatusRunning(ctx context.Context, digest, arch, generationID string) error {
+	if generationID == "" {
+		return fmt.Errorf("scan generation ID is required when marking a scan running")
+	}
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
 	now := time.Now()
 
 	query := `
-		INSERT INTO external_image_scan (digest, arch, created_at, status, updated_at, scan_attempted_at, scan_status_updated_at)
-		VALUES ($1, $2, $3, $4, $3, $3, $3)
+		INSERT INTO external_image_scan (digest, arch, created_at, status, updated_at, scan_attempted_at, scan_status_updated_at, current_scan_generation_id)
+		VALUES ($1, $2, $3, $4, $3, $3, $3, $5)
 		ON CONFLICT (digest, arch) DO UPDATE
 		SET status = $4,
 		    updated_at = $3,
 		    scan_attempted_at = $3,
-		    scan_status_updated_at = $3
+		    scan_status_updated_at = $3,
+		    current_scan_generation_id = $5
 	`
 
-	_, err := conn.Exec(ctx, query, digest, arch, now, string(ScanStatusRunning))
+	_, err := conn.Exec(ctx, query, digest, arch, now, string(ScanStatusRunning), generationID)
 	if err != nil {
 		return fmt.Errorf("failed to set scan status to running for digest %s, arch %s: %w", digest, arch, err)
 	}
 
 	return nil
+}
+
+// ClaimScanGeneration atomically claims every requested architecture for one
+// scan generation. Missing scan rows are created in the same transaction. A
+// partial claim is rolled back so callers never dispatch architectures that do
+// not all carry the same generation fence.
+func ClaimScanGeneration(ctx context.Context, digest string, archs []string, generationID string, staleThreshold time.Duration) (bool, error) {
+	archs = uniqueArchitectures(archs)
+	if digest == "" || generationID == "" || len(archs) == 0 {
+		return false, fmt.Errorf("digest, generation ID, and at least one architecture are required")
+	}
+
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to begin scan claim transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	now := time.Now()
+	_, err = tx.Exec(ctx, `
+		INSERT INTO external_image_scan (
+			digest, arch, created_at, status, updated_at, scan_status_updated_at
+		)
+		SELECT $1, requested_arch, $3, 'queued', $3, $3
+		FROM unnest($2::text[]) AS requested_arch
+		ON CONFLICT (digest, arch) DO NOTHING
+	`, digest, archs, now)
+	if err != nil {
+		return false, fmt.Errorf("failed to ensure scan rows before claim: %w", err)
+	}
+
+	result, err := tx.Exec(ctx, `
+		UPDATE external_image_scan
+		SET status = 'running',
+		    scan_status_updated_at = $4,
+		    scan_status_message = NULL,
+		    scan_attempted_at = COALESCE(scan_attempted_at, $4),
+		    current_scan_generation_id = $3
+		WHERE digest = $1
+		  AND arch = ANY($2::text[])
+		  AND (
+		    status != 'running'
+		    OR COALESCE(scan_status_updated_at, created_at) <= $5
+		  )
+	`, digest, archs, generationID, now, now.Add(-staleThreshold))
+	if err != nil {
+		return false, fmt.Errorf("failed to claim scan rows: %w", err)
+	}
+	if result.RowsAffected() != int64(len(archs)) {
+		return false, nil
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("failed to commit scan claim: %w", err)
+	}
+	return true, nil
+}
+
+// AdoptLegacyScanGeneration assigns a stable generation fence to a builder
+// scan created before generation IDs were written to scan.json. An unclaimed
+// row must still be running, while a row already owned by the same derived
+// generation remains adoptable after that architecture finishes.
+func AdoptLegacyScanGeneration(ctx context.Context, digest string, archs []string, generationID string) error {
+	archs = uniqueArchitectures(archs)
+	if digest == "" || generationID == "" || len(archs) == 0 {
+		return fmt.Errorf("digest, generation ID, and at least one architecture are required")
+	}
+
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin legacy scan adoption transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx, `
+		UPDATE external_image_scan
+		SET current_scan_generation_id = $3
+		WHERE digest = $1
+		  AND arch = ANY($2::text[])
+		  AND (
+		    (current_scan_generation_id IS NULL AND status = 'running')
+		    OR current_scan_generation_id = $3
+		  )
+	`, digest, archs, generationID)
+	if err != nil {
+		return fmt.Errorf("failed to adopt legacy scan generation: %w", err)
+	}
+	if result.RowsAffected() != int64(len(archs)) {
+		return fmt.Errorf("%w: legacy scan %s is no longer current for every architecture", ErrStaleScanGeneration, generationID)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit legacy scan adoption: %w", err)
+	}
+	return nil
+}
+
+// RequeueScanGeneration requeues only rows still owned by the missing
+// builder's generation. An empty generation ID is reserved for pre-rollout
+// scans and can only update rows that still have a NULL generation fence.
+func RequeueScanGeneration(ctx context.Context, digest string, archs []string, generationID, message string) (int64, error) {
+	archs = uniqueArchitectures(archs)
+	if digest == "" || len(archs) == 0 {
+		return 0, fmt.Errorf("digest and at least one architecture are required")
+	}
+
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	generationPredicate := "current_scan_generation_id = $5"
+	args := []any{digest, archs, time.Now(), message, generationID}
+	if generationID == "" {
+		generationPredicate = "current_scan_generation_id IS NULL"
+		args = args[:4]
+	}
+
+	result, err := conn.Exec(ctx, `
+		UPDATE external_image_scan
+		SET status = 'queued',
+		    scan_status_updated_at = $3,
+		    scan_status_message = $4,
+		    updated_at = $3,
+		    current_scan_generation_id = NULL
+		WHERE digest = $1
+		  AND arch = ANY($2::text[])
+		  AND status = 'running'
+		  AND `+generationPredicate,
+		args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to requeue scan generation: %w", err)
+	}
+	return result.RowsAffected(), nil
+}
+
+func uniqueArchitectures(archs []string) []string {
+	seen := make(map[string]struct{}, len(archs))
+	result := make([]string, 0, len(archs))
+	for _, arch := range archs {
+		if arch == "" {
+			continue
+		}
+		if _, ok := seen[arch]; ok {
+			continue
+		}
+		seen[arch] = struct{}{}
+		result = append(result, arch)
+	}
+	return result
 }
 
 // InitializeSBOMStatusPending initializes SBOM status to pending for a digest.
@@ -313,6 +472,10 @@ func InitializeScanStatusQueued(ctx context.Context, digest, arch string) error 
 // updates preserve it. For new rows, scan_attempted_at is also set.
 // On conflict, scan_attempted_at is not updated (it should have been set by SetScanStatusRunning).
 func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScanStatusParams) error {
+	if params.Status == ScanStatusSucceeded {
+		return publishSuccessfulScan(ctx, params)
+	}
+
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -323,78 +486,80 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 		scanStatusMessage = &params.ScanStatusMessage
 	}
 
-	// Step 1: Upload blobs to object store (mandatory — fail on error)
-	blobsUploaded := false
-	if params.Status == ScanStatusSucceeded && params.RawResult != "" {
-		store, err := newBlobStore(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to create blob store: %w", err)
-		}
-		if err := store.putRawResult(ctx, params.Digest, params.Arch, params.RawResult); err != nil {
-			return fmt.Errorf("failed to upload raw_result to object store: %w", err)
-		}
-		if params.ParsedResultsDetails != "" {
-			if err := store.putParsedResultsDetails(ctx, params.Digest, params.Arch, params.ParsedResultsDetails); err != nil {
-				return fmt.Errorf("failed to upload parsed_results_details to object store: %w", err)
-			}
-		}
-		blobsUploaded = true
-	}
-
-	// Step 2: Publish result metadata and successful freshness atomically. Blob
-	// content lives only in object storage and has already been uploaded.
+	// Status-only updates preserve the last selected generation, compact counts,
+	// successful completion time, and object availability.
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin scan status transaction for digest %s, arch %s: %w", params.Digest, params.Arch, err)
 	}
 	defer tx.Rollback(ctx)
 
-	query := `
-		INSERT INTO external_image_scan (digest, arch, parsed_results, created_at, status, scan_status_message, updated_at, scan_completed_at, scan_attempted_at, scan_status_updated_at, is_in_object_store)
-		VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $4,
-		        CASE WHEN $5::text = 'succeeded' THEN $4::timestamptz ELSE NULL::timestamptz END,
-		        $4, $4, $7)
-		ON CONFLICT (digest, arch) DO UPDATE
-		SET parsed_results = CASE
-		        WHEN EXCLUDED.status = 'succeeded' AND NULLIF(EXCLUDED.parsed_results, '') IS NOT NULL
-		          THEN EXCLUDED.parsed_results
-		        ELSE external_image_scan.parsed_results
-		    END,
-		    status = $5,
-		    scan_status_message = $6,
-		    updated_at = $4,
-		    scan_completed_at = CASE
-		        WHEN EXCLUDED.status = 'succeeded' THEN EXCLUDED.scan_completed_at
-		        ELSE external_image_scan.scan_completed_at
-		    END,
-		    scan_status_updated_at = $4,
-		    is_in_object_store = external_image_scan.is_in_object_store OR EXCLUDED.is_in_object_store
-	`
-
-	_, err = tx.Exec(ctx, query,
-		params.Digest,
-		params.Arch,
-		params.ParsedResults,
-		now,
-		string(params.Status),
-		scanStatusMessage,
-		blobsUploaded,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to set scan status for digest %s, arch %s: %w", params.Digest, params.Arch, err)
-	}
-
-	if params.Status == ScanStatusSucceeded {
-		result, err := tx.Exec(ctx, `
-			UPDATE external_image_sbom
-			SET last_security_scanned_at = $3
+	if params.ScanGenerationID != "" {
+		var currentGeneration string
+		var selectedGeneration sql.NullString
+		var currentStatus string
+		err := tx.QueryRow(ctx, `
+			SELECT COALESCE(current_scan_generation_id, ''), selected_scan_generation_id, status
+			FROM external_image_scan
 			WHERE digest = $1 AND arch = $2
-		`, params.Digest, params.Arch, now)
+			FOR UPDATE
+		`, params.Digest, params.Arch).Scan(&currentGeneration, &selectedGeneration, &currentStatus)
 		if err != nil {
-			return fmt.Errorf("failed to update successful scan freshness for digest %s, arch %s: %w", params.Digest, params.Arch, err)
+			if err == pgx.ErrNoRows {
+				return fmt.Errorf("%w: no scan row exists for %s/%s", ErrStaleScanGeneration, params.Digest, params.Arch)
+			}
+			return fmt.Errorf("failed to lock scan status for digest %s, arch %s: %w", params.Digest, params.Arch, err)
+		}
+		if currentGeneration != params.ScanGenerationID {
+			return fmt.Errorf("%w: generation %s cannot update status for %s/%s", ErrStaleScanGeneration, params.ScanGenerationID, params.Digest, params.Arch)
+		}
+		if selectedGeneration.Valid && selectedGeneration.String == params.ScanGenerationID && currentStatus == string(ScanStatusSucceeded) {
+			if err := tx.Commit(ctx); err != nil {
+				return fmt.Errorf("failed to commit idempotent scan status for digest %s, arch %s: %w", params.Digest, params.Arch, err)
+			}
+			return nil
+		}
+
+		result, err := tx.Exec(ctx, `
+			UPDATE external_image_scan
+			SET status = $4,
+			    scan_status_message = $5,
+			    updated_at = $3,
+			    scan_status_updated_at = $3
+			WHERE digest = $1 AND arch = $2
+			  AND current_scan_generation_id = $6
+		`, params.Digest, params.Arch, now, string(params.Status), scanStatusMessage, params.ScanGenerationID)
+		if err != nil {
+			return fmt.Errorf("failed to set scan status for digest %s, arch %s: %w", params.Digest, params.Arch, err)
 		}
 		if result.RowsAffected() != 1 {
-			return fmt.Errorf("failed to update successful scan freshness for digest %s, arch %s: expected 1 SBOM row, updated %d", params.Digest, params.Arch, result.RowsAffected())
+			return fmt.Errorf("%w: generation %s cannot update status for %s/%s", ErrStaleScanGeneration, params.ScanGenerationID, params.Digest, params.Arch)
+		}
+	} else {
+		query := `
+		INSERT INTO external_image_scan (digest, arch, parsed_results, created_at, status, scan_status_message, updated_at, scan_completed_at, scan_attempted_at, scan_status_updated_at, is_in_object_store)
+		VALUES ($1, $2, NULL, $3, $4, $5, $3, NULL, $3, $3, false)
+		ON CONFLICT (digest, arch) DO UPDATE
+		SET status = $4,
+		    scan_status_message = $5,
+		    updated_at = $3,
+		    scan_status_updated_at = $3
+		WHERE external_image_scan.status != 'running'
+		   OR external_image_scan.current_scan_generation_id IS NULL
+	`
+
+		result, err := tx.Exec(ctx, query,
+			params.Digest,
+			params.Arch,
+			now,
+			string(params.Status),
+			scanStatusMessage,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to set scan status for digest %s, arch %s: %w", params.Digest, params.Arch, err)
+		}
+		if result.RowsAffected() != 1 {
+			return fmt.Errorf("%w: generationless status update cannot replace the active scan for %s/%s", ErrStaleScanGeneration, params.Digest, params.Arch)
 		}
 	}
 

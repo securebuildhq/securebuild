@@ -54,6 +54,43 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(res.headers.get('X-SecureBuild-Architecture')).toBe('amd64');
     });
 
+    it('reads generation-specific raw and parsed documents for the selected generation', async () => {
+      const parsedRes = await env.client.get(
+        `/api/v1/external-image/scan?digest=${encodeURIComponent(digest())}&arch=arm64&format=parsed`,
+      );
+      expect(parsedRes.status).toBe(200);
+      expect(parsedRes.data.counts.total).toBe(1);
+      expect(Array.isArray(parsedRes.data.vulnerability_details)).toBe(true);
+
+      const rawRes = await env.client.get(
+        `/api/v1/external-image/scan?digest=${encodeURIComponent(digest())}&arch=arm64&format=raw`,
+      );
+      expect(rawRes.status).toBe(200);
+      expect(Array.isArray(rawRes.data.matches)).toBe(true);
+      expect(rawRes.data.descriptor.name).toBe('grype');
+    });
+
+    it('reads the selected generation through the batch endpoint', async () => {
+      const parsedRes = await env.client.post('/api/v1/external-image/scan', {
+        digests: [digest()],
+        arch: 'arm64',
+        format: 'parsed',
+      });
+      expect(parsedRes.status).toBe(200);
+      expect(parsedRes.data[0].not_found).toBe(false);
+      expect(parsedRes.data[0].result.counts.total).toBe(1);
+
+      const rawRes = await env.client.post('/api/v1/external-image/scan', {
+        digests: [digest()],
+        arch: 'arm64',
+        format: 'raw',
+      });
+      expect(rawRes.status).toBe(200);
+      expect(rawRes.data[0].not_found).toBe(false);
+      expect(Array.isArray(rawRes.data[0].result.matches)).toBe(true);
+      expect(rawRes.data[0].result.descriptor.name).toBe('grype');
+    });
+
     it('POST /scan {digests} returns array with expected shape', async () => {
       const res = await env.client.post('/api/v1/external-image/scan', {
         digests: [digest()],
@@ -195,6 +232,41 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(Array.isArray(data.relationships)).toBe(true);
 
       expect(res.headers.get('X-SecureBuild-Image_Digest')).toBe(digest());
+    });
+
+    it('keeps SBOMs at deterministic keys when scan results use generations', async () => {
+      const removed = await env.dbPool.query(
+        `DELETE FROM external_image_sbom
+         WHERE digest = $1 AND arch = 'x86_64'
+         RETURNING *`,
+        [digest()],
+      );
+      const x86 = removed.rows[0];
+
+      try {
+        const res = await env.client.get(`/api/v1/external-image/sbom?digest=${encodeURIComponent(digest())}`);
+        expect(res.status).toBe(200);
+        expect(res.data.SPDXID).toBeDefined();
+        expect(Array.isArray(res.data.packages)).toBe(true);
+      } finally {
+        await env.dbPool.query(
+          `INSERT INTO external_image_sbom (
+             digest, arch, sbom, created_at, source, image_size_bytes,
+             last_security_scanned_at, image_digest, is_in_object_store
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            x86.digest,
+            x86.arch,
+            x86.sbom,
+            x86.created_at,
+            x86.source,
+            x86.image_size_bytes,
+            x86.last_security_scanned_at,
+            x86.image_digest,
+            x86.is_in_object_store,
+          ],
+        );
+      }
     });
 
     it('GET /sbom?image_url returns SPDX SBOM', async () => {

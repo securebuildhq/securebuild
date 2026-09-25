@@ -3,12 +3,15 @@ package listener
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -122,22 +125,55 @@ func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm 
 		return
 	}
 
-	// Resync the cache for this builder with what's actually on the
-	// filesystem. This replaces all entries (including leaked placeholders
-	// and stale scans) with the current set of active scan dirs. Only
-	// scans that are still in progress (not all archs done) are counted
-	// toward capacity.
+	// Resync the cache and adopt scans dispatched before scan generation IDs
+	// were added to scan.json. The derived ID is stable across poller retries,
+	// and database adoption is fenced so an old directory cannot attach itself
+	// to a newer scan attempt.
 	activeScans := make([]scan.ScanDirInfo, 0)
+	processableDirs := make([]scan.ScanDirStatus, 0, len(scanDirs))
 	for _, sd := range scanDirs {
+		architectures := scanStatusArchitectures(sd)
+		if sd.Metadata.Digest != "" && sd.Metadata.ScanGenerationID == "" && len(architectures) > 0 {
+			generationID := legacyScanGenerationID(sd, architectures)
+			if err := externalimage.AdoptLegacyScanGeneration(ctx, sd.Metadata.Digest, architectures, generationID); err != nil {
+				if errors.Is(err, externalimage.ErrStaleScanGeneration) {
+					logger.Warn("discarding stale pre-generation scan directory",
+						zap.String("digest", sd.Metadata.Digest),
+						zap.String("workDir", sd.WorkDir),
+						zap.Error(err))
+					cleanupScanDir(ctx, runner, sd.WorkDir)
+					continue
+				}
+				logger.Warn("failed to adopt pre-generation scan directory; will retry",
+					zap.String("digest", sd.Metadata.Digest),
+					zap.String("workDir", sd.WorkDir),
+					zap.Error(err))
+				if !sd.AllArchsDone {
+					activeScans = append(activeScans, scan.ScanDirInfo{
+						Digest:        sd.Metadata.Digest,
+						Architectures: architectures,
+						WorkDir:       sd.WorkDir,
+						CreatedAt:     sd.Metadata.CreatedAt,
+					})
+				}
+				continue
+			}
+			sd.Metadata.ScanGenerationID = generationID
+		}
+
 		if sd.Metadata.Digest != "" && !sd.AllArchsDone {
 			activeScans = append(activeScans, scan.ScanDirInfo{
-				Digest:    sd.Metadata.Digest,
-				WorkDir:   sd.WorkDir,
-				CreatedAt: sd.Metadata.CreatedAt,
+				Digest:           sd.Metadata.Digest,
+				ScanGenerationID: sd.Metadata.ScanGenerationID,
+				Architectures:    architectures,
+				WorkDir:          sd.WorkDir,
+				CreatedAt:        sd.Metadata.CreatedAt,
 			})
 		}
+		processableDirs = append(processableDirs, sd)
 	}
 	cache.SetBuilderScans(vm.ID, activeScans)
+	scanDirs = processableDirs
 
 	// Partition scan dirs into completed (batch via tar) and in-progress
 	// (handle individually for timeout/kill).
@@ -162,6 +198,26 @@ func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm 
 	}
 }
 
+func scanStatusArchitectures(status scan.ScanDirStatus) []string {
+	architectures := make([]string, 0, len(status.ArchStatuses))
+	for arch := range status.ArchStatuses {
+		architectures = append(architectures, arch)
+	}
+	sort.Strings(architectures)
+	return architectures
+}
+
+func legacyScanGenerationID(status scan.ScanDirStatus, architectures []string) string {
+	identity := strings.Join([]string{
+		status.Metadata.Digest,
+		status.WorkDir,
+		status.Metadata.CreatedAt.UTC().Format(time.RFC3339Nano),
+		strings.Join(architectures, ","),
+	}, "\x00")
+	sum := sha256.Sum256([]byte(identity))
+	return "legacy-" + hex.EncodeToString(sum[:24])
+}
+
 // processCompletedScansBatch transfers all completed scan results from the
 // builder in a single tar archive, processes them locally, and cleans up
 // all completed scan dirs with a single rm -rf command. This replaces the
@@ -175,11 +231,13 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 	// completed scan dir, include grype-scan.json and grype.stderr for
 	// every arch that has an exit_code file (i.e., grype finished).
 	type archResult struct {
-		digest    string
-		arch      string
-		exitCode  int
-		grypePath string
-		stderrRel string
+		digest           string
+		arch             string
+		scanGenerationID string
+		scanCreatedAt    time.Time
+		exitCode         int
+		grypePath        string
+		stderrRel        string
 	}
 	var results []archResult
 	var tarRelPaths []string
@@ -204,11 +262,13 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 			stderrRel := filepath.Join(relDir, arch, "output", "grype.stderr")
 			tarRelPaths = append(tarRelPaths, grypeRel, stderrRel)
 			results = append(results, archResult{
-				digest:    sd.Metadata.Digest,
-				arch:      arch,
-				exitCode:  exitCode,
-				grypePath: grypeRel,
-				stderrRel: stderrRel,
+				digest:           sd.Metadata.Digest,
+				arch:             arch,
+				scanGenerationID: sd.Metadata.ScanGenerationID,
+				scanCreatedAt:    sd.Metadata.CreatedAt,
+				exitCode:         exitCode,
+				grypePath:        grypeRel,
+				stderrRel:        stderrRel,
 			})
 		}
 	}
@@ -260,19 +320,19 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 
 		if r.exitCode == 0 {
 			if strings.TrimSpace(grypeJSON) == "" {
-				recordScanFailure(ctx, r.digest, r.arch,
+				recordScanFailure(ctx, r.digest, r.arch, r.scanGenerationID,
 					externalimage.NewScanFailureError(externalimage.ErrParseScanResult,
 						"grype JSON result is empty"),
 					false, 0, 0)
 				logger.Warn("grype JSON result is empty",
 					zap.String("digest", r.digest),
 					zap.String("arch", r.arch))
-			} else if err := storeBuilderScanResult(ctx, r.digest, r.arch, grypeJSON); err != nil {
+			} else if err := storeBuilderScanResult(ctx, r.digest, r.arch, r.scanGenerationID, r.scanCreatedAt, grypeJSON); err != nil {
 				logger.Warn("failed to store scan result",
 					zap.String("digest", r.digest),
 					zap.String("arch", r.arch),
 					zap.Error(err))
-				recordScanFailure(ctx, r.digest, r.arch, err, false, 0, 0)
+				recordScanFailure(ctx, r.digest, r.arch, r.scanGenerationID, err, false, 0, 0)
 			} else {
 				logger.Info("stored scan result",
 					zap.String("digest", r.digest),
@@ -289,7 +349,7 @@ func processCompletedScansBatch(ctx context.Context, cache *scan.ScanCapacityCac
 			if stderr != "" {
 				msg = fmt.Sprintf("grype exited with code %d: %s", r.exitCode, stderr)
 			}
-			recordScanFailure(ctx, r.digest, r.arch,
+			recordScanFailure(ctx, r.digest, r.arch, r.scanGenerationID,
 				externalimage.NewScanFailureError(externalimage.ErrScanExecutionFailed, msg),
 				false, 0, 0)
 			logger.Warn("scan failed",
@@ -420,7 +480,7 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 			}
 
 			if exitCode == 0 {
-				err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch)
+				err := handleSuccessfulScan(ctx, runner, sd.WorkDir, digest, arch, sd.Metadata.ScanGenerationID, sd.Metadata.CreatedAt)
 				if err != nil {
 					if errors.Is(err, builder.ErrSSH) {
 						logger.Warn("transient SSH error reading grype result, will retry next cycle",
@@ -433,13 +493,13 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 							zap.String("digest", digest),
 							zap.String("arch", arch),
 							zap.Error(err))
-						recordScanFailure(ctx, digest, arch, err, false, 0, 0)
+						recordScanFailure(ctx, digest, arch, sd.Metadata.ScanGenerationID, err, false, 0, 0)
 					}
 				} else {
 					successArchs = append(successArchs, arch)
 				}
 			} else {
-				handleFailedScan(ctx, runner, sd.WorkDir, digest, arch, exitCode)
+				handleFailedScan(ctx, runner, sd.WorkDir, digest, arch, sd.Metadata.ScanGenerationID, exitCode)
 			}
 		} else {
 			age := now.Sub(sd.Metadata.CreatedAt)
@@ -451,7 +511,7 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 					zap.Duration("timeout", scan.ScanTimeout))
 				killGrypeProcess(ctx, runner, sd.WorkDir, arch)
 				writeExitCode(ctx, runner, sd.WorkDir, arch, 124)
-				handleFailedScan(ctx, runner, sd.WorkDir, digest, arch, 124)
+				handleFailedScan(ctx, runner, sd.WorkDir, digest, arch, sd.Metadata.ScanGenerationID, 124)
 				status.Done = true
 				status.ExitCode = "124"
 			} else {
@@ -478,7 +538,7 @@ func processScanDir(ctx context.Context, cache *scan.ScanCapacityCache, vm build
 //     without marking the scan as failed or cleaning up the scan dir.
 //   - All other errors (permanent): the caller should call recordScanFailure
 //     and clean up the scan dir.
-func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string) error {
+func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch, scanGenerationID string, scanCreatedAt time.Time) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.handle_successful_scan")
 	defer span.Finish()
 
@@ -493,7 +553,7 @@ func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workD
 			"grype JSON result is empty")
 	}
 
-	if err := storeBuilderScanResult(ctx, digest, arch, grypeJSON); err != nil {
+	if err := storeBuilderScanResult(ctx, digest, arch, scanGenerationID, scanCreatedAt, grypeJSON); err != nil {
 		return err
 	}
 
@@ -505,7 +565,7 @@ func handleSuccessfulScan(ctx context.Context, runner buildbackend.Runner, workD
 
 // handleFailedScan reads the grype stderr and records the scan failure.
 // Grype failures are non-retryable (same SBOM gives same result).
-func handleFailedScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch string, exitCode int) {
+func handleFailedScan(ctx context.Context, runner buildbackend.Runner, workDir, digest, arch, scanGenerationID string, exitCode int) {
 	span, ctx := telemetry.StartSpan(ctx, "listener.handle_failed_scan")
 	defer span.Finish()
 
@@ -520,7 +580,7 @@ func handleFailedScan(ctx context.Context, runner buildbackend.Runner, workDir, 
 		msg = fmt.Sprintf("grype exited with code %d: %s", exitCode, stderr)
 	}
 
-	recordScanFailure(ctx, digest, arch,
+	recordScanFailure(ctx, digest, arch, scanGenerationID,
 		externalimage.NewScanFailureError(externalimage.ErrScanExecutionFailed, msg),
 		false, 0, 0)
 
@@ -623,18 +683,26 @@ func handleMissingBuilder(ctx context.Context, cache *scan.ScanCapacityCache, ma
 		zap.Int("scanCount", len(scans)))
 
 	for _, s := range scans {
-		for _, arch := range expectedArchs {
-			if err := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
-				Digest:            s.Digest,
-				Arch:              arch,
-				Status:            externalimage.ScanStatusQueued,
-				ScanStatusMessage: "builder VM no longer exists",
-			}); err != nil {
-				logger.Warn("failed to set scan status to queued for missing builder",
-					zap.String("digest", s.Digest),
-					zap.String("arch", arch),
-					zap.Error(err))
-			}
+		affected, err := externalimage.RequeueScanGeneration(
+			ctx,
+			s.Digest,
+			s.Architectures,
+			s.ScanGenerationID,
+			"builder VM no longer exists",
+		)
+		if err != nil {
+			logger.Warn("failed to requeue scan generation for missing builder",
+				zap.String("digest", s.Digest),
+				zap.String("generation_id", s.ScanGenerationID),
+				zap.Strings("architectures", s.Architectures),
+				zap.Error(err))
+			continue
+		}
+		if affected == 0 {
+			logger.Info("missing builder scan was already superseded; leaving current scan unchanged",
+				zap.String("digest", s.Digest),
+				zap.String("generation_id", s.ScanGenerationID))
+			continue
 		}
 
 		reenqueueScan(ctx, s.Digest)

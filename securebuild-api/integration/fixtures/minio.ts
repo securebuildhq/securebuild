@@ -73,7 +73,10 @@ async function uploadSeedBlobs(s3Client: S3Client): Promise<void> {
   console.log('Uploading seed blobs to MinIO...');
 
   for (const blob of SEED_BLOBS) {
-    const keyPrefix = `${stripDigestAlgo(blob.digest)}/${blob.arch}`;
+    const basePrefix = `${stripDigestAlgo(blob.digest)}/${blob.arch}`;
+    const keyPrefix = blob.generationId
+      ? `${basePrefix}/scan-generations/${blob.generationId}`
+      : basePrefix;
 
     if (blob.rawResult) {
       await s3Client.send(new PutObjectCommand({
@@ -94,7 +97,7 @@ async function uploadSeedBlobs(s3Client: S3Client): Promise<void> {
     if (blob.sbom) {
       await s3Client.send(new PutObjectCommand({
         Bucket: IMAGE_SCANS_BUCKET,
-        Key: `${keyPrefix}/sbom.json.gz`,
+        Key: `${basePrefix}/sbom.json.gz`,
         Body: gzipSync(Buffer.from(blob.sbom)),
       }));
     }

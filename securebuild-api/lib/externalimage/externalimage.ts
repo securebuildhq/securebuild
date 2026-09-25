@@ -5,7 +5,7 @@ import { getParam } from '../data/param';
 import { traceFunction } from '../observability/tracing';
 import { parseUTCTimestamp } from '../utils/timestamp';
 import { enqueueWork } from '../utils/queue';
-import { getRawResult, getParsedResultsDetails, getSBOM } from './blobstore';
+import { getRawResult, getParsedResultsDetails, getScanResultObject, getSBOM } from './blobstore';
 
 
 export async function upsertExternalImage(registry: string, imageName: string, imageTag: string, digest: string, username: string | null, password: string | null, teamId: string): Promise<TrackedExternalImage> {
@@ -238,6 +238,36 @@ export async function decryptPassword(encryptedPassword: string): Promise<string
   return new TextDecoder().decode(decrypted);
 }
 
+type PublishedScanResultRow = {
+  is_in_object_store: boolean;
+  selected_scan_generation_id?: string | null;
+  raw_object_key?: string | null;
+  details_object_key?: string | null;
+};
+
+async function getPublishedScanResult(
+  row: PublishedScanResultRow,
+  digest: string,
+  arch: string,
+  format: 'raw' | 'parsed',
+): Promise<string | null> {
+  if (row.selected_scan_generation_id) {
+    const selectedKey = format === 'raw' ? row.raw_object_key : row.details_object_key;
+    if (!selectedKey) {
+      throw new Error(`Selected scan generation ${row.selected_scan_generation_id} has no ${format} object key for digest=${digest} arch=${arch}`);
+    }
+    return getScanResultObject(selectedKey);
+  }
+
+  if (!row.is_in_object_store) {
+    return null;
+  }
+
+  return format === 'raw'
+    ? getRawResult(digest, arch)
+    : getParsedResultsDetails(digest, arch);
+}
+
 /**
  * Get stored credentials for an external image from the database.
  * Returns decrypted credentials if found, or null if no credentials exist.
@@ -413,10 +443,16 @@ export const getExternalImageScan = traceFunction('lib.externalimage.getExternal
     const db = getDB(await getParam("DB_URI"))
 
     // Query metadata only — blob content is fetched from object store
-    const query = `select escan.is_in_object_store, escan.created_at as scan_created_at, esbom.created_at as sbom_created_at, esbom.image_size_bytes as image_size_bytes,
+    const query = `select escan.is_in_object_store, escan.selected_scan_generation_id,
+      generation.raw_object_key, generation.details_object_key,
+      escan.created_at as scan_created_at, esbom.created_at as sbom_created_at, esbom.image_size_bytes as image_size_bytes,
       escan.status, escan.scan_status_message, escan.scan_status_updated_at, escan.scan_attempted_at,
       esbom.last_security_scanned_at as scan_completed_at, escan.updated_at, esbom.image_digest
       from external_image_scan escan
+      left join external_image_scan_generation generation
+        on generation.generation_id = escan.selected_scan_generation_id
+        and generation.digest = escan.digest
+        and generation.arch = escan.arch
       left join external_image_sbom esbom on escan.digest = esbom.digest and escan.arch = esbom.arch
       where escan.digest = $1 and escan.arch = $2`
 
@@ -431,16 +467,7 @@ export const getExternalImageScan = traceFunction('lib.externalimage.getExternal
     // is_in_object_store records whether a completed result is available. A
     // subsequent rescan may move status back to queued/running/failed while
     // preserving that previous result, so status must not gate blob reads.
-    let scanResult: string | null = null
-    if (row.is_in_object_store) {
-      try {
-        scanResult = format === 'raw'
-          ? await getRawResult(digest, arch)
-          : await getParsedResultsDetails(digest, arch)
-      } catch (err) {
-        throw new Error(`getExternalImageScan: failed to fetch ${format} blob for digest=${digest} arch=${arch}: ${err}`)
-      }
-    }
+    const scanResult = await getPublishedScanResult(row, digest, arch, format)
 
     return {
       scanResult,
@@ -904,6 +931,9 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
         SELECT
           escan.digest,
           escan.is_in_object_store,
+          escan.selected_scan_generation_id,
+          generation.raw_object_key,
+          generation.details_object_key,
           escan.created_at as scan_created_at,
           esbom.last_security_scanned_at as scan_completed_at,
           esbom.created_at as digest_first_seen_at,
@@ -915,6 +945,10 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
           esbom_status.status_message as sbom_status_message,
           esbom_status.status_updated_at as sbom_status_updated_at
         FROM external_image_scan escan
+          LEFT JOIN external_image_scan_generation generation
+            ON generation.generation_id = escan.selected_scan_generation_id
+            AND generation.digest = escan.digest
+            AND generation.arch = escan.arch
           LEFT JOIN external_image_sbom esbom
             ON esbom.digest = escan.digest
             AND esbom.arch = escan.arch
@@ -930,16 +964,7 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
       // Process scan results. A queued/running/failed rescan may still have a
       // result from the previous successful scan in object storage.
       for (const row of scanResult.rows) {
-        let scanResultBlob: string | null = null
-        if (row.is_in_object_store) {
-          try {
-            scanResultBlob = format === 'raw'
-              ? await getRawResult(row.digest, arch)
-              : await getParsedResultsDetails(row.digest, arch)
-          } catch (err) {
-            throw new Error(`getBatchExternalImageScans: failed to fetch ${format} blob for digest=${row.digest} arch=${arch}: ${err}`)
-          }
-        }
+        const scanResultBlob = await getPublishedScanResult(row, row.digest, arch, format)
         resultMap.set(row.digest, {
           digest: row.digest,
           scanResult: scanResultBlob,

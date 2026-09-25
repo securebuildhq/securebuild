@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,16 +51,19 @@ var ErrNoBuilderAvailable = errors.New("no builder available for scan")
 // ScanMetadata is the JSON metadata file written to each scan directory on the
 // builder. It allows the poller to discover scans and know which DB rows to update.
 type ScanMetadata struct {
-	Digest     string    `json:"digest"`
-	CreatedAt  time.Time `json:"created_at"`
-	RetryCount int       `json:"retry_count"`
+	Digest           string    `json:"digest"`
+	ScanGenerationID string    `json:"scan_generation_id"`
+	CreatedAt        time.Time `json:"created_at"`
+	RetryCount       int       `json:"retry_count"`
 }
 
 // ScanDirInfo tracks a single active scan directory on a builder.
 type ScanDirInfo struct {
-	Digest    string
-	WorkDir   string
-	CreatedAt time.Time
+	Digest           string
+	ScanGenerationID string
+	Architectures    []string
+	WorkDir          string
+	CreatedAt        time.Time
 }
 
 // ScanCapacityCache tracks active scans per builder, maintained from filesystem
@@ -360,9 +364,11 @@ func InitScanCapacityCache(ctx context.Context) (*ScanCapacityCache, error) {
 					continue
 				}
 				activeScans = append(activeScans, ScanDirInfo{
-					Digest:    s.Metadata.Digest,
-					WorkDir:   s.WorkDir,
-					CreatedAt: s.Metadata.CreatedAt,
+					Digest:           s.Metadata.Digest,
+					ScanGenerationID: s.Metadata.ScanGenerationID,
+					Architectures:    scanDirArchitectures(s),
+					WorkDir:          s.WorkDir,
+					CreatedAt:        s.Metadata.CreatedAt,
 				})
 			}
 			cache.SetBuilderScans(b.BuilderVM.ID, activeScans)
@@ -376,6 +382,15 @@ func InitScanCapacityCache(ctx context.Context) (*ScanCapacityCache, error) {
 		zap.Int("activeScans", cache.GetTotalScanCount()))
 
 	return cache, nil
+}
+
+func scanDirArchitectures(status ScanDirStatus) []string {
+	architectures := make([]string, 0, len(status.ArchStatuses))
+	for arch := range status.ArchStatuses {
+		architectures = append(architectures, arch)
+	}
+	sort.Strings(architectures)
+	return architectures
 }
 
 // BuilderForScan is a running builder with its build assignment status.

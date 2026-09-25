@@ -11,11 +11,13 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/buildbackend"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	image "github.com/securebuildhq/securebuild/pkg/image"
+	imagetypes "github.com/securebuildhq/securebuild/pkg/image/types"
 	"github.com/securebuildhq/securebuild/pkg/listener/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/scan"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
+	"github.com/tuvistavie/securerandom"
 	"go.uber.org/zap"
 )
 
@@ -123,7 +125,7 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 	// Atomically claim the scan: set status to "running" for archs that are
 	// not already running. If 0 rows are updated, another handler already
 	// claimed it.
-	claimed, claimErr := claimScanForDispatch(ctx, p.Digest, archsToScan)
+	scanGenerationID, claimed, claimErr := claimScanForDispatch(ctx, p.Digest, archsToScan)
 	if claimErr != nil {
 		// DB error during claim — return error so the listener retries.
 		return fmt.Errorf("failed to claim scan for dispatch: %w", claimErr)
@@ -140,9 +142,9 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 	// that happens when all builders are full. We return nil so the message
 	// is cleanly completed (not retried by the listener) and the scheduler
 	// re-enqueues when capacity frees up.
-	dispatchErr := dispatchScanToBuilder(ctx, cache, p.Digest, sbomByArch, archsToScan)
+	dispatchErr := dispatchScanToBuilder(ctx, cache, p.Digest, scanGenerationID, sbomByArch, archsToScan)
 	if dispatchErr != nil {
-		if revertErr := revertScanToQueued(ctx, p.Digest, archsToScan); revertErr != nil {
+		if revertErr := revertScanToQueued(ctx, p.Digest, scanGenerationID, archsToScan); revertErr != nil {
 			// Revert failed — return the revert error so the listener retries
 			// the message instead of acking it. Without this, the scan row
 			// stays "running" with no builder work directory until the 1-hour
@@ -170,7 +172,7 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 //  2. Launch grype for all archs — if any launch fails, already-launched
 //     grype processes are killed before returning, preventing orphaned
 //     processes that would race with a retry on a different builder.
-func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, digest string, sbomByArch map[string]string, archsToScan []string) error {
+func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, digest, scanGenerationID string, sbomByArch map[string]string, archsToScan []string) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.dispatch_scan_to_builder")
 	defer span.Finish()
 
@@ -202,9 +204,10 @@ func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, d
 	defer runner.Close()
 
 	metadata := scan.ScanMetadata{
-		Digest:     digest,
-		CreatedAt:  time.Now().UTC(),
-		RetryCount: 0,
+		Digest:           digest,
+		ScanGenerationID: scanGenerationID,
+		CreatedAt:        time.Now().UTC(),
+		RetryCount:       0,
 	}
 
 	// Phase 1: Prepare all files. If any step fails here, no grype processes
@@ -249,9 +252,11 @@ func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, d
 	// SetBuilderScans call will reconcile on the next cycle.
 	slotReserved = false
 	cache.AddScan(builderVM.ID, scan.ScanDirInfo{
-		Digest:    digest,
-		WorkDir:   workDir,
-		CreatedAt: metadata.CreatedAt,
+		Digest:           digest,
+		ScanGenerationID: scanGenerationID,
+		Architectures:    append([]string(nil), archsToScan...),
+		WorkDir:          workDir,
+		CreatedAt:        metadata.CreatedAt,
 	})
 
 	logger.Info("dispatched external image scan to builder",
@@ -323,8 +328,17 @@ func buildGrypeLaunchCommand(workDir, arch string) string {
 // single architecture. Returns an error if parsing, marshalling, or DB
 // storage fails. The error is wrapped in a ScanFailureError with the
 // appropriate error code for the caller to pass to recordScanFailure.
-func storeBuilderScanResult(ctx context.Context, digest, arch, scanResult string) error {
+func parseBuilderScanResultDetails(scanResult string, scanCreatedAt time.Time) (*imagetypes.ImageScanResultDetails, error) {
 	parsedResults, err := image.ParseScanResultDetails(scanResult)
+	if err != nil {
+		return nil, err
+	}
+	parsedResults.CreatedAt = scanCreatedAt.UTC()
+	return parsedResults, nil
+}
+
+func storeBuilderScanResult(ctx context.Context, digest, arch, scanGenerationID string, scanCreatedAt time.Time, scanResult string) error {
+	parsedResults, err := parseBuilderScanResultDetails(scanResult, scanCreatedAt)
 	if err != nil {
 		return externalimage.NewScanFailureError(externalimage.ErrParseScanResult,
 			fmt.Sprintf("failed to parse scan result: %s", err.Error()))
@@ -345,6 +359,7 @@ func storeBuilderScanResult(ctx context.Context, digest, arch, scanResult string
 	if err := externalimage.SetExternalImageScanStatus(ctx, externalimage.SetExternalImageScanStatusParams{
 		Digest:               digest,
 		Arch:                 arch,
+		ScanGenerationID:     scanGenerationID,
 		Status:               externalimage.ScanStatusSucceeded,
 		ParsedResults:        string(countsJSON),
 		ParsedResultsDetails: string(summaryJSON),
@@ -401,44 +416,38 @@ func isScanAlreadyRunning(ctx context.Context, digest string) bool {
 // results are preserved so the API can still serve the last successful scan
 // while waiting for the retry.
 //
-// Returns (true, nil) if at least one row was claimed, (false, nil) if another
-// handler already claimed it, or (false, err) if the claim failed due to a
-// database error. On DB error, the caller returns the error so the listener
-// retries the message instead of dispatching without a durable claim.
-func claimScanForDispatch(ctx context.Context, digest string, archs []string) (bool, error) {
-	conn := persistence.MustGetPooledPostgresSession(ctx)
-	defer conn.Release()
-
-	staleThreshold := fmt.Sprintf("%d minutes", int(scan.ScanStalenessThreshold.Minutes()))
-
-	tag, err := conn.Exec(ctx,
-		`UPDATE external_image_scan
-		 SET status = 'running',
-		     scan_status_updated_at = NOW(),
-		     scan_status_message = NULL,
-		     scan_attempted_at = COALESCE(scan_attempted_at, NOW())
-		 WHERE digest = $1 AND arch = ANY($2::text[])
-		   AND (status != 'running' OR scan_status_updated_at <= NOW() - interval '`+staleThreshold+`')`,
-		digest, archs)
+// Returns the generated publication ID plus true when at least one row was
+// claimed. A false claim means another handler already claimed it. On DB error,
+// the caller returns the error so the listener retries the message instead of
+// dispatching without a durable claim.
+func claimScanForDispatch(ctx context.Context, digest string, archs []string) (string, bool, error) {
+	scanGenerationID, err := securerandom.Hex(24)
 	if err != nil {
-		return false, fmt.Errorf("failed to claim scan rows: %w", err)
+		return "", false, fmt.Errorf("failed to generate scan generation ID: %w", err)
 	}
-	return tag.RowsAffected() > 0, nil
+
+	claimed, err := externalimage.ClaimScanGeneration(ctx, digest, archs, scanGenerationID, scan.ScanStalenessThreshold)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to claim scan rows: %w", err)
+	}
+	return scanGenerationID, claimed, nil
 }
 
 // revertScanToQueued transitions scan rows from "running" back to "queued"
 // after a failed dispatch. This allows the listener retry to re-dispatch
 // the scan to a different builder. Without this, the scan would stay
 // "running" forever with no builder work directory for the poller to find.
-func revertScanToQueued(ctx context.Context, digest string, archs []string) error {
+func revertScanToQueued(ctx context.Context, digest, scanGenerationID string, archs []string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
 	_, err := conn.Exec(ctx,
 		`UPDATE external_image_scan
-		 SET status = 'queued', scan_status_updated_at = NOW(), scan_status_message = NULL
-		 WHERE digest = $1 AND arch = ANY($2::text[]) AND status = 'running'`,
-		digest, archs)
+		 SET status = 'queued', scan_status_updated_at = NOW(), scan_status_message = NULL,
+		     current_scan_generation_id = NULL
+		 WHERE digest = $1 AND arch = ANY($2::text[]) AND status = 'running'
+		   AND current_scan_generation_id = $3`,
+		digest, archs, scanGenerationID)
 	if err != nil {
 		return fmt.Errorf("failed to revert scan status to queued: %w", err)
 	}
