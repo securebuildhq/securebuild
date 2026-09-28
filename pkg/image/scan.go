@@ -285,6 +285,17 @@ func ParseScanResultDetails(scanResult string) (*types.ImageScanResultDetails, e
 	return &details, nil
 }
 
+// MarshalScanResultSummary returns the compact representation persisted in
+// external_image_scan.parsed_results. FixedCounts is deliberately present even
+// when every value is zero so readers can distinguish "no fixable CVEs" from
+// older rows where fixability data is unavailable.
+func MarshalScanResultSummary(details *types.ImageScanResultDetails) ([]byte, error) {
+	return json.Marshal(types.ImageScanResultSummary{
+		Counts:      details.Counts,
+		FixedCounts: details.FixedCounts,
+	})
+}
+
 // extractVulnerabilityInfo extracts vulnerability and artifact information from a match object
 func extractVulnerabilityInfo(match grypeMatchResult) types.VulnerabilityDetail {
 	var epssPercentile float64

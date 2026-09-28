@@ -2,6 +2,7 @@ package image
 
 import (
 	_ "embed"
+	"encoding/json"
 	"testing"
 
 	"github.com/securebuildhq/securebuild/pkg/image/types"
@@ -188,5 +189,47 @@ func TestParseScanResultDetails(t *testing.T) {
 	}
 	if result.Descriptor.Version != "0.95.0" {
 		t.Errorf("Expected descriptor version '0.95.0', got '%s'", result.Descriptor.Version)
+	}
+}
+
+func TestMarshalScanResultSummary(t *testing.T) {
+	details := &types.ImageScanResultDetails{
+		Counts: types.ImageScanResult{
+			CriticalCount: 2,
+			HighCount:     3,
+			TotalCount:    5,
+		},
+		FixedCounts: types.ImageScanResult{
+			CriticalCount: 1,
+			HighCount:     0,
+			TotalCount:    1,
+		},
+	}
+
+	data, err := MarshalScanResultSummary(details)
+	if err != nil {
+		t.Fatalf("MarshalScanResultSummary failed: %v", err)
+	}
+
+	var summary map[string]json.RawMessage
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("unmarshal compact summary: %v", err)
+	}
+	if len(summary) != 2 {
+		t.Fatalf("expected only counts and fixed_counts, got %s", data)
+	}
+
+	var counts, fixedCounts types.ImageScanResult
+	if err := json.Unmarshal(summary["counts"], &counts); err != nil {
+		t.Fatalf("unmarshal counts: %v", err)
+	}
+	if err := json.Unmarshal(summary["fixed_counts"], &fixedCounts); err != nil {
+		t.Fatalf("unmarshal fixed_counts: %v", err)
+	}
+	if counts != details.Counts {
+		t.Fatalf("counts mismatch: want %+v, got %+v", details.Counts, counts)
+	}
+	if fixedCounts != details.FixedCounts {
+		t.Fatalf("fixed counts mismatch: want %+v, got %+v", details.FixedCounts, fixedCounts)
 	}
 }

@@ -330,7 +330,7 @@ func storeBuilderScanResult(ctx context.Context, digest, arch, scanResult string
 			fmt.Sprintf("failed to parse scan result: %s", err.Error()))
 	}
 
-	countsJSON, err := json.Marshal(parsedResults.Counts)
+	countsJSON, err := image.MarshalScanResultSummary(parsedResults)
 	if err != nil {
 		return externalimage.NewScanFailureError(externalimage.ErrMarshalScanCounts,
 			fmt.Sprintf("failed to marshal scan counts: %s", err.Error()))

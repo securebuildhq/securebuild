@@ -99,7 +99,7 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(res.headers.get('X-SecureBuild-Scan_Format')).toBe('raw');
     });
 
-    it('POST /scan-summary {digests} returns counts', async () => {
+    it('POST /scan-summary {digests} returns total and fixed counts', async () => {
       const res = await env.client.post('/api/v1/external-image/scan-summary', {
         digests: [SUMMARY_ONLY_DIGEST],
       });
@@ -119,7 +119,26 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(counts.low).toBe(5);
       expect(counts.total).toBe(14);
 
+      const fixedCounts = entry.fixed_counts as Record<string, unknown>;
+      expect(fixedCounts.critical).toBe(1);
+      expect(fixedCounts.high).toBe(2);
+      expect(fixedCounts.medium).toBe(0);
+      expect(fixedCounts.low).toBe(1);
+      expect(fixedCounts.total).toBe(4);
+
       expect(res.headers.get('X-SecureBuild-Result_Count')).toBe('1');
+    });
+
+    it('POST /scan-summary preserves missing fixed_counts for legacy rows', async () => {
+      const res = await env.client.post('/api/v1/external-image/scan-summary', {
+        digests: [digest()],
+      });
+      expect(res.status).toBe(200);
+
+      const data = res.data as Record<string, unknown>[];
+      expect(data).toHaveLength(1);
+      expect(data[0].counts).toBeDefined();
+      expect(data[0]).not.toHaveProperty('fixed_counts');
     });
 
     it('serves the previous scan result while a rescan is queued', async () => {
