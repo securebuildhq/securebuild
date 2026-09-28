@@ -1,0 +1,38 @@
+cmd/cli/backfill-external-image-fixed-counts.go
+  h_62f1d0a6c1bb6a 1-71
+cmd/cli/root.go
+  h_62f1d0a6c1bb6a 27
+docs/external-image-fixed-counts.md
+  h_62f1d0a6c1bb6a 1-68
+pkg/externalimage/fixed_counts_backfill.go
+  h_62f1d0a6c1bb6a 1-230
+pkg/externalimage/fixed_counts_backfill_test.go
+  h_62f1d0a6c1bb6a 1-138
+pkg/image/scan.go
+  h_62f1d0a6c1bb6a 288-298
+pkg/image/scan_test.go
+  h_62f1d0a6c1bb6a 5,194-235
+pkg/image/types/types.go
+  h_62f1d0a6c1bb6a 73-81
+pkg/listener/external-image-sbom.go
+  h_62f1d0a6c1bb6a 264
+pkg/listener/external-image-scan-builder.go
+  h_62f1d0a6c1bb6a 333
+securebuild-api/app/api/v1/external-image/scan-summary/route.ts
+  h_62f1d0a6c1bb6a 9,26,43-45,200,205-210,223
+securebuild-api/integration/api/v1/external-image/scan.test.ts
+  h_62f1d0a6c1bb6a 102,122-128,132-143
+securebuild-api/integration/api/v1/external-image/seed-data/external-image-scan.yaml
+  h_62f1d0a6c1bb6a 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c8816f734f53018d81ad29b55ffb7e1a6c92014",
+  "prompts": {},
+  "humans": {
+    "h_62f1d0a6c1bb6a": {
+      "author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
