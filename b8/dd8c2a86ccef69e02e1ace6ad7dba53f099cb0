@@ -1,0 +1,23 @@
+integration/worker/external_image/external_image_test.go
+  s_add6465065d763::t_137ba848f28737 1005-1059,1078-1146,1298-1320,1331-1332,1343-1344,1346-1352
+pkg/externalimage/cleanup.go
+  s_add6465065d763::t_0fe8e84952a542 11,24,46-53,145-147,151-153,172-174,199-202,234-237,282-289,291-296,298-301,337-340,374-377,382
+pkg/externalimage/publication.go
+  s_add6465065d763::t_ed140a29ed6fc2 169-174,176,197,203,222-234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8dd8c2a86ccef69e02e1ace6ad7dba53f099cb0",
+  "prompts": {},
+  "sessions": {
+    "s_add6465065d763": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c9f2-0431-77a0-b18b-11d7b243804c",
+        "model": "unknown"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
