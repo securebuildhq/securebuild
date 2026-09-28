@@ -1,0 +1,25 @@
+pkg/dynamicparam/dynamicparam.go
+  s_add6465065d763::t_c61283a72f4326 17-20,25,36-39,43
+pkg/persistence/pg.go
+  s_add6465065d763::t_c61283a72f4326 86-88,91,99,104,107-116,124
+integration/worker/external_image/external_image_test.go
+  s_add6465065d763::t_aa3e25702d821b 16,1067
+  s_add6465065d763::t_c61283a72f4326 24,1062-1066,1068-1080
+  s_add6465065d763::t_6467a566aef993 1081-1082
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d87e4c777b7c9dd72b356c53feaa6d1cdb581f95",
+  "prompts": {},
+  "sessions": {
+    "s_add6465065d763": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0c9f2-0431-77a0-b18b-11d7b243804c",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
