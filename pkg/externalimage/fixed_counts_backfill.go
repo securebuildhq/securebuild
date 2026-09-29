@@ -93,6 +93,9 @@ func runFixedCountsBackfill(
 	for {
 		candidates, err := listCandidates(ctx, afterDigest, afterArch, options.BatchSize)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, ctxErr
+			}
 			return result, fmt.Errorf("list fixed-count backfill candidates: %w", err)
 		}
 		if len(candidates) == 0 {
@@ -103,6 +106,9 @@ func runFixedCountsBackfill(
 			result.Candidates++
 			detailsJSON, err := loadDetails(ctx, candidate.Digest, candidate.Arch)
 			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return result, ctxErr
+				}
 				result.Failed++
 				if firstFailure == nil {
 					firstFailure = fmt.Errorf("load details for %s/%s: %w", candidate.Digest, candidate.Arch, err)
@@ -148,6 +154,9 @@ func runFixedCountsBackfill(
 
 			updated, err := updateSummary(ctx, candidate, string(summaryJSON))
 			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return result, ctxErr
+				}
 				result.Failed++
 				if firstFailure == nil {
 					firstFailure = fmt.Errorf("update summary for %s/%s: %w", candidate.Digest, candidate.Arch, err)

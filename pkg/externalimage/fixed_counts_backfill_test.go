@@ -136,3 +136,88 @@ func TestRunFixedCountsBackfillReportsInvalidDetails(t *testing.T) {
 		t.Fatalf("unexpected failure result: %+v", result)
 	}
 }
+
+func TestRunFixedCountsBackfillStopsWhenListingIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	lister := func(context.Context, string, string, int) ([]fixedCountsBackfillCandidate, error) {
+		cancel()
+		return nil, ctx.Err()
+	}
+	loader := func(context.Context, string, string) (string, error) {
+		t.Fatal("canceled listing must stop before loading details")
+		return "", nil
+	}
+	updater := func(context.Context, fixedCountsBackfillCandidate, string) (bool, error) {
+		t.Fatal("canceled listing must stop before updating summaries")
+		return false, nil
+	}
+
+	result, err := runFixedCountsBackfill(ctx, FixedCountsBackfillOptions{BatchSize: 100}, lister, loader, updater)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if result.Failed != 0 || result.Candidates != 0 {
+		t.Fatalf("cancellation must not be counted as a row failure: %+v", result)
+	}
+}
+
+func TestRunFixedCountsBackfillStopsWhenLoadingIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	lister := func(context.Context, string, string, int) ([]fixedCountsBackfillCandidate, error) {
+		return []fixedCountsBackfillCandidate{
+			{Digest: "sha256:aaa", Arch: "x86_64"},
+			{Digest: "sha256:bbb", Arch: "aarch64"},
+		}, nil
+	}
+	loadCalls := 0
+	loader := func(context.Context, string, string) (string, error) {
+		loadCalls++
+		cancel()
+		return "", ctx.Err()
+	}
+	updater := func(context.Context, fixedCountsBackfillCandidate, string) (bool, error) {
+		t.Fatal("canceled details load must stop before updating summaries")
+		return false, nil
+	}
+
+	result, err := runFixedCountsBackfill(ctx, FixedCountsBackfillOptions{BatchSize: 100}, lister, loader, updater)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if loadCalls != 1 {
+		t.Fatalf("expected cancellation to stop the batch after one load, got %d", loadCalls)
+	}
+	if result.Failed != 0 || result.Candidates != 1 {
+		t.Fatalf("cancellation must not be counted as a row failure: %+v", result)
+	}
+}
+
+func TestRunFixedCountsBackfillStopsWhenUpdatingIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	lister := func(context.Context, string, string, int) ([]fixedCountsBackfillCandidate, error) {
+		return []fixedCountsBackfillCandidate{
+			{Digest: "sha256:aaa", Arch: "x86_64"},
+			{Digest: "sha256:bbb", Arch: "aarch64"},
+		}, nil
+	}
+	loader := func(context.Context, string, string) (string, error) {
+		return `{"counts":{"total":1},"fixed_counts":{"total":1}}`, nil
+	}
+	updateCalls := 0
+	updater := func(context.Context, fixedCountsBackfillCandidate, string) (bool, error) {
+		updateCalls++
+		cancel()
+		return false, ctx.Err()
+	}
+
+	result, err := runFixedCountsBackfill(ctx, FixedCountsBackfillOptions{BatchSize: 100}, lister, loader, updater)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if updateCalls != 1 {
+		t.Fatalf("expected cancellation to stop the batch after one update, got %d", updateCalls)
+	}
+	if result.Failed != 0 || result.Candidates != 1 || result.Updated != 0 {
+		t.Fatalf("cancellation must not be counted as a row failure: %+v", result)
+	}
+}
