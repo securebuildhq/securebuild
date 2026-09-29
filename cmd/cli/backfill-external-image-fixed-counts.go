@@ -26,10 +26,14 @@ existing parsed_results_details objects. Run after all SecureBuild scan writers
 and the scan-summary API have been updated. The command is safe to interrupt and
 rerun; conditional updates do not overwrite concurrently completed scans.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if timeout <= 0 {
 				return fmt.Errorf("timeout must be positive")
 			}
+			cmd.SilenceUsage = true
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
 			initSource, err := param.ResolveInitSource()
 			if err != nil {
 				return err
