@@ -57,6 +57,9 @@ func acquireScanCandidateCleanupConnection(ctx context.Context) (*pgxpool.Conn, 
 // and a time budget so cleanup cannot monopolize the worker.
 func StartScanCandidateCleanup(ctx context.Context) {
 	runCleanup := func() {
+		if err := CleanupLegacyExternalImageScans(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			logger.Warn("failed to clean up legacy external image scans", zap.Error(err))
+		}
 		stats, err := drainExternalImageScanCandidates(ctx, scanCandidateCleanupBatchSize, scanCandidateCleanupRunBudget)
 		telemetry.Count(telemetry.MetricExternalImageScanCleanupDeleted, stats.deleted, nil)
 		telemetry.Count(telemetry.MetricExternalImageScanCleanupFailed, stats.failed, nil)

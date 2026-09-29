@@ -25,5 +25,6 @@ func RootCmd() *cobra.Command {
 	rootCmd.AddCommand(MigratePackageSelectorsCmd())
 	rootCmd.AddCommand(MigrateBuildPriorityCmd())
 	rootCmd.AddCommand(BackfillExternalImageFixedCountsCmd())
+	rootCmd.AddCommand(ScheduleLegacyScanCleanupCmd())
 	return &rootCmd
 }

@@ -25,8 +25,8 @@ func TestRunFixedCountsBackfill(t *testing.T) {
 		}
 		return nil, nil
 	}
-	loader := func(_ context.Context, digest, arch string) (string, error) {
-		return details[digest+"/"+arch], nil
+	loader := func(_ context.Context, candidate fixedCountsBackfillCandidate) (string, error) {
+		return details[candidate.Digest+"/"+candidate.Arch], nil
 	}
 	updated := map[string]string{}
 	updater := func(_ context.Context, candidate fixedCountsBackfillCandidate, summary string) (bool, error) {
@@ -63,7 +63,7 @@ func TestRunFixedCountsBackfillDryRun(t *testing.T) {
 		}
 		return nil, nil
 	}
-	loader := func(context.Context, string, string) (string, error) {
+	loader := func(context.Context, fixedCountsBackfillCandidate) (string, error) {
 		return `{"counts":{"total":1},"fixed_counts":{"total":0}}`, nil
 	}
 	updater := func(context.Context, fixedCountsBackfillCandidate, string) (bool, error) {
@@ -89,7 +89,7 @@ func TestRunFixedCountsBackfillDoesNotOverwriteConcurrentScan(t *testing.T) {
 		}
 		return nil, nil
 	}
-	loader := func(context.Context, string, string) (string, error) {
+	loader := func(context.Context, fixedCountsBackfillCandidate) (string, error) {
 		return `{"counts":{"total":1},"fixed_counts":{"total":1}}`, nil
 	}
 	updater := func(context.Context, fixedCountsBackfillCandidate, string) (bool, error) {
@@ -117,8 +117,8 @@ func TestRunFixedCountsBackfillReportsInvalidDetails(t *testing.T) {
 		}
 		return nil, nil
 	}
-	loader := func(_ context.Context, digest, _ string) (string, error) {
-		if digest == "sha256:error" {
+	loader := func(_ context.Context, candidate fixedCountsBackfillCandidate) (string, error) {
+		if candidate.Digest == "sha256:error" {
 			return "", errors.New("object not found")
 		}
 		return `{"counts":{"total":1}}`, nil
@@ -143,7 +143,7 @@ func TestRunFixedCountsBackfillStopsWhenListingIsCanceled(t *testing.T) {
 		cancel()
 		return nil, ctx.Err()
 	}
-	loader := func(context.Context, string, string) (string, error) {
+	loader := func(context.Context, fixedCountsBackfillCandidate) (string, error) {
 		t.Fatal("canceled listing must stop before loading details")
 		return "", nil
 	}
@@ -170,7 +170,7 @@ func TestRunFixedCountsBackfillStopsWhenLoadingIsCanceled(t *testing.T) {
 		}, nil
 	}
 	loadCalls := 0
-	loader := func(context.Context, string, string) (string, error) {
+	loader := func(context.Context, fixedCountsBackfillCandidate) (string, error) {
 		loadCalls++
 		cancel()
 		return "", ctx.Err()
@@ -200,7 +200,7 @@ func TestRunFixedCountsBackfillStopsWhenUpdatingIsCanceled(t *testing.T) {
 			{Digest: "sha256:bbb", Arch: "aarch64"},
 		}, nil
 	}
-	loader := func(context.Context, string, string) (string, error) {
+	loader := func(context.Context, fixedCountsBackfillCandidate) (string, error) {
 		return `{"counts":{"total":1},"fixed_counts":{"total":1}}`, nil
 	}
 	updateCalls := 0

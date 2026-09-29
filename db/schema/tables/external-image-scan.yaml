@@ -5,6 +5,10 @@ schema:
     primaryKey:
     - digest
     - arch
+    indexes:
+    - name: external_image_scan_legacy_cleanup_idx
+      columns:
+      - legacy_cleanup_after
     columns:
     - name: digest
       type: text
@@ -46,3 +50,9 @@ schema:
     - name: selected_scan_generation_id
       type: text
       comment: "Complete immutable generation currently served by scan result readers"
+    - name: legacy_cleanup_after
+      type: timestamp with time zone
+      comment: "Legacy object retirement deadline, or retry lease while cleanup is in progress"
+    - name: legacy_cleaned_at
+      type: timestamp with time zone
+      comment: "Set only after both legacy scan objects have been deleted"

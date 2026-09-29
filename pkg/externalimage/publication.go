@@ -408,6 +408,11 @@ func selectScanCandidate(ctx context.Context, params SetExternalImageScanStatusP
 	result, err := tx.Exec(ctx, `
 		UPDATE external_image_scan
 		SET selected_scan_generation_id = $3,
+		    legacy_cleanup_after = CASE
+		        WHEN legacy_cleaned_at IS NULL
+		        THEN COALESCE(legacy_cleanup_after, $5::timestamptz + INTERVAL '24 hours')
+		        ELSE legacy_cleanup_after
+		    END,
 		    parsed_results = $4,
 		    status = 'succeeded',
 		    scan_status_message = NULL,

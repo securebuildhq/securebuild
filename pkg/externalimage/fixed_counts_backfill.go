@@ -30,10 +30,12 @@ type FixedCountsBackfillResult struct {
 }
 
 type fixedCountsBackfillCandidate struct {
-	Digest          string
-	Arch            string
-	ParsedResults   string
-	ScanCompletedAt *time.Time
+	Digest               string
+	Arch                 string
+	ParsedResults        string
+	ScanCompletedAt      *time.Time
+	SelectedGenerationID string
+	DetailsKey           string
 }
 
 type fixedCountsBackfillDB interface {
@@ -42,7 +44,7 @@ type fixedCountsBackfillDB interface {
 }
 
 type fixedCountsCandidateLister func(context.Context, string, string, int) ([]fixedCountsBackfillCandidate, error)
-type fixedCountsDetailsLoader func(context.Context, string, string) (string, error)
+type fixedCountsDetailsLoader func(context.Context, fixedCountsBackfillCandidate) (string, error)
 type fixedCountsSummaryUpdater func(context.Context, fixedCountsBackfillCandidate, string) (bool, error)
 
 // BackfillExternalImageFixedCounts fills fixed_counts in the compact
@@ -72,7 +74,7 @@ func BackfillExternalImageFixedCounts(ctx context.Context, options FixedCountsBa
 		func(ctx context.Context, afterDigest, afterArch string, limit int) ([]fixedCountsBackfillCandidate, error) {
 			return listFixedCountsBackfillCandidates(ctx, conn, afterDigest, afterArch, limit)
 		},
-		store.getParsedResultsDetails,
+		store.loadFixedCountsDetails,
 		func(ctx context.Context, candidate fixedCountsBackfillCandidate, summary string) (bool, error) {
 			return updateFixedCountsSummary(ctx, conn, candidate, summary)
 		},
@@ -104,7 +106,7 @@ func runFixedCountsBackfill(
 
 		for _, candidate := range candidates {
 			result.Candidates++
-			detailsJSON, err := loadDetails(ctx, candidate.Digest, candidate.Arch)
+			detailsJSON, err := loadDetails(ctx, candidate)
 			if err != nil {
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return result, ctxErr
@@ -190,13 +192,17 @@ func listFixedCountsBackfillCandidates(
 	limit int,
 ) ([]fixedCountsBackfillCandidate, error) {
 	rows, err := db.Query(ctx, `
-		SELECT digest, arch, parsed_results, scan_completed_at
-		FROM external_image_scan
-		WHERE is_in_object_store = true
+		SELECT scan.digest, scan.arch, scan.parsed_results, scan.scan_completed_at,
+		       COALESCE(scan.selected_scan_generation_id, ''), COALESCE(generation.details_object_key, '')
+		FROM external_image_scan scan
+		LEFT JOIN external_image_scan_generation generation
+		 ON generation.generation_id = scan.selected_scan_generation_id
+		 AND generation.digest = scan.digest AND generation.arch = scan.arch
+		WHERE scan.is_in_object_store = true
 		  AND NULLIF(BTRIM(parsed_results), '') IS NOT NULL
 		  AND POSITION('"fixed_counts"' IN parsed_results) = 0
-		  AND (digest, arch) > ($1, $2)
-		ORDER BY digest, arch
+		  AND (scan.digest, scan.arch) > ($1, $2)
+		ORDER BY scan.digest, scan.arch
 		LIMIT $3
 	`, afterDigest, afterArch, limit)
 	if err != nil {
@@ -207,7 +213,7 @@ func listFixedCountsBackfillCandidates(
 	var candidates []fixedCountsBackfillCandidate
 	for rows.Next() {
 		var candidate fixedCountsBackfillCandidate
-		if err := rows.Scan(&candidate.Digest, &candidate.Arch, &candidate.ParsedResults, &candidate.ScanCompletedAt); err != nil {
+		if err := rows.Scan(&candidate.Digest, &candidate.Arch, &candidate.ParsedResults, &candidate.ScanCompletedAt, &candidate.SelectedGenerationID, &candidate.DetailsKey); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, candidate)
@@ -231,9 +237,26 @@ func updateFixedCountsSummary(
 		  AND arch = $3
 		  AND parsed_results IS NOT DISTINCT FROM $4
 		  AND scan_completed_at IS NOT DISTINCT FROM $5
-	`, summary, candidate.Digest, candidate.Arch, candidate.ParsedResults, candidate.ScanCompletedAt)
+		  AND COALESCE(selected_scan_generation_id, '') = $6
+	`, summary, candidate.Digest, candidate.Arch, candidate.ParsedResults, candidate.ScanCompletedAt, candidate.SelectedGenerationID)
 	if err != nil {
 		return false, err
 	}
 	return result.RowsAffected() == 1, nil
+}
+
+// Use the same generation selection as API readers. A selected generation must
+// never fall back to older legacy details, even if its metadata is incomplete.
+func (s *blobStore) loadFixedCountsDetails(ctx context.Context, candidate fixedCountsBackfillCandidate) (string, error) {
+	if candidate.SelectedGenerationID == "" {
+		return s.getParsedResultsDetails(ctx, candidate.Digest, candidate.Arch)
+	}
+	if candidate.DetailsKey == "" {
+		return "", fmt.Errorf("selected generation %s has no details object key", candidate.SelectedGenerationID)
+	}
+	compressed, err := s.getCompressed(ctx, candidate.DetailsKey)
+	if err != nil {
+		return "", err
+	}
+	return gunzipData(compressed)
 }
