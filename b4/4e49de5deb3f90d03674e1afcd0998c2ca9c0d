@@ -1,0 +1,21 @@
+cmd/cli/backfill-external-image-fixed-counts.go
+  s_1ef5432ba1326e::t_2c6cd5eab6338d 29,33-36
+cmd/cli/backfill-external-image-fixed-counts_test.go
+  s_1ef5432ba1326e::t_2c6cd5eab6338d 1-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b44e49de5deb3f90d03674e1afcd0998c2ca9c0d",
+  "prompts": {},
+  "sessions": {
+    "s_1ef5432ba1326e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0e8a7-ec36-7f33-86a9-f07d2d82bcd4",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
