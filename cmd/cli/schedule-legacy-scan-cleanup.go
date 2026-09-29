@@ -33,10 +33,11 @@ Run only after all scan readers and writers support generation-specific storage.
 			if batchSize < 1 || batchSize > 500 {
 				return fmt.Errorf("batch size must be between 1 and 500")
 			}
-			cmd.SilenceUsage = true
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Parsing and validation have succeeded; runtime failures need only the error.
+			cmd.SilenceUsage = true
 			initSource, err := param.ResolveInitSource()
 			if err != nil {
 				return err
