@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
@@ -34,6 +33,7 @@ type scanCandidateDeletion struct {
 	scanCandidateIdentity
 	rawKey     string
 	detailsKey string
+	lease      time.Time
 }
 
 type scanCandidateCleanupStats struct {
@@ -56,10 +56,26 @@ func acquireScanCandidateCleanupConnection(ctx context.Context) (*pgxpool.Conn, 
 // for restart recovery, then once per minute. Each pass uses bounded batches
 // and a time budget so cleanup cannot monopolize the worker.
 func StartScanCandidateCleanup(ctx context.Context) {
-	runCleanup := func() {
-		if err := CleanupLegacyExternalImageScans(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.Warn("failed to clean up legacy external image scans", zap.Error(err))
+	// Legacy retirement has its own cadence and budget. Wait for it on shutdown.
+	legacyDone := make(chan struct{})
+	go func() {
+		defer close(legacyDone)
+		ticker := time.NewTicker(scanCandidateCleanupInterval)
+		defer ticker.Stop()
+		for {
+			if err := CleanupLegacyExternalImageScans(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				logger.Warn("failed to clean up legacy external image scans", zap.Error(err))
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 		}
+	}()
+	defer func() { <-legacyDone }()
+	runCleanup := func() {
 		stats, err := drainExternalImageScanCandidates(ctx, scanCandidateCleanupBatchSize, scanCandidateCleanupRunBudget)
 		telemetry.Count(telemetry.MetricExternalImageScanCleanupDeleted, stats.deleted, nil)
 		telemetry.Count(telemetry.MetricExternalImageScanCleanupFailed, stats.failed, nil)
@@ -94,7 +110,7 @@ func StartScanCandidateCleanup(ctx context.Context) {
 }
 
 func drainExternalImageScanCandidates(ctx context.Context, batchSize int, budget time.Duration) (scanCandidateCleanupStats, error) {
-	if batchSize <= 0 {
+	if batchSize <= 0 || batchSize > scanCandidateCleanupBatchSize {
 		batchSize = scanCandidateCleanupBatchSize
 	}
 	if budget <= 0 {
@@ -114,7 +130,7 @@ func drainExternalImageScanCandidates(ctx context.Context, batchSize int, budget
 		if err != nil {
 			return total, err
 		}
-		if stats.examined < int64(batchSize) {
+		if stats.examined < int64(batchSize) || stats.deleted == 0 {
 			return total, nil
 		}
 		if err := drainCtx.Err(); err != nil {
@@ -124,7 +140,7 @@ func drainExternalImageScanCandidates(ctx context.Context, batchSize int, budget
 }
 
 // CleanupExternalImageScanCandidates drains expired candidates in batches of
-// limit until it catches up or reaches the same bounded time budget used by the
+// up to limit (capped at 500) until it catches up or reaches the time budget used by the
 // background worker. It is exported for integration tests and administrative
 // cleanup jobs.
 func CleanupExternalImageScanCandidates(ctx context.Context, limit int) error {
@@ -133,41 +149,23 @@ func CleanupExternalImageScanCandidates(ctx context.Context, limit int) error {
 }
 
 func cleanupExternalImageScanCandidateBatch(ctx context.Context, limit int) (scanCandidateCleanupStats, error) {
-	if limit <= 0 {
+	if limit <= 0 || limit > scanCandidateCleanupBatchSize {
 		limit = scanCandidateCleanupBatchSize
 	}
 
-	candidates, err := listExpiredScanCandidates(ctx, limit)
+	claimCtx, cancelClaim := scanCleanupClaimContext(ctx)
+	defer cancelClaim()
+	candidates, err := listExpiredScanCandidates(claimCtx, limit)
 	stats := scanCandidateCleanupStats{examined: int64(len(candidates))}
 	if err != nil || len(candidates) == 0 {
 		return stats, err
 	}
-
-	deletions := make([]scanCandidateDeletion, 0, len(candidates))
-	for _, candidate := range candidates {
-		if err := ctx.Err(); err != nil {
-			return stats, err
-		}
-		deletion, protected, err := claimExternalImageScanCandidateDeletion(ctx, candidate)
-		if err != nil {
-			stats.failed++
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return stats, err
-			}
-			logger.Warn("failed to claim external image scan candidate for cleanup",
-				zap.String("generation_id", candidate.generationID),
-				zap.String("digest", candidate.digest),
-				zap.String("arch", candidate.arch),
-				zap.Error(err))
-			continue
-		}
-		if protected {
-			stats.protected++
-			continue
-		}
-		if deletion != nil {
-			deletions = append(deletions, *deletion)
-		}
+	deletions, protected, err := claimExternalImageScanCandidateDeletions(claimCtx, candidates)
+	cancelClaim()
+	stats.protected = protected
+	if err != nil {
+		stats.failed = int64(len(candidates))
+		return stats, err
 	}
 	if len(deletions) == 0 {
 		return stats, nil
@@ -233,94 +231,177 @@ func listExpiredScanCandidates(ctx context.Context, limit int) ([]scanCandidateI
 	return candidates, nil
 }
 
-func claimExternalImageScanCandidateDeletion(ctx context.Context, candidate scanCandidateIdentity) (*scanCandidateDeletion, bool, error) {
+// Claim a batch in one transaction, locking scan rows before generation rows
+// just like publication. SKIP LOCKED lets other work progress past busy rows.
+func claimExternalImageScanCandidateDeletions(ctx context.Context, candidates []scanCandidateIdentity) ([]scanCandidateDeletion, int64, error) {
 	conn, err := acquireScanCandidateCleanupConnection(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, 0, err
 	}
 	defer conn.Release()
-
 	tx, err := conn.Begin(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, 0, err
 	}
 	defer tx.Rollback(ctx)
 
-	var currentGeneration, selectedGeneration sql.NullString
-	err = tx.QueryRow(ctx, `
-		SELECT current_scan_generation_id, selected_scan_generation_id
-		FROM external_image_scan
-		WHERE digest = $1 AND arch = $2
-		FOR UPDATE
-	`, candidate.digest, candidate.arch).Scan(&currentGeneration, &selectedGeneration)
-	if err != nil && err != pgx.ErrNoRows {
-		return nil, false, fmt.Errorf("failed to lock scan row during candidate cleanup: %w", err)
-	}
-
-	var rawKey, detailsKey, state string
-	var cleanupAfter sql.NullTime
-	err = tx.QueryRow(ctx, `
-		SELECT raw_object_key, details_object_key, state, cleanup_after
-		FROM external_image_scan_generation
-		WHERE generation_id = $1 AND digest = $2 AND arch = $3
-		FOR UPDATE
-	`, candidate.generationID, candidate.digest, candidate.arch).Scan(&rawKey, &detailsKey, &state, &cleanupAfter)
+	ids, digests, arches := scanCandidateArrays(candidates)
+	rows, err := tx.Query(ctx, `
+		WITH pairs AS MATERIALIZED (
+		  SELECT DISTINCT digest, arch FROM unnest($1::text[], $2::text[]) AS c(digest, arch)
+		), locked AS MATERIALIZED (
+		  SELECT scan.digest, scan.arch, scan.current_scan_generation_id, scan.selected_scan_generation_id
+		  FROM external_image_scan scan JOIN pairs USING (digest, arch)
+		  ORDER BY scan.digest, scan.arch FOR UPDATE OF scan SKIP LOCKED
+		)
+		SELECT pairs.digest, pairs.arch, locked.current_scan_generation_id, locked.selected_scan_generation_id,
+		locked.digest IS NOT NULL OR NOT EXISTS (
+		  SELECT 1 FROM external_image_scan scan WHERE scan.digest = pairs.digest AND scan.arch = pairs.arch
+		) AS claimable
+		FROM pairs LEFT JOIN locked USING (digest, arch)
+	`, digests, arches)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("failed to lock scan candidate during cleanup: %w", err)
+		return nil, 0, fmt.Errorf("lock scan cleanup batch: %w", err)
 	}
-	if selectedGeneration.Valid && selectedGeneration.String == candidate.generationID {
-		_, err = tx.Exec(ctx, `
-			UPDATE external_image_scan_generation
-			SET state = 'selected', cleanup_after = NULL
-			WHERE generation_id = $1 AND digest = $2 AND arch = $3
-		`, candidate.generationID, candidate.digest, candidate.arch)
-		if err != nil {
-			return nil, false, err
+	type scanKey struct{ digest, arch string }
+	type ownership struct{ current, selected sql.NullString }
+	owners := make(map[scanKey]ownership)
+	for rows.Next() {
+		var key scanKey
+		var owner ownership
+		var claimable bool
+		if err := rows.Scan(&key.digest, &key.arch, &owner.current, &owner.selected, &claimable); err != nil {
+			rows.Close()
+			return nil, 0, err
 		}
-		return nil, true, tx.Commit(ctx)
+		// A locked existing scan must not be confused with an absent scan.
+		if claimable {
+			owners[key] = owner
+		}
 	}
-
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	var claimable []scanCandidateIdentity
+	for _, c := range candidates {
+		if _, ok := owners[scanKey{c.digest, c.arch}]; ok {
+			claimable = append(claimable, c)
+		}
+	}
+	if len(claimable) == 0 {
+		return nil, 0, nil
+	}
+	ids, digests, arches = scanCandidateArrays(claimable)
+	rows, err = tx.Query(ctx, `
+		SELECT generation.generation_id, generation.digest, generation.arch,
+		generation.raw_object_key, generation.details_object_key, generation.state, generation.cleanup_after
+		FROM external_image_scan_generation generation
+		JOIN unnest($1::text[], $2::text[], $3::text[]) AS c(generation_id, digest, arch)
+		  ON generation.generation_id = c.generation_id AND generation.digest = c.digest AND generation.arch = c.arch
+		ORDER BY generation.generation_id, generation.digest, generation.arch
+		FOR UPDATE OF generation SKIP LOCKED
+	`, ids, digests, arches)
+	if err != nil {
+		return nil, 0, fmt.Errorf("lock generation cleanup batch: %w", err)
+	}
+	var deletions []scanCandidateDeletion
+	var selected, revoke []scanCandidateIdentity
+	var protected int64
 	now := time.Now()
-	// A publisher renews cleanup_after while holding the candidate row lock
-	// before it touches object storage. Recheck the deadline under that same
-	// lock so a candidate listed just before renewal cannot be deleted.
-	if !cleanupAfter.Valid || cleanupAfter.Time.After(now) {
-		return nil, true, tx.Commit(ctx)
+	lease := now.Add(scanCandidateCleanupLease).UTC().Truncate(time.Microsecond)
+	for rows.Next() {
+		var c scanCandidateDeletion
+		var state string
+		var cleanupAfter sql.NullTime
+		if err := rows.Scan(&c.generationID, &c.digest, &c.arch, &c.rawKey, &c.detailsKey, &state, &cleanupAfter); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		owner := owners[scanKey{c.digest, c.arch}]
+		if owner.selected.Valid && owner.selected.String == c.generationID {
+			selected = append(selected, c.scanCandidateIdentity)
+			protected++
+			continue
+		}
+		// Recheck publication leases under the generation lock. A publisher may
+		// have renewed one after the initial list query.
+		if state == "selected" || !cleanupAfter.Valid || cleanupAfter.Time.After(now) {
+			protected++
+			continue
+		}
+		c.lease = lease
+		deletions = append(deletions, c)
+		if owner.current.Valid && owner.current.String == c.generationID {
+			revoke = append(revoke, c.scanCandidateIdentity)
+		}
 	}
-	if currentGeneration.Valid && currentGeneration.String == candidate.generationID {
-		result, err := tx.Exec(ctx, `
-			UPDATE external_image_scan
-			SET current_scan_generation_id = NULL
-			WHERE digest = $1 AND arch = $2
-			  AND current_scan_generation_id = $3
-		`, candidate.digest, candidate.arch, candidate.generationID)
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if len(selected) > 0 {
+		ids, digests, arches = scanCandidateArrays(selected)
+		_, err = tx.Exec(ctx, `
+			UPDATE external_image_scan_generation generation SET state = 'selected', cleanup_after = NULL
+			FROM unnest($1::text[], $2::text[], $3::text[]) AS c(generation_id, digest, arch)
+			WHERE generation.generation_id = c.generation_id AND generation.digest = c.digest AND generation.arch = c.arch
+		`, ids, digests, arches)
 		if err != nil {
-			return nil, false, fmt.Errorf("failed to revoke expired scan candidate ownership: %w", err)
-		}
-		if result.RowsAffected() != 1 {
-			return nil, false, fmt.Errorf("failed to revoke expired scan candidate ownership: expected 1 scan row, updated %d", result.RowsAffected())
+			return nil, 0, err
 		}
 	}
-
-	_, err = tx.Exec(ctx, `
-		UPDATE external_image_scan_generation
-		SET state = 'deleting', cleanup_after = $4
-		WHERE generation_id = $1 AND digest = $2 AND arch = $3
-	`, candidate.generationID, candidate.digest, candidate.arch, now.Add(scanCandidateCleanupLease))
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to mark scan candidate deleting: %w", err)
+	// Revoke only ownership observed under a scan lock. An absent scan may
+	// have been inserted meanwhile; do not acquire its lock after generation locks.
+	if len(revoke) > 0 {
+		ids, digests, arches = scanCandidateArrays(revoke)
+		_, err = tx.Exec(ctx, `
+			UPDATE external_image_scan scan SET current_scan_generation_id = NULL
+			FROM unnest($1::text[], $2::text[], $3::text[]) AS c(generation_id, digest, arch)
+			WHERE scan.digest = c.digest AND scan.arch = c.arch AND scan.current_scan_generation_id = c.generation_id
+		`, ids, digests, arches)
+		if err != nil {
+			return nil, 0, fmt.Errorf("revoke expired scan batch ownership: %w", err)
+		}
+	}
+	if len(deletions) > 0 {
+		identities := make([]scanCandidateIdentity, len(deletions))
+		for i, c := range deletions {
+			identities[i] = c.scanCandidateIdentity
+		}
+		ids, digests, arches = scanCandidateArrays(identities)
+		_, err = tx.Exec(ctx, `
+			UPDATE external_image_scan_generation generation SET state = 'deleting', cleanup_after = $4
+			FROM unnest($1::text[], $2::text[], $3::text[]) AS c(generation_id, digest, arch)
+			WHERE generation.generation_id = c.generation_id AND generation.digest = c.digest AND generation.arch = c.arch
+		`, ids, digests, arches, lease)
+		if err != nil {
+			return nil, 0, fmt.Errorf("mark scan batch deleting: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, false, fmt.Errorf("failed to commit scan candidate deletion claim: %w", err)
+		return nil, 0, fmt.Errorf("commit scan batch deletion claim: %w", err)
 	}
-	return &scanCandidateDeletion{
-		scanCandidateIdentity: candidate,
-		rawKey:                rawKey,
-		detailsKey:            detailsKey,
-	}, false, nil
+	return deletions, protected, nil
+}
+
+func scanCandidateArrays(candidates []scanCandidateIdentity) ([]string, []string, []string) {
+	ids, digests, arches := make([]string, len(candidates)), make([]string, len(candidates)), make([]string, len(candidates))
+	for i, c := range candidates {
+		ids[i], digests[i], arches[i] = c.generationID, c.digest, c.arch
+	}
+	return ids, digests, arches
+}
+
+// Leave time for deletion and checkpointing. A short caller deadline keeps half
+// its remaining budget; the normal 45s pass reserves the final five seconds.
+func scanCleanupClaimContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		reserve := min(5*time.Second, remaining/2)
+		return context.WithDeadline(ctx, deadline.Add(-reserve))
+	}
+	return context.WithCancel(ctx)
 }
 
 func deleteScanCandidateMetadata(ctx context.Context, candidates []scanCandidateDeletion) (int64, error) {
@@ -331,10 +412,12 @@ func deleteScanCandidateMetadata(ctx context.Context, candidates []scanCandidate
 	generationIDs := make([]string, len(candidates))
 	digests := make([]string, len(candidates))
 	architectures := make([]string, len(candidates))
+	leases := make([]time.Time, len(candidates))
 	for i, candidate := range candidates {
 		generationIDs[i] = candidate.generationID
 		digests[i] = candidate.digest
 		architectures[i] = candidate.arch
+		leases[i] = candidate.lease
 	}
 
 	conn, err := acquireScanCandidateCleanupConnection(ctx)
@@ -344,22 +427,23 @@ func deleteScanCandidateMetadata(ctx context.Context, candidates []scanCandidate
 	defer conn.Release()
 	result, err := conn.Exec(ctx, `
 		DELETE FROM external_image_scan_generation generation
-		USING unnest($1::text[], $2::text[], $3::text[]) AS candidate(generation_id, digest, arch)
+		USING unnest($1::text[], $2::text[], $3::text[], $4::timestamptz[]) AS candidate(generation_id, digest, arch, lease)
 		WHERE generation.generation_id = candidate.generation_id
 		  AND generation.digest = candidate.digest
 		  AND generation.arch = candidate.arch
 		  AND generation.state = 'deleting'
+		  AND generation.cleanup_after = candidate.lease
 		  AND NOT EXISTS (
-			SELECT 1
-			FROM external_image_scan scan
-			WHERE scan.digest = generation.digest
-			  AND scan.arch = generation.arch
-			  AND (
-			    scan.current_scan_generation_id = generation.generation_id
-			    OR scan.selected_scan_generation_id = generation.generation_id
-			  )
+		  SELECT 1
+		  FROM external_image_scan scan
+		  WHERE scan.digest = generation.digest
+		    AND scan.arch = generation.arch
+		    AND (
+		    scan.current_scan_generation_id = generation.generation_id
+		    OR scan.selected_scan_generation_id = generation.generation_id
 		  )
-	`, generationIDs, digests, architectures)
+		)
+	`, generationIDs, digests, architectures, leases)
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete scan candidate metadata: %w", err)
 	}
@@ -384,9 +468,9 @@ func reportScanCandidateCleanupMetrics(ctx context.Context) error {
 	var oldestOverdueSeconds float64
 	err = conn.QueryRow(ctx, `
 		SELECT COUNT(*),
-		       COALESCE(SUM(raw_size_bytes + details_size_bytes), 0),
-		       COUNT(*) FILTER (WHERE cleanup_after <= NOW()),
-		       COALESCE(EXTRACT(EPOCH FROM NOW() - MIN(cleanup_after) FILTER (WHERE cleanup_after <= NOW())), 0)
+		COALESCE(SUM(raw_size_bytes + details_size_bytes), 0),
+		COUNT(*) FILTER (WHERE cleanup_after <= NOW()),
+		COALESCE(EXTRACT(EPOCH FROM NOW() - MIN(cleanup_after) FILTER (WHERE cleanup_after <= NOW())), 0)
 		FROM external_image_scan_generation
 		WHERE cleanup_after IS NOT NULL
 		  AND state != 'selected'

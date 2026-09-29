@@ -148,7 +148,3 @@ func (s *blobStore) getSBOM(ctx context.Context, digest, arch string) (string, e
 	}
 	return gunzipData(data)
 }
-
-func (s *blobStore) objectSize(ctx context.Context, key string) (int64, bool, error) {
-	return s.client.ObjectSize(ctx, key)
-}

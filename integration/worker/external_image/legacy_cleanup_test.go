@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/securebuildhq/securebuild/integration/testutil"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
+	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/stretchr/testify/require"
 )
@@ -104,34 +105,52 @@ func TestLegacyExternalImageScanCleanup(t *testing.T) {
 		require.Nil(t, deadline("migrated"), "completed legacy retirement must stay completed")
 	})
 
-	t.Run("dry run measures storage and scheduling is idempotent", func(t *testing.T) {
+	t.Run("dry run and scheduling need no storage and are idempotent", func(t *testing.T) {
 		publish("backfill", "backfill-generation")
 		_, err := db.Pool.Exec(ctx, `UPDATE external_image_scan SET legacy_cleanup_after=NULL WHERE digest=$1`, digest("backfill"))
 		require.NoError(t, err)
-		result, err := externalimage.ScheduleLegacyExternalImageScanCleanup(ctx, externalimage.LegacyScanCleanupOptions{DryRun: true, BatchSize: 1})
+		noStorageParams := *param.GetParam(ctx)
+		noStorageParams.R2AccessKey, noStorageParams.R2SecretKey, noStorageParams.R2Endpoint = "", "", ""
+		noStorageCtx := context.WithValue(ctx, param.ParamContextKey, &noStorageParams)
+		// Invalid metadata in the first page must not hide a later eligible row.
+		publish("absent-legacy", "absent-first-generation")
+		originalDeadline := deadline("absent-legacy")
+		_, err = db.Pool.Exec(ctx, `UPDATE external_image_scan SET legacy_cleanup_after=NULL WHERE digest=$1`, digest("absent-legacy"))
+		require.NoError(t, err)
+		_, err = db.Pool.Exec(ctx, `UPDATE external_image_scan_generation SET raw_object_key='invalid' WHERE generation_id='absent-first-generation'`)
+		require.NoError(t, err)
+		invalid, err := externalimage.ScheduleLegacyExternalImageScanCleanup(noStorageCtx, externalimage.LegacyScanCleanupOptions{DryRun: true, BatchSize: 1})
+		require.Error(t, err)
+		require.Equal(t, 1, invalid.Failed)
+		require.Equal(t, 1, invalid.WouldSchedule)
+		require.Nil(t, deadline("backfill"))
+		_, err = db.Pool.Exec(ctx, `UPDATE external_image_scan_generation SET raw_object_key=$1 WHERE generation_id='absent-first-generation'`, key("absent-legacy", "scan-generations/absent-first-generation/raw_result.json.gz"))
+		require.NoError(t, err)
+		_, err = db.Pool.Exec(ctx, `UPDATE external_image_scan SET legacy_cleanup_after=$1 WHERE digest=$2`, originalDeadline, digest("absent-legacy"))
+		require.NoError(t, err)
+		result, err := externalimage.ScheduleLegacyExternalImageScanCleanup(noStorageCtx, externalimage.LegacyScanCleanupOptions{DryRun: true, BatchSize: 1})
 		require.NoError(t, err)
 		require.Equal(t, 1, result.WouldSchedule)
-		require.EqualValues(t, 2, result.Objects)
-		require.Positive(t, result.Bytes)
+		require.EqualValues(t, 2, result.IntendedKeys)
 		require.Nil(t, deadline("backfill"))
 		require.False(t, cleaned("backfill"))
 		require.True(t, exists(key("backfill", "raw_result.json.gz")))
-		result, err = externalimage.ScheduleLegacyExternalImageScanCleanup(ctx, externalimage.LegacyScanCleanupOptions{BatchSize: 1})
+		result, err = externalimage.ScheduleLegacyExternalImageScanCleanup(noStorageCtx, externalimage.LegacyScanCleanupOptions{BatchSize: 1})
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Scheduled)
 		scheduled := deadline("backfill")
 		require.NotNil(t, scheduled)
 		require.WithinDuration(t, time.Now().Add(24*time.Hour), *scheduled, time.Minute)
-		result, err = externalimage.ScheduleLegacyExternalImageScanCleanup(ctx, externalimage.LegacyScanCleanupOptions{BatchSize: 1})
+		result, err = externalimage.ScheduleLegacyExternalImageScanCleanup(noStorageCtx, externalimage.LegacyScanCleanupOptions{BatchSize: 1})
 		require.NoError(t, err)
 		require.Zero(t, result.Candidates)
 		require.Equal(t, scheduled, deadline("backfill"))
 	})
 
-	t.Run("missing replacement retains legacy objects and retries after lease", func(t *testing.T) {
+	t.Run("invalid replacement metadata retains legacy objects and retries after lease", func(t *testing.T) {
 		publish("missing-replacement", "missing-generation")
 		replacement := key("missing-replacement", "scan-generations/missing-generation/parsed_results_details.json.gz")
-		_, err := minio.S3Client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String("image-scans"), Key: aws.String(replacement)})
+		_, err := db.Pool.Exec(ctx, `UPDATE external_image_scan_generation SET details_object_key=$1 WHERE generation_id=$2`, key("missing-replacement", "parsed_results_details.json.gz"), "missing-generation")
 		require.NoError(t, err)
 		expire("missing-replacement")
 		require.Error(t, externalimage.CleanupLegacyExternalImageScans(ctx))
@@ -140,7 +159,8 @@ func TestLegacyExternalImageScanCleanup(t *testing.T) {
 		require.True(t, exists(key("missing-replacement", "parsed_results_details.json.gz")))
 		// The claim is persisted even on failure, avoiding a tight retry loop.
 		require.True(t, deadline("missing-replacement").After(time.Now()))
-		put(replacement, `{"counts":{"total":2},"fixed_counts":{"total":1}}`)
+		_, err = db.Pool.Exec(ctx, `UPDATE external_image_scan_generation SET details_object_key=$1 WHERE generation_id=$2`, replacement, "missing-generation")
+		require.NoError(t, err)
 		expire("missing-replacement")
 		require.NoError(t, externalimage.CleanupLegacyExternalImageScans(ctx))
 		require.True(t, cleaned("missing-replacement"))

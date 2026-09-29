@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/smithy-go"
 	"github.com/securebuildhq/securebuild/pkg/dynamicparam"
 	"github.com/securebuildhq/securebuild/pkg/param"
 )
@@ -252,21 +250,4 @@ func (r *R2Client) CopyObject(ctx context.Context, sourceKey, destKey string) er
 	}
 
 	return nil
-}
-
-// ObjectSize reads compressed object size without downloading its contents.
-// Only a missing object is reported as absent; permissions and transport errors
-// must remain errors, especially when callers use this to authorize cleanup.
-func (r *R2Client) ObjectSize(ctx context.Context, key string) (int64, bool, error) {
-	output, err := r.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(r.bucket), Key: aws.String(r.ensurePrefix(key)),
-	})
-	if err != nil {
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) && (apiErr.ErrorCode() == "NotFound" || apiErr.ErrorCode() == "NoSuchKey") {
-			return 0, false, nil
-		}
-		return 0, false, fmt.Errorf("head object %q: %w", key, err)
-	}
-	return aws.ToInt64(output.ContentLength), true, nil
 }

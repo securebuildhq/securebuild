@@ -1004,7 +1004,7 @@ func TestExternalImageScanGenerationPublication(t *testing.T) {
 		assert.Zero(t, remaining)
 	})
 
-	t.Run("cleanup deadline returns without panicking", func(t *testing.T) {
+	t.Run("cleanup skips locked generations and deletes the rest of the batch", func(t *testing.T) {
 		timeoutDigest := "sha256:cleanup-timeout-12345678901234567890123456789012345"
 		generations := []string{"cleanup-timeout-first", "cleanup-timeout-locked", "cleanup-timeout-last"}
 		conn := persistence.MustGetPooledPostgresSession(ctx)
@@ -1034,29 +1034,50 @@ func TestExternalImageScanGenerationPublication(t *testing.T) {
 		`, generations[1], timeoutDigest, arch)
 		require.NoError(t, err)
 
-		cleanupCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-		err = externalimage.CleanupExternalImageScanCandidates(cleanupCtx, 100)
-		cancel()
-		require.ErrorIs(t, err, context.DeadlineExceeded)
+		cleanupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		require.NoError(t, externalimage.CleanupExternalImageScanCandidates(cleanupCtx, 100))
+		// The lock is still held: unlocked work must have reached deletion already.
+		conn = persistence.MustGetPooledPostgresSession(ctx)
+		var remaining []string
+		rows, err := conn.Query(ctx, `SELECT generation_id FROM external_image_scan_generation WHERE digest=$1 AND arch=$2`, timeoutDigest, arch)
+		require.NoError(t, err)
+		for rows.Next() {
+			var id string
+			require.NoError(t, rows.Scan(&id))
+			remaining = append(remaining, id)
+		}
+		rows.Close()
+		require.NoError(t, rows.Err())
+		require.Equal(t, []string{generations[1]}, remaining)
 		require.NoError(t, lockTx.Rollback(ctx))
 		lockConn.Release()
 
-		conn = persistence.MustGetPooledPostgresSession(ctx)
-		var lastState string
-		require.NoError(t, conn.QueryRow(ctx, `
-			SELECT state
-			FROM external_image_scan_generation
-			WHERE generation_id = $1 AND digest = $2 AND arch = $3
-		`, generations[2], timeoutDigest, arch).Scan(&lastState))
-		assert.Equal(t, "failed", lastState, "cleanup must stop when its deadline expires")
-		_, err = conn.Exec(ctx, `
-			UPDATE external_image_scan_generation
-			SET state = 'failed', cleanup_after = NOW() - INTERVAL '1 minute'
-			WHERE digest = $1 AND arch = $2
-		`, timeoutDigest, arch)
 		conn.Release()
+
+		// A locked scan is not an absent scan. Cleanup must leave its generation
+		// and ownership intact, then revoke ownership once the scan lock is free.
+		require.NoError(t, externalimage.SetScanStatusRunning(ctx, timeoutDigest, arch, generations[1]))
+		lockConn = persistence.MustGetPooledPostgresSession(ctx)
+		defer lockConn.Release()
+		lockTx, err = lockConn.Begin(ctx)
 		require.NoError(t, err)
+		defer lockTx.Rollback(ctx)
+		_, err = lockTx.Exec(ctx, `SELECT digest FROM external_image_scan WHERE digest=$1 AND arch=$2 FOR UPDATE`, timeoutDigest, arch)
+		require.NoError(t, err)
+		require.NoError(t, externalimage.CleanupExternalImageScanCandidates(cleanupCtx, 100))
+		var state string
+		require.NoError(t, lockTx.QueryRow(ctx, `SELECT state FROM external_image_scan_generation WHERE generation_id=$1 AND digest=$2 AND arch=$3`, generations[1], timeoutDigest, arch).Scan(&state))
+		require.Equal(t, "failed", state)
+		require.NoError(t, lockTx.Rollback(ctx))
 		require.NoError(t, externalimage.CleanupExternalImageScanCandidates(ctx, 100))
+		var count int
+		require.NoError(t, lockConn.QueryRow(ctx, `SELECT COUNT(*) FROM external_image_scan_generation WHERE digest=$1`, timeoutDigest).Scan(&count))
+		require.Zero(t, count)
+		var current *string
+		require.NoError(t, lockConn.QueryRow(ctx, `SELECT current_scan_generation_id FROM external_image_scan WHERE digest=$1 AND arch=$2`, timeoutDigest, arch).Scan(&current))
+		require.Nil(t, current)
+
 	})
 
 	t.Run("dynamic R2 initialization returns cleanup deadline", func(t *testing.T) {

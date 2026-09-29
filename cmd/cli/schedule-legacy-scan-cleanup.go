@@ -21,8 +21,9 @@ func ScheduleLegacyScanCleanupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schedule-legacy-scan-cleanup",
 		Short: "Schedule redundant legacy scan objects for cleanup",
-		Long: `Inventory legacy raw/detail scan objects with validated generation replacements.
-Dry-run reports object counts and compressed bytes without changing storage or PostgreSQL.
+		Long: `Find legacy raw/detail scan keys with published generation replacements using PostgreSQL only.
+Dry-run reports eligible rows and intended delete keys without changing PostgreSQL.
+Neither dry-run nor scheduling contacts object storage or measures stored bytes.
 Execution schedules cleanup after a new 24-hour grace period; it never deletes objects.
 Run only after all scan readers and writers support generation-specific storage.`,
 		Args: cobra.NoArgs,
@@ -30,8 +31,8 @@ Run only after all scan readers and writers support generation-specific storage.
 			if timeout <= 0 {
 				return fmt.Errorf("timeout must be positive")
 			}
-			if batchSize < 1 || batchSize > 500 {
-				return fmt.Errorf("batch size must be between 1 and 500")
+			if batchSize < 1 || batchSize > 5000 {
+				return fmt.Errorf("batch size must be between 1 and 5000")
 			}
 			return nil
 		},
@@ -60,22 +61,21 @@ Run only after all scan readers and writers support generation-specific storage.
 				DryRun:    dryRun,
 				BatchSize: batchSize,
 			})
-			fmt.Fprintf(cmd.OutOrStdout(), "candidates=%d would_schedule=%d scheduled=%d skipped_concurrent=%d failed=%d objects=%d bytes=%d dry_run=%t\n",
+			fmt.Fprintf(cmd.OutOrStdout(), "candidates=%d would_schedule=%d scheduled=%d skipped_concurrent=%d failed=%d intended_keys=%d dry_run=%t\n",
 				result.Candidates,
 				result.WouldSchedule,
 				result.Scheduled,
 				result.SkippedConcurrent,
 				result.Failed,
-				result.Objects,
-				result.Bytes,
+				result.IntendedKeys,
 				dryRun,
 			)
 			return scheduleErr
 		},
 	}
 
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "inventory candidate objects without scheduling cleanup")
-	cmd.Flags().IntVar(&batchSize, "batch-size", 100, "number of rows to read per database page (1-500)")
-	cmd.Flags().DurationVar(&timeout, "timeout", 60*time.Minute, "maximum time to inventory and schedule cleanup")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report eligible rows and intended keys without scheduling cleanup")
+	cmd.Flags().IntVar(&batchSize, "batch-size", 1000, "number of rows per database batch (1-5000)")
+	cmd.Flags().DurationVar(&timeout, "timeout", 60*time.Minute, "maximum time to inspect database rows and schedule cleanup")
 	return cmd
 }

@@ -11,55 +11,39 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	legacyScanCleanupBatchSize     = 100
-	legacyScanCleanupDeleteReserve = 5 * time.Second
-)
+const legacyScanCleanupBatchSize = 500
 
 type legacyScanCleanupCandidate struct {
 	digest, arch, generationID string
-	rawKey, detailsKey         string
-	rawSize, detailsSize       int64
+	rawKey, detailsKey, state  string
 	lease                      time.Time
 }
 
 type legacyScanObjectStore interface {
-	objectSize(context.Context, string) (int64, bool, error)
 	deleteMany(context.Context, []string) error
 }
 
-// validateLegacyReplacement deliberately accepts only generation-specific keys.
-// Legacy results must never be removed while they are still the published result.
-func validateLegacyReplacement(ctx context.Context, store legacyScanObjectStore, candidate legacyScanCleanupCandidate) error {
-	if candidate.generationID == "" ||
+// Publication validates both uploaded objects before selecting a generation.
+// Cleanup trusts that invariant and checks its identity in PostgreSQL only.
+func validateLegacyReplacement(candidate legacyScanCleanupCandidate) error {
+	if candidate.generationID == "" || candidate.state != "selected" ||
 		candidate.rawKey != generationRawResultKey(candidate.digest, candidate.arch, candidate.generationID) ||
 		candidate.detailsKey != generationParsedResultsDetailsKey(candidate.digest, candidate.arch, candidate.generationID) {
-		return fmt.Errorf("invalid selected generation object keys for %s/%s", candidate.digest, candidate.arch)
-	}
-	for _, artifact := range []struct {
-		key  string
-		size int64
-	}{{candidate.rawKey, candidate.rawSize}, {candidate.detailsKey, candidate.detailsSize}} {
-		size, exists, err := store.objectSize(ctx, artifact.key)
-		if err != nil {
-			return err
-		}
-		if !exists || size != artifact.size || size <= 0 {
-			return fmt.Errorf("selected object %q is missing or has unexpected size", artifact.key)
-		}
+		return fmt.Errorf("invalid selected generation metadata for %s/%s", candidate.digest, candidate.arch)
 	}
 	return nil
 }
 
 // CleanupLegacyExternalImageScans retires legacy raw/detail objects for images
-// with a selected replacement. It uses a separate bounded budget so generation
-// cleanup cannot starve legacy retirement (or vice versa).
+// with a selected replacement. Missing legacy keys are successful deletions.
 func CleanupLegacyExternalImageScans(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, scanCandidateCleanupRunBudget)
 	defer cancel()
 	var store *blobStore
 	for {
-		candidates, err := claimLegacyScanCleanupBatch(ctx)
+		claimCtx, cancelClaim := scanCleanupClaimContext(ctx)
+		candidates, err := claimLegacyScanCleanupBatch(claimCtx)
+		cancelClaim()
 		if err != nil {
 			return err
 		}
@@ -72,8 +56,7 @@ func CleanupLegacyExternalImageScans(ctx context.Context) error {
 				return err
 			}
 		}
-		err = deleteLegacyScanBatch(ctx, store, candidates, completeLegacyScanCleanup)
-		if err != nil {
+		if err := deleteLegacyScanBatch(ctx, store, candidates, completeLegacyScanCleanup); err != nil {
 			return err
 		}
 		if len(candidates) < legacyScanCleanupBatchSize {
@@ -82,9 +65,11 @@ func CleanupLegacyExternalImageScans(ctx context.Context) error {
 	}
 }
 
-// Leases survive worker restarts. No database transaction is held during R2 IO.
-// Publication never resets a selected generation to legacy storage, and never
-// rewrites legacy keys. New publishers must preserve that invariant.
+// Bound and lock the scan page before joining generation metadata. Joining
+// first can make PostgreSQL scan both entire tables for every small batch.
+// Order only by the indexed deadline: tie-breaking on digest would sort the
+// whole due cohort when many rows share a deadline.
+// Leases survive restarts; no transaction is held during storage IO.
 func claimLegacyScanCleanupBatch(ctx context.Context) ([]legacyScanCleanupCandidate, error) {
 	conn, err := acquireScanCandidateCleanupConnection(ctx)
 	if err != nil {
@@ -92,27 +77,22 @@ func claimLegacyScanCleanupBatch(ctx context.Context) ([]legacyScanCleanupCandid
 	}
 	defer conn.Release()
 	rows, err := conn.Query(ctx, `
-		WITH candidates AS (
-		  SELECT scan.digest, scan.arch
-		  FROM external_image_scan scan
-		  JOIN external_image_scan_generation generation
-		    ON generation.generation_id = scan.selected_scan_generation_id
-		    AND generation.digest = scan.digest AND generation.arch = scan.arch
-		  WHERE scan.legacy_cleanup_after <= NOW() AND scan.legacy_cleaned_at IS NULL
-		    AND generation.state = 'selected'
-		  ORDER BY scan.legacy_cleanup_after, scan.digest, scan.arch
-		  LIMIT $1 FOR UPDATE OF scan SKIP LOCKED
+		WITH page AS MATERIALIZED (
+		  SELECT digest, arch FROM external_image_scan
+		  WHERE legacy_cleanup_after <= NOW() AND legacy_cleaned_at IS NULL
+		    AND selected_scan_generation_id IS NOT NULL
+		  ORDER BY legacy_cleanup_after
+		  LIMIT $1 FOR UPDATE SKIP LOCKED
 		), claimed AS (
 		  UPDATE external_image_scan scan
 		  SET legacy_cleanup_after = NOW() + INTERVAL '5 minutes'
-		  FROM candidates
-		  WHERE scan.digest = candidates.digest AND scan.arch = candidates.arch
+		  FROM page WHERE scan.digest = page.digest AND scan.arch = page.arch
 		  RETURNING scan.digest, scan.arch, scan.selected_scan_generation_id, scan.legacy_cleanup_after
 		)
 		SELECT claimed.digest, claimed.arch, claimed.selected_scan_generation_id,
-		  generation.raw_object_key, generation.details_object_key,
-		  generation.raw_size_bytes, generation.details_size_bytes, claimed.legacy_cleanup_after
-		FROM claimed JOIN external_image_scan_generation generation
+		COALESCE(generation.raw_object_key, ''), COALESCE(generation.details_object_key, ''),
+		COALESCE(generation.state, ''), claimed.legacy_cleanup_after
+		FROM claimed LEFT JOIN external_image_scan_generation generation
 		  ON generation.generation_id = claimed.selected_scan_generation_id
 		  AND generation.digest = claimed.digest AND generation.arch = claimed.arch
 	`, legacyScanCleanupBatchSize)
@@ -127,7 +107,7 @@ func scanLegacyCandidates(rows pgx.Rows, leased bool) ([]legacyScanCleanupCandid
 	var candidates []legacyScanCleanupCandidate
 	for rows.Next() {
 		var candidate legacyScanCleanupCandidate
-		dest := []any{&candidate.digest, &candidate.arch, &candidate.generationID, &candidate.rawKey, &candidate.detailsKey, &candidate.rawSize, &candidate.detailsSize}
+		dest := []any{&candidate.digest, &candidate.arch, &candidate.generationID, &candidate.rawKey, &candidate.detailsKey, &candidate.state}
 		if leased {
 			dest = append(dest, &candidate.lease)
 		}
@@ -139,31 +119,15 @@ func scanLegacyCandidates(rows pgx.Rows, leased bool) ([]legacyScanCleanupCandid
 	return candidates, rows.Err()
 }
 
-func deleteLegacyScanBatch(ctx context.Context, store legacyScanObjectStore, candidates []legacyScanCleanupCandidate, complete func(context.Context, legacyScanCleanupCandidate) error) error {
-	// Stop HEAD requests before the pass deadline, leaving time to delete and
-	// checkpoint already validated rows. Slow HEAD requests must not discard
-	// every batch forever without making progress.
-	validationCtx, cancel := context.WithCancel(ctx)
-	if deadline, ok := ctx.Deadline(); ok {
-		cancel()
-		validationCtx, cancel = context.WithDeadline(ctx, deadline.Add(-legacyScanCleanupDeleteReserve))
+func deleteLegacyScanBatch(ctx context.Context, store legacyScanObjectStore, candidates []legacyScanCleanupCandidate, complete func(context.Context, []legacyScanCleanupCandidate) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	defer cancel()
 	var firstFailure error
 	var ready []legacyScanCleanupCandidate
 	var keys []string
 	for _, candidate := range candidates {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := validateLegacyReplacement(validationCtx, store, candidate); err != nil {
-			if validationCtx.Err() != nil {
-				firstFailure = validationCtx.Err()
-				break
-			}
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
+		if err := validateLegacyReplacement(candidate); err != nil {
 			logger.Warn("legacy scan replacement validation failed", zap.String("digest", candidate.digest), zap.String("arch", candidate.arch), zap.Error(err))
 			if firstFailure == nil {
 				firstFailure = err
@@ -176,43 +140,41 @@ func deleteLegacyScanBatch(ctx context.Context, store legacyScanObjectStore, can
 	if len(ready) == 0 {
 		return firstFailure
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// A partial R2 failure must not mark any row completed. Retrying both exact
-	// keys is safe, including when one or both were deleted by a previous pass.
+	// Partial failure checkpoints nothing. Retrying the exact keys is safe even
+	// when one or both were deleted by a previous pass.
 	if err := store.deleteMany(ctx, keys); err != nil {
 		return errors.Join(firstFailure, err)
 	}
-	for _, candidate := range ready {
-		if err := complete(ctx, candidate); err != nil {
-			return errors.Join(firstFailure, err)
-		}
-	}
-	return firstFailure
+	return errors.Join(firstFailure, complete(ctx, ready))
 }
 
-func completeLegacyScanCleanup(ctx context.Context, candidate legacyScanCleanupCandidate) error {
+func completeLegacyScanCleanup(ctx context.Context, candidates []legacyScanCleanupCandidate) error {
+	digests, architectures, _ := legacyCandidateArrays(candidates)
+	leases := make([]time.Time, len(candidates))
+	for i, c := range candidates {
+		leases[i] = c.lease
+	}
 	conn, err := acquireScanCandidateCleanupConnection(ctx)
 	if err != nil {
 		return err
 	}
 	defer conn.Release()
 	result, err := conn.Exec(ctx, `
-		UPDATE external_image_scan SET legacy_cleaned_at = NOW(), legacy_cleanup_after = NULL
-		WHERE digest = $1 AND arch = $2 AND legacy_cleanup_after = $3
-		  AND legacy_cleaned_at IS NULL AND selected_scan_generation_id IS NOT NULL
-	`, candidate.digest, candidate.arch, candidate.lease)
+		UPDATE external_image_scan scan SET legacy_cleaned_at = NOW(), legacy_cleanup_after = NULL
+		FROM unnest($1::text[], $2::text[], $3::timestamptz[]) AS candidate(digest, arch, lease)
+		WHERE scan.digest = candidate.digest AND scan.arch = candidate.arch
+		  AND scan.legacy_cleanup_after = candidate.lease
+		  AND scan.legacy_cleaned_at IS NULL AND scan.selected_scan_generation_id IS NOT NULL
+	`, digests, architectures, leases)
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() != 1 {
-		return fmt.Errorf("lost legacy scan cleanup lease for %s/%s", candidate.digest, candidate.arch)
+	if result.RowsAffected() != int64(len(candidates)) {
+		return fmt.Errorf("completed %d of %d legacy scan cleanup leases", result.RowsAffected(), len(candidates))
 	}
 	return nil
 }
 
-// LegacyScanCleanupOptions controls scheduling of existing migrated images.
 // Scheduling never deletes objects; the background worker honors a new 24h grace.
 type LegacyScanCleanupOptions struct {
 	DryRun    bool
@@ -220,93 +182,65 @@ type LegacyScanCleanupOptions struct {
 }
 type LegacyScanCleanupResult struct {
 	Candidates, WouldSchedule, Scheduled, SkippedConcurrent, Failed int
-	Objects, Bytes                                                  int64
+	// IntendedKeys counts keys to attempt, including keys that may already be absent.
+	IntendedKeys int64
 }
 
-// ScheduleLegacyExternalImageScanCleanup inventories redundant legacy objects
-// and schedules retirement for migrated rows that predate automatic scheduling.
+// ScheduleLegacyExternalImageScanCleanup uses PostgreSQL only. Neither dry-run
+// nor scheduling needs storage credentials, existence checks, or byte accounting.
 func ScheduleLegacyExternalImageScanCleanup(ctx context.Context, options LegacyScanCleanupOptions) (LegacyScanCleanupResult, error) {
 	var result LegacyScanCleanupResult
 	if options.BatchSize == 0 {
-		options.BatchSize = legacyScanCleanupBatchSize
+		options.BatchSize = 1000
 	}
-	if options.BatchSize < 1 || options.BatchSize > 500 {
-		return result, fmt.Errorf("batch size must be between 1 and 500")
-	}
-	store, err := newBlobStore(ctx)
-	if err != nil {
-		return result, err
+	if options.BatchSize < 1 || options.BatchSize > 5000 {
+		return result, fmt.Errorf("batch size must be between 1 and 5000")
 	}
 	var afterDigest, afterArch string
 	var firstFailure error
 	for {
-		candidates, err := listUnscheduledLegacyScans(ctx, afterDigest, afterArch, options.BatchSize)
+		page, err := listUnscheduledLegacyScans(ctx, afterDigest, afterArch, options.BatchSize)
 		if err != nil {
 			return result, err
 		}
-		if len(candidates) == 0 {
+		if len(page) == 0 {
 			break
 		}
-		for _, candidate := range candidates {
-			if err := ctx.Err(); err != nil {
-				return result, err
-			}
+		var candidates []legacyScanCleanupCandidate
+		for _, c := range page {
 			result.Candidates++
-			objects, bytes, err := inspectLegacyScanObjects(ctx, store, candidate)
-			if err == nil && !options.DryRun {
-				var scheduled bool
-				scheduled, err = scheduleLegacyScanCleanup(ctx, candidate)
-				if err == nil {
-					if scheduled {
-						result.Scheduled++
-					} else {
-						result.SkippedConcurrent++
-					}
-				}
-			} else if err == nil {
-				result.WouldSchedule++
-			}
-			if err != nil {
-				if ctx.Err() != nil {
-					return result, ctx.Err()
-				}
+			if err := validateLegacyReplacement(c); err != nil {
 				result.Failed++
 				if firstFailure == nil {
 					firstFailure = err
 				}
 				continue
 			}
-			result.Objects += objects
-			result.Bytes += bytes
+			candidates = append(candidates, c)
 		}
-		last := candidates[len(candidates)-1]
+		if options.DryRun {
+			result.WouldSchedule += len(candidates)
+			result.IntendedKeys += int64(2 * len(candidates))
+		} else if len(candidates) > 0 {
+			scheduled, err := scheduleLegacyScanCleanup(ctx, candidates)
+			if err != nil {
+				return result, err
+			}
+			result.Scheduled += int(scheduled)
+			result.SkippedConcurrent += len(candidates) - int(scheduled)
+			result.IntendedKeys += 2 * scheduled
+		}
+		// Advance using the scan page even if none has valid generation metadata.
+		last := page[len(page)-1]
 		afterDigest, afterArch = last.digest, last.arch
 	}
 	if firstFailure != nil {
-		return result, fmt.Errorf("legacy scan inventory failed for %d rows: %w", result.Failed, firstFailure)
+		return result, fmt.Errorf("invalid generation metadata for %d rows: %w", result.Failed, firstFailure)
 	}
 	if result.SkippedConcurrent > 0 {
 		return result, fmt.Errorf("%d rows changed concurrently; rerun scheduling", result.SkippedConcurrent)
 	}
 	return result, nil
-}
-
-func inspectLegacyScanObjects(ctx context.Context, store legacyScanObjectStore, candidate legacyScanCleanupCandidate) (int64, int64, error) {
-	if err := validateLegacyReplacement(ctx, store, candidate); err != nil {
-		return 0, 0, err
-	}
-	var objects, bytes int64
-	for _, key := range []string{rawResultKey(candidate.digest, candidate.arch), parsedResultsDetailsKey(candidate.digest, candidate.arch)} {
-		size, exists, err := store.objectSize(ctx, key)
-		if err != nil {
-			return 0, 0, err
-		}
-		if exists {
-			objects++
-			bytes += size
-		}
-	}
-	return objects, bytes, nil
 }
 
 func listUnscheduledLegacyScans(ctx context.Context, afterDigest, afterArch string, limit int) ([]legacyScanCleanupCandidate, error) {
@@ -316,15 +250,18 @@ func listUnscheduledLegacyScans(ctx context.Context, afterDigest, afterArch stri
 	}
 	defer conn.Release()
 	rows, err := conn.Query(ctx, `
-		SELECT scan.digest, scan.arch, scan.selected_scan_generation_id,
-		  generation.raw_object_key, generation.details_object_key,
-		  generation.raw_size_bytes, generation.details_size_bytes
-		FROM external_image_scan scan JOIN external_image_scan_generation generation
-		  ON generation.generation_id = scan.selected_scan_generation_id
-		  AND generation.digest = scan.digest AND generation.arch = scan.arch
-		WHERE scan.legacy_cleanup_after IS NULL AND scan.legacy_cleaned_at IS NULL
-		  AND generation.state = 'selected' AND (scan.digest, scan.arch) > ($1, $2)
-		ORDER BY scan.digest, scan.arch LIMIT $3
+		WITH page AS MATERIALIZED (
+		  SELECT digest, arch, selected_scan_generation_id FROM external_image_scan
+		  WHERE legacy_cleanup_after IS NULL AND legacy_cleaned_at IS NULL
+		    AND selected_scan_generation_id IS NOT NULL AND (digest, arch) > ($1, $2)
+		  ORDER BY digest, arch LIMIT $3
+		)
+		SELECT page.digest, page.arch, page.selected_scan_generation_id,
+		COALESCE(generation.raw_object_key, ''), COALESCE(generation.details_object_key, ''), COALESCE(generation.state, '')
+		FROM page LEFT JOIN external_image_scan_generation generation
+		  ON generation.generation_id = page.selected_scan_generation_id
+		  AND generation.digest = page.digest AND generation.arch = page.arch
+		ORDER BY page.digest, page.arch
 	`, afterDigest, afterArch, limit)
 	if err != nil {
 		return nil, err
@@ -333,19 +270,30 @@ func listUnscheduledLegacyScans(ctx context.Context, afterDigest, afterArch stri
 	return scanLegacyCandidates(rows, false)
 }
 
-func scheduleLegacyScanCleanup(ctx context.Context, candidate legacyScanCleanupCandidate) (bool, error) {
+func legacyCandidateArrays(candidates []legacyScanCleanupCandidate) ([]string, []string, []string) {
+	digests, architectures, generations := make([]string, len(candidates)), make([]string, len(candidates)), make([]string, len(candidates))
+	for i, c := range candidates {
+		digests[i], architectures[i], generations[i] = c.digest, c.arch, c.generationID
+	}
+	return digests, architectures, generations
+}
+
+func scheduleLegacyScanCleanup(ctx context.Context, candidates []legacyScanCleanupCandidate) (int64, error) {
+	digests, architectures, generations := legacyCandidateArrays(candidates)
 	conn, err := acquireScanCandidateCleanupConnection(ctx)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	defer conn.Release()
 	result, err := conn.Exec(ctx, `
-		UPDATE external_image_scan SET legacy_cleanup_after = NOW() + INTERVAL '24 hours'
-		WHERE digest = $1 AND arch = $2 AND selected_scan_generation_id = $3
-		  AND legacy_cleanup_after IS NULL AND legacy_cleaned_at IS NULL
-	`, candidate.digest, candidate.arch, candidate.generationID)
+		UPDATE external_image_scan scan SET legacy_cleanup_after = NOW() + INTERVAL '24 hours'
+		FROM unnest($1::text[], $2::text[], $3::text[]) AS candidate(digest, arch, generation_id)
+		WHERE scan.digest = candidate.digest AND scan.arch = candidate.arch
+		  AND scan.selected_scan_generation_id = candidate.generation_id
+		  AND scan.legacy_cleanup_after IS NULL AND scan.legacy_cleaned_at IS NULL
+	`, digests, architectures, generations)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
-	return result.RowsAffected() == 1, nil
+	return result.RowsAffected(), nil
 }
