@@ -242,12 +242,16 @@ func meterOrGlobal() metric.Meter {
 }
 
 func incrementOTel(name string, tags []string) {
+	countOTel(name, 1, tags)
+}
+
+func countOTel(name string, value int64, tags []string) {
 	counter, err := getInt64Counter(name)
 	if err != nil {
 		logger.Warn("failed to create otel counter", zap.String("name", name), zap.Error(err))
 		return
 	}
-	counter.Add(context.Background(), 1, metric.WithAttributes(tagsToAttributes(tags)...))
+	counter.Add(context.Background(), value, metric.WithAttributes(tagsToAttributes(tags)...))
 }
 
 func gaugeOTel(name string, value float64, tags []string) {

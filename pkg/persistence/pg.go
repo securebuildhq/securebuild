@@ -83,35 +83,9 @@ func InitPostgres(ctx context.Context) error {
 	return nil
 }
 
-// MustGetPooledPostgresSession retrieves the pool from context
-// Uses DBURI from param in context to look up the pool
-func MustGetPooledPostgresSession(ctx context.Context) *pgxpool.Conn {
-	dbURI, err := getDBURI(ctx)
-	if err != nil {
-		panic("DBURI not found in context: " + err.Error())
-	}
-
-	poolsMu.RLock()
-	pool, exists := pools[dbURI]
-	poolsMu.RUnlock()
-
-	if !exists {
-		panic(fmt.Sprintf("postgres pool not initialized for DBURI %s - call InitPostgres first", maskDBURI(dbURI)))
-	}
-
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		panic("failed to acquire from Postgres pool: " + err.Error())
-	}
-
-	return conn
-}
-
-// GetPooledPostgresSessionWithTimeout retrieves pool with timeout check
-func GetPooledPostgresSessionWithTimeout(ctx context.Context, timeout time.Duration) (*pgxpool.Conn, error) {
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
+// GetPooledPostgresSession retrieves a pooled connection while preserving
+// acquisition errors for callers with bounded or cancelable contexts.
+func GetPooledPostgresSession(ctx context.Context) (*pgxpool.Conn, error) {
 	dbURI, err := getDBURI(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("DBURI not found in context: %w", err)
@@ -125,12 +99,29 @@ func GetPooledPostgresSessionWithTimeout(ctx context.Context, timeout time.Durat
 		return nil, fmt.Errorf("postgres pool not initialized for DBURI %s - call InitPostgres first", maskDBURI(dbURI))
 	}
 
-	conn, err := pool.Acquire(timeoutCtx)
+	conn, err := pool.Acquire(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to acquire from Postgres pool: %w", err)
 	}
 
 	return conn, nil
+}
+
+// MustGetPooledPostgresSession retrieves the pool from context and panics if
+// acquisition fails. Prefer GetPooledPostgresSession in error-returning paths.
+func MustGetPooledPostgresSession(ctx context.Context) *pgxpool.Conn {
+	conn, err := GetPooledPostgresSession(ctx)
+	if err != nil {
+		panic(err.Error())
+	}
+	return conn
+}
+
+// GetPooledPostgresSessionWithTimeout retrieves pool with timeout check
+func GetPooledPostgresSessionWithTimeout(ctx context.Context, timeout time.Duration) (*pgxpool.Conn, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return GetPooledPostgresSession(timeoutCtx)
 }
 
 // ClosePool closes the postgres pool for the DBURI in context

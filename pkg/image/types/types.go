@@ -70,6 +70,15 @@ type ImageScanResult struct {
 	FixableCount  int `json:"fixable"`
 }
 
+// ImageScanResultSummary is the compact scan result stored in
+// external_image_scan.parsed_results. Keep this separate from
+// ImageScanResultDetails so summary readers do not need to fetch or decode the
+// much larger per-vulnerability payload from object storage.
+type ImageScanResultSummary struct {
+	Counts      ImageScanResult `json:"counts"`
+	FixedCounts ImageScanResult `json:"fixed_counts"`
+}
+
 type ScanDescriptor struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`

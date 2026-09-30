@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	"github.com/securebuildhq/securebuild/pkg/listener/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
@@ -39,6 +40,7 @@ func StartListeners(ctx context.Context) error {
 
 	// Start cleanup goroutine for completed work_queue rows
 	go startCompletedWorkCleanup(ctx)
+	go externalimage.StartScanCandidateCleanup(ctx)
 
 	l.Start(ctx)
 	defer l.Stop(ctx)

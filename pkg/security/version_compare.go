@@ -2,31 +2,42 @@ package security
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/anchore/grype/grype/version"
 )
 
-// ArtifactVersionSatisfiesAnyFix checks if an artifact version >= the fixed version in the same major.minor stream.
+// ArtifactVersionSatisfiesAnyFix checks whether an artifact contains a recorded fix.
 // This is used to determine if a specific artifact version contains a security fix.
+//
+// Go modules may inherit fixes from earlier minor releases within the same major.
+// When multiple release branches have fixes, the newest branch at or below the
+// installed minor governs: grpc 1.83.1 is not fixed by [1.82.2, 1.83.2].
+// Other ecosystems retain same-major.minor release-stream matching.
 //
 // Fixed versions often contain multiple versions for different release streams:
 //   - fixedVersions: ["6.2.20", "7.2.11", "7.4.6", "8.0.4", "8.2.2"]
 //   - artifactVersion: "7.4.5" should compare against "7.4.6" (same 7.4.x stream)
 //   - Returns: false (because 7.4.5 < 7.4.6)
-//
-// The function filters fixed versions to only those matching the artifact's major.minor,
-// then checks if the artifact version >= the lowest fixed version in that stream.
 func ArtifactVersionSatisfiesAnyFix(
 	artifactVersion string,
 	fixedVersions []string,
 	artifactType string,
 ) (bool, error) {
 	format := version.ParseFormat(artifactType)
+	// Grype does not recognize Syft's "go-module" package type as a Go version format.
+	if artifactType == "go-module" {
+		format = version.GolangFormat
+	}
 
 	v := version.New(artifactVersion, format)
 	if err := v.Validate(); err != nil {
 		return false, fmt.Errorf("invalid version %q: %w", artifactVersion, err)
+	}
+
+	if format == version.GolangFormat {
+		return goModuleVersionSatisfiesFix(v, fixedVersions)
 	}
 
 	// Parse artifact version as semver to get major.minor
@@ -76,7 +87,43 @@ func ArtifactVersionSatisfiesAnyFix(
 	return false, nil
 }
 
-// compareAgainstAllFixedVersions is the fallback when semver parsing fails
+// goModuleVersionSatisfiesFix selects the newest applicable minor branch before
+// comparing patch/prerelease versions. Comparing against any older branch's fix
+// would incorrectly mark an unpatched parallel branch as fixed.
+func goModuleVersionSatisfiesFix(v *version.Version, fixedVersions []string) (bool, error) {
+	installed, err := parseGoModuleSemver(v.Raw)
+	if err != nil {
+		return false, fmt.Errorf("invalid Go module version %q: %w", v.Raw, err)
+	}
+
+	var matchingFixes []string
+	var newestMinor uint64
+	for _, fixedVersion := range fixedVersions {
+		fixed, err := parseGoModuleSemver(fixedVersion)
+		if err != nil || fixed.Major() != installed.Major() || fixed.Minor() > installed.Minor() {
+			continue
+		}
+		if len(matchingFixes) == 0 || fixed.Minor() > newestMinor {
+			newestMinor = fixed.Minor()
+			matchingFixes = []string{fixedVersion}
+		} else if fixed.Minor() == newestMinor {
+			matchingFixes = append(matchingFixes, fixedVersion)
+		}
+	}
+	return compareAgainstAllFixedVersions(v, matchingFixes, version.GolangFormat)
+}
+
+func parseGoModuleSemver(raw string) (*semver.Version, error) {
+	// Match Grype's normalization for stdlib versions and Go 1.24+ build metadata.
+	normalized := strings.TrimPrefix(raw, "go")
+	if before, after, found := strings.Cut(normalized, "+"); found {
+		normalized = before + "+" + strings.ReplaceAll(after, "+", ".")
+	}
+	return semver.NewVersion(normalized)
+}
+
+// compareAgainstAllFixedVersions compares against the selected release branch,
+// or all fixes when a non-Go artifact cannot be parsed as semver.
 func compareAgainstAllFixedVersions(v *version.Version, fixedVersions []string, format version.Format) (bool, error) {
 	for _, fixedVersion := range fixedVersions {
 		fixVer := version.New(fixedVersion, format)

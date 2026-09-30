@@ -166,6 +166,19 @@ func Increment(name string, tags []string) {
 	}
 }
 
+// Count adds value to a counter metric. When telemetry is disabled this is a no-op.
+func Count(name string, value int64, tags []string) {
+	if value == 0 {
+		return
+	}
+	switch resolveBackend() {
+	case BackendDatadog:
+		countDatadog(name, value, tags)
+	case BackendOTLP:
+		countOTel(name, value, tags)
+	}
+}
+
 // CloseStatsClient closes any open metrics client. Should be called during
 // application shutdown. For the OTLP backend, metric shutdown is handled by the
 // function returned from Start; this remains a no-op there.

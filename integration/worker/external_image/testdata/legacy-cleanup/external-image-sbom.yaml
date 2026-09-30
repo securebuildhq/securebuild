@@ -1,0 +1,84 @@
+database: securebuild
+name: external_image_sbom
+seedData:
+  rows:
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:legacy-migrated"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "syft"
+        - column: is_in_object_store
+          value:
+            str: "true"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:legacy-legacy-only"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "syft"
+        - column: is_in_object_store
+          value:
+            str: "true"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:legacy-missing-replacement"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "syft"
+        - column: is_in_object_store
+          value:
+            str: "true"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:legacy-backfill"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "syft"
+        - column: is_in_object_store
+          value:
+            str: "true"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:legacy-absent-legacy"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "syft"
+        - column: is_in_object_store
+          value:
+            str: "true"

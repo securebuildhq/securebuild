@@ -6,6 +6,7 @@ import { traceFunction, withTrace } from "@/lib/observability/tracing"
 
 type ImageScanResultDetails = {
   counts: SeverityCounts
+  fixed_counts?: SeverityCounts
 }
 
 type SeverityCounts = {
@@ -22,6 +23,7 @@ type SummaryEntry = {
   last_scanned_at: string | null
   digest_first_seen_at: string | null
   counts: SeverityCounts
+  fixed_counts?: SeverityCounts
   not_found: boolean
   image_size_bytes: number
   scan_status: string | null
@@ -38,7 +40,9 @@ interface RequestBody {
   images?: string[];
 }
 
-// parsed_results already stores counts JSON in the DB
+// parsed_results stores a compact { counts, fixed_counts } object for new
+// scans. The parser below also accepts legacy rows containing either flat
+// counts or { counts } without fixed_counts.
 
 export async function POST(request: NextRequest) {
   return withTrace('api.external_image.scan_summary', async (span) => {
@@ -193,11 +197,17 @@ const batchListScanSummaries = traceFunction('api.external_image.scan_summary.ba
     }
 
     let parsedResult: SeverityCounts | null = null
+    let parsedFixedResult: SeverityCounts | null = null
     const storedResult = scanData?.parsedResults || (digest ? fallbackResults.get(digest)?.scanResult : null)
     if (storedResult) {
       try {
         const stored = JSON.parse(storedResult) as SeverityCounts | ImageScanResultDetails
-        parsedResult = 'counts' in stored ? stored.counts : stored
+        if ('counts' in stored) {
+          parsedResult = stored.counts
+          parsedFixedResult = stored.fixed_counts || null
+        } else {
+          parsedResult = stored
+        }
       } catch (error) {
         console.error(`Failed to parse scan result for input ${input}:`, error)
         // Continue with null result instead of failing the entire request
@@ -210,6 +220,7 @@ const batchListScanSummaries = traceFunction('api.external_image.scan_summary.ba
       last_scanned_at: scanData?.scanCompletedAt || null,
       digest_first_seen_at: scanData?.digestFirstSeenAt || null,
       counts: parsedResult || emptyCounts(),
+      ...(parsedFixedResult ? { fixed_counts: parsedFixedResult } : {}),
       not_found: scanData === null,
       image_size_bytes: scanData?.imageSizeBytes || 0,
       scan_status: scanData?.scanStatus || null,

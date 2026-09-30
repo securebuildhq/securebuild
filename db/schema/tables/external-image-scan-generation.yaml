@@ -1,0 +1,64 @@
+database: securebuild
+name: external_image_scan_generation
+schema:
+  postgres:
+    primaryKey:
+    - generation_id
+    - digest
+    - arch
+    indexes:
+    - name: external_image_scan_generation_cleanup_idx
+      columns:
+      - cleanup_after
+      - state
+    columns:
+    - name: generation_id
+      type: text
+      constraints:
+        notNull: true
+    - name: digest
+      type: text
+      constraints:
+        notNull: true
+    - name: arch
+      type: text
+      constraints:
+        notNull: true
+    - name: state
+      type: text
+      constraints:
+        notNull: true
+    - name: raw_object_key
+      type: text
+      constraints:
+        notNull: true
+    - name: raw_size_bytes
+      type: bigint
+      constraints:
+        notNull: true
+    - name: raw_sha256
+      type: text
+      constraints:
+        notNull: true
+    - name: details_object_key
+      type: text
+      constraints:
+        notNull: true
+    - name: details_size_bytes
+      type: bigint
+      constraints:
+        notNull: true
+    - name: details_sha256
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: validated_at
+      type: timestamp with time zone
+    - name: selected_at
+      type: timestamp with time zone
+    - name: cleanup_after
+      type: timestamp with time zone

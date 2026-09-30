@@ -14,12 +14,15 @@ import (
 )
 
 func GetDynamicParam(ctx context.Context, key string) (string, error) {
-	conn := persistence.MustGetPooledPostgresSession(ctx)
+	conn, err := persistence.GetPooledPostgresSession(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to acquire database connection for dynamic config: %w", err)
+	}
 	defer conn.Release()
 
 	query := `SELECT value FROM dynamic_config WHERE key = $1`
 	var value string
-	err := conn.QueryRow(ctx, query, key).Scan(&value)
+	err = conn.QueryRow(ctx, query, key).Scan(&value)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return "", nil
@@ -30,11 +33,14 @@ func GetDynamicParam(ctx context.Context, key string) (string, error) {
 }
 
 func SetDynamicParam(ctx context.Context, key string, value string) error {
-	conn := persistence.MustGetPooledPostgresSession(ctx)
+	conn, err := persistence.GetPooledPostgresSession(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire database connection for dynamic config: %w", err)
+	}
 	defer conn.Release()
 
 	query := `INSERT INTO dynamic_config (key, value) VALUES ($1, $2)`
-	_, err := conn.Exec(ctx, query, key, value)
+	_, err = conn.Exec(ctx, query, key, value)
 	if err != nil {
 		return fmt.Errorf("failed to set dynamic config: %w", err)
 	}

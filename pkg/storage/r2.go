@@ -1,7 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"strings"
@@ -146,13 +149,27 @@ func (r *R2Client) GetObject(ctx context.Context, key string) (*s3.GetObjectOutp
 
 // PutObject uploads data to R2
 func (r *R2Client) PutObject(ctx context.Context, key string, data io.Reader) error {
+	return r.putObject(ctx, key, data, nil)
+}
+
+// PutObjectWithMD5 uploads buffered data with a Content-MD5 checksum so the
+// object store rejects bytes corrupted in transit without a read-back GET.
+// MD5 is used for the S3 transfer-integrity protocol, not content identity.
+func (r *R2Client) PutObjectWithMD5(ctx context.Context, key string, data []byte) error {
+	sum := md5.Sum(data)
+	checksum := base64.StdEncoding.EncodeToString(sum[:])
+	return r.putObject(ctx, key, bytes.NewReader(data), &checksum)
+}
+
+func (r *R2Client) putObject(ctx context.Context, key string, data io.Reader, contentMD5 *string) error {
 	// Apply dynamic folder to key
 	fullKey := r.ensurePrefix(key)
 
 	input := &s3.PutObjectInput{
-		Bucket: aws.String(r.bucket),
-		Key:    aws.String(fullKey),
-		Body:   data,
+		Bucket:     aws.String(r.bucket),
+		Key:        aws.String(fullKey),
+		Body:       data,
+		ContentMD5: contentMD5,
 	}
 
 	_, err := r.client.PutObject(ctx, input)
@@ -205,14 +222,25 @@ func (r *R2Client) DeleteObjects(ctx context.Context, keys []string) error {
 			}
 		}
 
-		_, err := r.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+		output, err := r.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 			Bucket: aws.String(r.bucket),
 			Delete: &types.Delete{
 				Objects: objectIdentifiers,
+				Quiet:   aws.Bool(true),
 			},
 		})
 		if err != nil {
 			return fmt.Errorf("failed to delete objects from R2 bucket: %w", err)
+		}
+		if len(output.Errors) > 0 {
+			first := output.Errors[0]
+			return fmt.Errorf(
+				"failed to delete %d object(s) from R2 bucket; first error for %q: %s: %s",
+				len(output.Errors),
+				aws.ToString(first.Key),
+				aws.ToString(first.Code),
+				aws.ToString(first.Message),
+			)
 		}
 	}
 

@@ -15,7 +15,7 @@ seedData:
             str: "x86_64"
         - column: parsed_results
           value:
-            str: '{"critical":2,"high":3,"medium":4,"low":5,"total":14,"fixable":1}'
+            str: '{"counts":{"critical":2,"high":3,"medium":4,"low":5,"total":14,"fixable":1},"fixed_counts":{"critical":1,"high":2,"medium":0,"low":1,"total":4,"fixable":0}}'
         - column: created_at
           value:
             str: "2024-01-01T00:00:00Z"
@@ -84,6 +84,9 @@ seedData:
         - column: is_in_object_store
           value:
             str: "true"
+        - column: selected_scan_generation_id
+          value:
+            str: "api-generation-a"
     # Successful but stale scan used by the on-demand scan tests
     - columns:
         - column: digest
