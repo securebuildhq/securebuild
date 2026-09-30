@@ -75,7 +75,6 @@ func injectScanPublicationFailure(ctx context.Context, stage ScanPublicationFail
 
 type scanObjectStore interface {
 	putCompressed(context.Context, string, []byte) error
-	getCompressed(context.Context, string) ([]byte, error)
 	deleteMany(context.Context, []string) error
 }
 
@@ -236,28 +235,6 @@ func ensureScanCandidate(ctx context.Context, candidate *scanCandidate) error {
 	return nil
 }
 
-func validateStoredScanArtifact(ctx context.Context, store scanObjectStore, artifact scanArtifact) error {
-	data, err := store.getCompressed(ctx, artifact.key)
-	if err != nil {
-		return fmt.Errorf("failed to read back %s: %w", artifact.key, err)
-	}
-	if int64(len(data)) != artifact.size {
-		return fmt.Errorf("%w: object %s has size %d, expected %d", ErrInvalidScanCandidate, artifact.key, len(data), artifact.size)
-	}
-	sum := sha256.Sum256(data)
-	if hex.EncodeToString(sum[:]) != artifact.sha256 {
-		return fmt.Errorf("%w: object %s checksum does not match", ErrInvalidScanCandidate, artifact.key)
-	}
-	payload, err := gunzipData(data)
-	if err != nil {
-		return fmt.Errorf("%w: object %s is not valid gzip: %v", ErrInvalidScanCandidate, artifact.key, err)
-	}
-	if !json.Valid([]byte(payload)) {
-		return fmt.Errorf("%w: object %s does not contain valid JSON", ErrInvalidScanCandidate, artifact.key)
-	}
-	return nil
-}
-
 func markScanCandidateState(ctx context.Context, candidate scanCandidate, state string) (string, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
@@ -343,12 +320,11 @@ func uploadAndValidateScanCandidate(ctx context.Context, candidate *scanCandidat
 	if err := injectScanPublicationFailure(ctx, ScanPublicationFailureValidation); err != nil {
 		return failScanCandidate(ctx, candidate, err)
 	}
-	if err := validateStoredScanArtifact(ctx, store, candidate.raw); err != nil {
-		return failScanCandidate(ctx, candidate, err)
-	}
-	if err := validateStoredScanArtifact(ctx, store, candidate.details); err != nil {
-		return failScanCandidate(ctx, candidate, err)
-	}
+	// newScanCandidate validates JSON and computes sizes and SHA-256 hashes
+	// from the locally compressed bytes. Both uploads verify Content-MD5, so
+	// successful PUTs are sufficient; do not download and decode them again.
+	// Keep the validated checkpoint so retries and atomic selection retain
+	// the same generation and cleanup guarantees.
 	actualState, err := markScanCandidateState(ctx, *candidate, "validated")
 	if err != nil {
 		return err

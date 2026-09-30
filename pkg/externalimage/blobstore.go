@@ -104,7 +104,7 @@ func (s *blobStore) putParsedResultsDetails(ctx context.Context, digest, arch, d
 }
 
 func (s *blobStore) putCompressed(ctx context.Context, key string, data []byte) error {
-	return s.client.PutObject(ctx, key, bytes.NewReader(data))
+	return s.client.PutObjectWithMD5(ctx, key, data)
 }
 
 func (s *blobStore) putSBOM(ctx context.Context, digest, arch, data string) error {
