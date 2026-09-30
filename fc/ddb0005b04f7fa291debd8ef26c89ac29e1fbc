@@ -1,0 +1,32 @@
+pkg/externalimage/sbom_queue.go
+  s_3c3efcb306bbd3::t_f5d6f1b4660fa2 74-87
+securebuild-api/integration/api/v1/external-image/create.test.ts
+  s_3c3efcb306bbd3::t_f5d6f1b4660fa2 69,119-128
+integration/worker/work-queue-scheduled-retry/scheduled_retry_test.go
+  s_3c3efcb306bbd3::t_eea4cc63e7f75f 49-50,81-104
+  s_3c3efcb306bbd3::t_810de3a3952e4e 105
+securebuild-api/lib/utils/queue.ts
+  s_3c3efcb306bbd3::t_f5d6f1b4660fa2 43-45,55-60
+  s_3c3efcb306bbd3::t_6c4c70d2ced80a 61
+pkg/persistence/queue.go
+  s_3c3efcb306bbd3::t_f5d6f1b4660fa2 47-49,54-62
+  s_3c3efcb306bbd3::t_35b1a862db621d 63
+integration/worker/external_image/external_image_test.go
+  s_3c3efcb306bbd3::t_f5d6f1b4660fa2 294,323,334-343
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fcddb0005b04f7fa291debd8ef26c89ac29e1fbc",
+  "prompts": {},
+  "sessions": {
+    "s_3c3efcb306bbd3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f439-4f09-79a2-afbb-8cd48a00dbe5",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
