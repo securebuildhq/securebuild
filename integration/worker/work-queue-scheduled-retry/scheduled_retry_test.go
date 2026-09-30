@@ -46,6 +46,8 @@ func TestScheduledRetryEventuallyProcessesTheOriginalMessage(t *testing.T) {
 	var expiredAttempts atomic.Int32
 	const uniqueChannel = "scheduled_retry_unique_test"
 	var uniqueAttempts atomic.Int32
+	const legacyCompletedChannel = "scheduled_retry_legacy_completed_test"
+	const legacyCompletedKey = "sha256:legacy-completed"
 
 	l := listener.NewListener(ctx)
 	require.NoError(t, l.AddHandler(ctx, channel, 1, time.Second, func(context.Context, *pgconn.Notification) error {
@@ -75,6 +77,31 @@ func TestScheduledRetryEventuallyProcessesTheOriginalMessage(t *testing.T) {
 	enqueued, err = persistence.EnqueueUniqueWork(ctx, uniqueChannel, map[string]string{"digest": "sha256:dedupe"}, "sha256:dedupe")
 	require.NoError(t, err)
 	require.False(t, enqueued, "unfinished work with the same key must be deduplicated")
+
+	// Simulate a keyed row completed by a pre-deduplication worker during a
+	// rolling deploy. A later enqueue must release the retained key instead of
+	// being blocked forever by the non-partial unique index.
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO work_queue
+			(id, channel, payload, dedupe_key, created_at, completed_at, priority)
+		VALUES
+			('legacy-completed-dedupe', $1, '{"digest":"sha256:legacy-completed"}', $2, NOW(), NOW(), 0)
+	`, legacyCompletedChannel, legacyCompletedKey)
+	require.NoError(t, err)
+	enqueued, err = persistence.EnqueueUniqueWork(ctx, legacyCompletedChannel,
+		map[string]string{"digest": legacyCompletedKey}, legacyCompletedKey)
+	require.NoError(t, err)
+	require.True(t, enqueued, "a completed row retaining its key must not block new work")
+
+	var retainedLegacyKeys int
+	require.NoError(t, testDB.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM work_queue
+		WHERE channel = $1
+		  AND completed_at IS NOT NULL
+		  AND dedupe_key = $2
+	`, legacyCompletedChannel, legacyCompletedKey).Scan(&retainedLegacyKeys))
+	require.Zero(t, retainedLegacyKeys)
 
 	listenerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

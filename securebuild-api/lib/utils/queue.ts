@@ -40,7 +40,9 @@ export async function enqueueWorkWithPriority(channel: string, payload: QueuePay
 
 /**
  * Enqueues work only when no unfinished item with the same channel and
- * deduplication key exists. Returns null when the existing item wins.
+ * deduplication key exists. Completed keys are released here as well as by
+ * current workers so rows finished by an older worker during a rolling deploy
+ * cannot permanently block later work. Returns null when an active item wins.
  */
 export async function enqueueUniqueWork(
   channel: string,
@@ -49,6 +51,13 @@ export async function enqueueUniqueWork(
   client?: PoolClient,
 ): Promise<string | null> {
   const db = client ?? getDB(await getParam("DB_URI"));
+
+  await db.query(
+    `UPDATE work_queue ` +
+    `SET dedupe_key = NULL ` +
+    `WHERE channel = $1 AND dedupe_key = $2 AND completed_at IS NOT NULL`,
+    [channel, dedupeKey],
+  );
 
   const id = srs.default({ length: 12, alphanumeric: true });
   const now = new Date();

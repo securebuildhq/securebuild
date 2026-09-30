@@ -66,7 +66,7 @@ describe('POST/GET /api/v1/external-image', () => {
       // second job during that window.
       await env.dbPool.query(
         `UPDATE work_queue
-         SET completed_at = NOW(), dedupe_key = NULL
+         SET completed_at = NOW()
          WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1`,
         [createdDigest],
       );
@@ -116,6 +116,16 @@ describe('POST/GET /api/v1/external-image', () => {
       );
       expect(recoveredGeneration.rows[0].count).toBe(1);
       expect(recoveredGeneration.rows[0].status).toBe('pending');
+
+      const retainedCompletedKeys = await env.dbPool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM work_queue
+         WHERE channel = 'external_image_sbom'
+           AND completed_at IS NOT NULL
+           AND dedupe_key = $1`,
+        [createdDigest],
+      );
+      expect(retainedCompletedKeys.rows[0].count).toBe(0);
     });
 
     it('GET /external-image?sha=<createdDigest> returns status fields', async () => {

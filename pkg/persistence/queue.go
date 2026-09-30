@@ -44,11 +44,22 @@ func EnqueueWorkWithPriority(ctx context.Context, channel string, payload interf
 }
 
 // EnqueueUniqueWork inserts work only when no unfinished item with the same
-// channel and dedupe key exists. The listener clears the dedupe key when the
-// item completes, allowing a later terminal retry to be enqueued.
+// channel and dedupe key exists. Completed keys are released here as well as
+// by the listener so rows finished by an older worker during a rolling deploy
+// cannot permanently block later work.
 func EnqueueUniqueWork(ctx context.Context, channel string, payload interface{}, dedupeKey string) (bool, error) {
 	conn := MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `
+		UPDATE work_queue
+		SET dedupe_key = NULL
+		WHERE channel = $1
+		  AND dedupe_key = $2
+		  AND completed_at IS NOT NULL
+	`, channel, dedupeKey); err != nil {
+		return false, fmt.Errorf("failed to release completed dedupe key: %w", err)
+	}
 
 	id, err := securerandom.Hex(6)
 	if err != nil {

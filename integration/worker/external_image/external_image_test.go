@@ -291,7 +291,7 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 
 	_, err = testDB.Pool.Exec(ctx, `
 		UPDATE work_queue
-		SET completed_at = NOW(), dedupe_key = NULL
+		SET completed_at = NOW()
 		WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1
 	`, digest)
 	require.NoError(t, err)
@@ -320,7 +320,7 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 
 	_, err = testDB.Pool.Exec(ctx, `
 		UPDATE work_queue
-		SET completed_at = NOW(), dedupe_key = NULL
+		SET completed_at = NOW()
 		WHERE channel = 'external_image_sbom'
 		  AND completed_at IS NULL
 		  AND payload->>'digest' = $1
@@ -331,6 +331,16 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)
 	require.NoError(t, err)
 	require.True(t, enqueued, "a terminally failed digest must allow a later retry")
+
+	var completedRowsWithKey int
+	require.NoError(t, testDB.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM work_queue
+		WHERE channel = 'external_image_sbom'
+		  AND completed_at IS NOT NULL
+		  AND dedupe_key = $1
+	`, digest).Scan(&completedRowsWithKey))
+	assert.Zero(t, completedRowsWithKey, "enqueue must release keys retained by older workers")
 }
 
 func TestMigrateScanStatusColumn(t *testing.T) {

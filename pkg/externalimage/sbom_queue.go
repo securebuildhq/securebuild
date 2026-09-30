@@ -71,6 +71,20 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest string) (bool, error) 
 		return false, nil
 	}
 
+	// New workers clear the key when work completes, but an older worker may
+	// complete a keyed row during a rolling deployment without doing so. Release
+	// such completed keys before inserting so they cannot block this digest
+	// forever through the non-partial unique index.
+	if _, err := tx.Exec(ctx, `
+		UPDATE work_queue
+		SET dedupe_key = NULL
+		WHERE channel = $1
+		  AND dedupe_key = $2
+		  AND completed_at IS NOT NULL
+	`, externalImageSBOMChannel, digest); err != nil {
+		return false, fmt.Errorf("failed to release completed SBOM dedupe key for digest %s: %w", digest, err)
+	}
+
 	id, err := securerandom.Hex(6)
 	if err != nil {
 		return false, fmt.Errorf("failed to generate SBOM work id: %w", err)
