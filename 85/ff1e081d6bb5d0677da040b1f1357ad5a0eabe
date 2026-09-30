@@ -1,0 +1,114 @@
+integration/worker/external_image/external_image_test.go
+  s_3c3efcb306bbd3::t_8ce6342b50dda1 7,9,17,25,192-193,197,208-209,211-216,880-896,918,939-1705
+  s_3c3efcb306bbd3::t_abd9f667a0e84c 1706-1707
+cmd/cli/backfill-external-image-fixed-counts.go
+  s_3c3efcb306bbd3::t_e6ad7e049ec975 1-75
+cmd/cli/backfill-external-image-fixed-counts_test.go
+  s_3c3efcb306bbd3::t_a5533ce127cd26 1-50
+cmd/cli/root.go
+  s_3c3efcb306bbd3::t_a35f2c2d93f089 27-28
+cmd/cli/schedule-legacy-scan-cleanup.go
+  s_3c3efcb306bbd3::t_53352054b3b8df 1-81
+db/schema/tables/external-image-scan-generation.yaml
+  s_3c3efcb306bbd3::t_2bab626582903b 1-64
+db/schema/tables/external-image-scan.yaml
+  s_3c3efcb306bbd3::t_bb45ef2c8d07cd 8-11,47-58
+docs/external-image-fixed-counts.md
+  s_3c3efcb306bbd3::t_693224ee7828d4 1-68
+docs/legacy-scan-cleanup.md
+  s_3c3efcb306bbd3::t_64900d50a87fcb 1-87
+integration/worker/external_image/legacy_cleanup_test.go
+  s_3c3efcb306bbd3::t_2fa525ad31ed37 1-207
+integration/worker/external_image/publication_upload_test.go
+  s_3c3efcb306bbd3::t_b39e63aff8ccfa 1-153
+integration/worker/external_image/testdata/legacy-cleanup/external-image-sbom.yaml
+  s_3c3efcb306bbd3::t_302545b16a001b 1-84
+integration/worker/external_image/testdata/legacy-cleanup/external-image-scan.yaml
+  s_3c3efcb306bbd3::t_2b119fb9e784b6 1-99
+pkg/dynamicparam/dynamicparam.go
+  s_3c3efcb306bbd3::t_b99f897c1915e3 17-20,25,36-39,43
+pkg/externalimage/blobstore.go
+  s_3c3efcb306bbd3::t_00bbd9e534d900 49-56,106-109,136-143
+pkg/externalimage/cleanup.go
+  s_3c3efcb306bbd3::t_0d03d9ea75212e 1-487
+pkg/externalimage/errors.go
+  s_3c3efcb306bbd3::t_f76380d9280fe3 18-19
+pkg/externalimage/externalimage.go
+  s_3c3efcb306bbd3::t_f16c74d2be84f6 141,152-155,162-163,168-169,172,180-333,502-505,516-517,524-566,568,570-575,578-584,586,589
+pkg/externalimage/fixed_counts_backfill.go
+  s_3c3efcb306bbd3::t_e7780c98829717 1-262
+pkg/externalimage/fixed_counts_backfill_test.go
+  s_3c3efcb306bbd3::t_858f56092fe90b 1-223
+pkg/externalimage/legacy_cleanup.go
+  s_3c3efcb306bbd3::t_4d18e8d1e01275 1-299
+pkg/externalimage/legacy_cleanup_test.go
+  s_3c3efcb306bbd3::t_5e33f703224ead 1-100
+pkg/externalimage/publication.go
+  s_3c3efcb306bbd3::t_e2333a0ccbc39a 1-467
+pkg/image/scan.go
+  s_3c3efcb306bbd3::t_2a0e2586ec7d0b 288-298
+pkg/image/scan_test.go
+  s_3c3efcb306bbd3::t_3f6c9709583db3 5,194-235
+pkg/image/types/types.go
+  s_3c3efcb306bbd3::t_47d5605aa32bf9 73-81
+pkg/listener/external-image-sbom.go
+  s_3c3efcb306bbd3::t_2ffe8557983190 20,245,257,261,263,269,276,282,378-382,384,397,402,416,444,449
+pkg/listener/external-image-scan-builder.go
+  s_3c3efcb306bbd3::t_d5ebb7fd387eec 14,20,128,145,147,175,207-210,255-259,331,333-341,347,362,419-427,429,431,433,440,446-450
+pkg/listener/external-image-scan-generation_test.go
+  s_3c3efcb306bbd3::t_2ba22843282055 1-55
+pkg/listener/start.go
+  s_3c3efcb306bbd3::t_f818d27b627655 10,43
+pkg/listener/update-external-image-scan-status.go
+  s_3c3efcb306bbd3::t_2bbefa59b0505c 6-7,14,128-131,133,135-163,166-170,173,176,201-220,234-240,265-271,323,330,335,352,483,496,502,514,541,556,568,583,686-705
+pkg/persistence/pg.go
+  s_3c3efcb306bbd3::t_8bbb90aa7f2702 86-88,91,99,104,107-116,124
+pkg/scan/scan_capacity.go
+  s_3c3efcb306bbd3::t_3e61733ee821f6 11,54-57,62-66,367-371,387-395
+pkg/security/version_compare.go
+  s_3c3efcb306bbd3::t_a97688596a0535 5,11,14-18,29-32,39-42,90-126
+pkg/security/version_compare_test.go
+  s_3c3efcb306bbd3::t_be41863a41cc9f 7-46
+pkg/storage/r2.go
+  s_3c3efcb306bbd3::t_29550b05401695 4,6-7,152-164,169-172,225,229,235-244
+pkg/storage/r2_test.go
+  s_3c3efcb306bbd3::t_03a765e0ca4aad 1-68
+pkg/telemetry/datadog.go
+  s_3c3efcb306bbd3::t_d8c52df7fe17a5 30-39,178-192
+pkg/telemetry/otel.go
+  s_3c3efcb306bbd3::t_253cbb5953dd50 245-248,254
+pkg/telemetry/telemetry.go
+  s_3c3efcb306bbd3::t_4330ea6bc25853 169-181
+securebuild-api/app/api/v1/external-image/scan-summary/route.ts
+  s_3c3efcb306bbd3::t_f4187930ac66c7 9,26,43-45,200,205-210,223
+securebuild-api/integration/api/v1/external-image/scan.test.ts
+  s_3c3efcb306bbd3::t_814780e3b4ec51 57-93,139,159-165,169-180,256-290
+securebuild-api/integration/api/v1/external-image/seed-data/external-image-scan-generation.yaml
+  s_3c3efcb306bbd3::t_6adcc14eb06d08 1-46
+securebuild-api/integration/api/v1/external-image/seed-data/external-image-scan.yaml
+  s_3c3efcb306bbd3::t_38849958c30476 18,87-89
+securebuild-api/integration/fixtures/minio.ts
+  s_3c3efcb306bbd3::t_26133c8767b9f8 76-79,100
+securebuild-api/integration/fixtures/seed-blobs.ts
+  s_3c3efcb306bbd3::t_e11f8fe652b410 142,160
+securebuild-api/lib/externalimage/blobstore.ts
+  s_3c3efcb306bbd3::t_88b7690a7c2730 66-73,110-115
+securebuild-api/lib/externalimage/externalimage.ts
+  s_3c3efcb306bbd3::t_6fb13674e87840 8,241-270,446-448,452-455,470,934-936,948-951,967
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "85ff1e081d6bb5d0677da040b1f1357ad5a0eabe",
+  "prompts": {},
+  "sessions": {
+    "s_3c3efcb306bbd3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f439-4f09-79a2-afbb-8cd48a00dbe5",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
