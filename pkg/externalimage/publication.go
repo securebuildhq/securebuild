@@ -275,7 +275,7 @@ func markScanCandidateState(ctx context.Context, candidate scanCandidate, state 
 		    validated_at = CASE WHEN $4 = 'validated' THEN NOW() ELSE validated_at END,
 		    cleanup_after = CASE
 		        WHEN $4 = 'selected' THEN NULL
-		        ELSE $5
+		        ELSE $5::timestamptz
 		    END
 		WHERE generation_id = $1 AND digest = $2 AND arch = $3
 		  AND state IN ('uploading', 'failed')
