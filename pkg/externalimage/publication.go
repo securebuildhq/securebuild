@@ -14,7 +14,12 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 )
 
-const scanCandidateCleanupDelay = 24 * time.Hour
+const (
+	// Keep a generous lease while a publisher may still be uploading and
+	// validating objects. Terminal candidates do not need the same window.
+	scanCandidatePublicationLease = 24 * time.Hour
+	scanCandidateCleanupRetention = time.Hour
+)
 
 // ScanPublicationFailureStage identifies a deterministic integration-test
 // failure point in the scan publication pipeline.
@@ -185,7 +190,7 @@ func ensureScanCandidate(ctx context.Context, candidate *scanCandidate) error {
 	`, candidate.generationID, candidate.digest, candidate.arch,
 		candidate.raw.key, candidate.raw.size, candidate.raw.sha256,
 		candidate.details.key, candidate.details.size, candidate.details.sha256,
-		now, now.Add(scanCandidateCleanupDelay))
+		now, now.Add(scanCandidatePublicationLease))
 	if err != nil {
 		return fmt.Errorf("failed to create scan publication candidate: %w", err)
 	}
@@ -224,7 +229,7 @@ func ensureScanCandidate(ctx context.Context, candidate *scanCandidate) error {
 			UPDATE external_image_scan_generation
 			SET cleanup_after = $4
 			WHERE generation_id = $1 AND digest = $2 AND arch = $3
-		`, candidate.generationID, candidate.digest, candidate.arch, now.Add(scanCandidateCleanupDelay))
+		`, candidate.generationID, candidate.digest, candidate.arch, now.Add(scanCandidatePublicationLease))
 		if err != nil {
 			return fmt.Errorf("failed to renew scan candidate publication lease: %w", err)
 		}
@@ -263,19 +268,19 @@ func markScanCandidateState(ctx context.Context, candidate scanCandidate, state 
 	defer conn.Release()
 
 	var actualState string
+	cleanupAfter := time.Now().Add(scanCandidateCleanupRetention)
 	err := conn.QueryRow(ctx, `
 		UPDATE external_image_scan_generation
 		SET state = $4,
 		    validated_at = CASE WHEN $4 = 'validated' THEN NOW() ELSE validated_at END,
 		    cleanup_after = CASE
 		        WHEN $4 = 'selected' THEN NULL
-		        WHEN $4 = 'validated' THEN NOW() + INTERVAL '24 hours'
-		        ELSE COALESCE(cleanup_after, NOW() + INTERVAL '24 hours')
+		        ELSE $5
 		    END
 		WHERE generation_id = $1 AND digest = $2 AND arch = $3
 		  AND state IN ('uploading', 'failed')
 		RETURNING state
-	`, candidate.generationID, candidate.digest, candidate.arch, state).Scan(&actualState)
+	`, candidate.generationID, candidate.digest, candidate.arch, state, cleanupAfter).Scan(&actualState)
 	if err == nil {
 		return actualState, nil
 	}
@@ -442,7 +447,7 @@ func selectScanCandidate(ctx context.Context, params SetExternalImageScanStatusP
 			UPDATE external_image_scan_generation
 			SET state = 'superseded', cleanup_after = $4
 			WHERE generation_id = $1 AND digest = $2 AND arch = $3
-		`, selectedGeneration.String, params.Digest, params.Arch, now.Add(scanCandidateCleanupDelay))
+		`, selectedGeneration.String, params.Digest, params.Arch, now.Add(scanCandidateCleanupRetention))
 		if err != nil {
 			return fmt.Errorf("failed to supersede previous scan generation: %w", err)
 		}
