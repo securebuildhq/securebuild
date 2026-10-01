@@ -117,6 +117,7 @@ func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm 
 	}
 	defer runner.Close()
 
+	pollStartedAt := time.Now()
 	scanDirs, err := scan.ListScanDirsWithRunner(ctx, runner, baseDir)
 	if err != nil {
 		logger.Warn("failed to list scan dirs on builder, skipping this cycle",
@@ -172,7 +173,7 @@ func processBuilderScans(ctx context.Context, cache *scan.ScanCapacityCache, vm 
 		}
 		processableDirs = append(processableDirs, sd)
 	}
-	cache.SetBuilderScans(vm.ID, activeScans)
+	cache.SetBuilderScans(vm.ID, activeScans, pollStartedAt)
 	scanDirs = processableDirs
 
 	// Partition scan dirs into completed (batch via tar) and in-progress

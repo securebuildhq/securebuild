@@ -1,0 +1,38 @@
+database: securebuild
+name: machine_pool
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "dispatch-builder"
+        - column: machine_id
+          value:
+            str: "dispatch-machine"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: private_key
+          value:
+            str: "invalid-test-key"
+        - column: username
+          value:
+            str: "builder"
+        - column: status
+          value:
+            str: "running"
+        - column: ip_address
+          value:
+            str: "127.0.0.1"
+        - column: port
+          value:
+            str: "0"
+        - column: architecture
+          value:
+            str: "x86_64"
+        - column: is_on_demand
+          value:
+            str: "false"
+        - column: type
+          value:
+            str: "cmx"

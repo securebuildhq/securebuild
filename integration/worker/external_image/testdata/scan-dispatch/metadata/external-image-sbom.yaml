@@ -1,0 +1,36 @@
+database: securebuild
+name: external_image_sbom
+seedData:
+  rows:
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:dispatch-capacity"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "syft"
+        - column: is_in_object_store
+          value:
+            str: "true"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:dispatch-capacity"
+        - column: arch
+          value:
+            str: "aarch64"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: source
+          value:
+            str: "syft"
+        - column: is_in_object_store
+          value:
+            str: "true"

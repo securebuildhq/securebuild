@@ -47,7 +47,7 @@ var expectedArchs = []string{"x86_64", "aarch64"}
 // Queue message lifecycle:
 //   - Handler returns nil → message completed, grype runs async on builder
 //   - Handler returns NonRetryableError → message completed with error, not retried
-//   - Handler returns normal error → message retried by listener (e.g. no builder)
+//   - Handler returns normal error → message retried by listener (e.g. failed transfer)
 func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) error {
 	p := types.ExternalImageScanPayload{}
 	if err := json.Unmarshal([]byte(payloadJSON), &p); err != nil {
@@ -81,6 +81,18 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 			zap.String("digest", p.Digest))
 		return nil
 	}
+
+	// Reserve before fetching SBOMs: a full builder fleet should leave only
+	// lightweight queued work, not downloads holding large buffers in memory.
+	reservation, err := scan.SelectBuilderForScan(ctx, cache)
+	if errors.Is(err, scan.ErrNoBuilderAvailable) {
+		logger.Info("no builder available for scan, will retry on next scheduler cycle", zap.String("digest", p.Digest))
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to reserve builder for scan: %w", err)
+	}
+	defer reservation.Release()
 
 	sboms, err := externalimage.GetExternalImageSBOMs(ctx, p.Digest)
 	if err != nil {
@@ -136,13 +148,9 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 		return nil
 	}
 
-	// If dispatch fails after the claim, revert the scan status to "queued"
-	// so the scheduler can re-enqueue on the next cycle. A "no builder
-	// available" failure is not an error — it's a normal capacity condition
-	// that happens when all builders are full. We return nil so the message
-	// is cleanly completed (not retried by the listener) and the scheduler
-	// re-enqueues when capacity frees up.
-	dispatchErr := dispatchScanToBuilder(ctx, cache, p.Digest, scanGenerationID, sbomByArch, archsToScan)
+	// If dispatch fails after the claim, revert to queued so the scheduler
+	// can retry. The deferred reservation release covers every failure path.
+	dispatchErr := dispatchScanToBuilder(ctx, reservation, p.Digest, scanGenerationID, sbomByArch, archsToScan)
 	if dispatchErr != nil {
 		if revertErr := revertScanToQueued(ctx, p.Digest, scanGenerationID, archsToScan); revertErr != nil {
 			// Revert failed — return the revert error so the listener retries
@@ -151,46 +159,20 @@ func HandleExternalImageScanOnBuilder(ctx context.Context, payloadJSON string) e
 			// staleness window expires.
 			return fmt.Errorf("dispatch failed (%v) and revert also failed: %w", dispatchErr, revertErr)
 		}
-		if errors.Is(dispatchErr, scan.ErrNoBuilderAvailable) {
-			logger.Info("no builder available for scan, will retry on next scheduler cycle",
-				zap.String("digest", p.Digest))
-			return nil
-		}
 		return dispatchErr
 	}
 
 	return nil
 }
 
-// dispatchScanToBuilder handles builder selection, file copy, and grype launch.
-// It reserves a capacity slot atomically and releases it if any step fails
-// before the scan is fully launched.
-//
-// The dispatch is split into two phases:
-//  1. Prepare all files (dirs, scan.json, sbom.json per arch) — if any step
-//     fails, no grype processes have started, so reverting is safe.
-//  2. Launch grype for all archs — if any launch fails, already-launched
-//     grype processes are killed before returning, preventing orphaned
-//     processes that would race with a retry on a different builder.
-func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, digest, scanGenerationID string, sbomByArch map[string]string, archsToScan []string) error {
+// dispatchScanToBuilder uses the reservation acquired before downloading SBOMs.
+// The caller releases it on failure; successful launch commits it to the cache.
+// Files are prepared before launching any architecture. A partial launch failure
+// kills already-launched processes before the caller reverts the scan claim.
+func dispatchScanToBuilder(ctx context.Context, reservation *scan.ScanReservation, digest, scanGenerationID string, sbomByArch map[string]string, archsToScan []string) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.dispatch_scan_to_builder")
 	defer span.Finish()
-
-	builderVM, err := scan.SelectBuilderForScan(ctx, cache)
-	if err != nil {
-		return fmt.Errorf("failed to select builder for scan: %w", err)
-	}
-
-	// SelectBuilderForScan reserved a capacity slot. If we fail before the
-	// scan files are written to the builder, release the slot. The poller
-	// will resync the cache on the next cycle anyway, but this avoids
-	// temporarily over-counting.
-	slotReserved := true
-	defer func() {
-		if slotReserved {
-			cache.ReleaseScanSlot(builderVM.ID)
-		}
-	}()
+	builderVM := reservation.BuilderVM
 
 	workDir, err := scan.ResolveScanWorkDir(ctx, builderVM, digest)
 	if err != nil {
@@ -250,8 +232,7 @@ func dispatchScanToBuilder(ctx context.Context, cache *scan.ScanCapacityCache, d
 	// so the running metric reflects it immediately, without waiting for
 	// the poller to discover it on the filesystem. The poller's
 	// SetBuilderScans call will reconcile on the next cycle.
-	slotReserved = false
-	cache.AddScan(builderVM.ID, scan.ScanDirInfo{
+	reservation.Commit(scan.ScanDirInfo{
 		Digest:           digest,
 		ScanGenerationID: scanGenerationID,
 		Architectures:    append([]string(nil), archsToScan...),
