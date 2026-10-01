@@ -1,0 +1,17 @@
+database: securebuild
+name: machine_assignment
+seedData:
+  rows:
+    - columns:
+        - column: machine_id
+          value:
+            str: "dispatch-builder"
+        - column: assigned_task_type
+          value:
+            str: "build_image"
+        - column: assigned_task_id
+          value:
+            str: "test-build"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"

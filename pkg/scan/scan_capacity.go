@@ -64,23 +64,26 @@ type ScanDirInfo struct {
 	Architectures    []string
 	WorkDir          string
 	CreatedAt        time.Time
+	committedAt      time.Time // local dispatch completion; fences older poll snapshots
 }
 
 // ScanCapacityCache tracks active scans per builder, maintained from filesystem
 // scans. There is only one worker instance, so no cross-instance coordination
 // is needed.
 type ScanCapacityCache struct {
-	mu     sync.RWMutex
-	counts map[string]int           // machineID → count of active scan directories
-	scans  map[string][]ScanDirInfo // machineID → list of active scan dirs
-	ready  bool
+	mu           sync.RWMutex
+	counts       map[string]int           // observed scans plus pending dispatch reservations
+	scans        map[string][]ScanDirInfo // machineID → list of active scan dirs
+	reservations map[string]map[*ScanReservation]struct{}
+	ready        bool
 }
 
 // NewScanCapacityCache creates a new empty ScanCapacityCache.
 func NewScanCapacityCache() *ScanCapacityCache {
 	return &ScanCapacityCache{
-		counts: make(map[string]int),
-		scans:  make(map[string][]ScanDirInfo),
+		counts:       make(map[string]int),
+		reservations: make(map[string]map[*ScanReservation]struct{}),
+		scans:        make(map[string][]ScanDirInfo),
 	}
 }
 
@@ -99,44 +102,88 @@ func (c *ScanCapacityCache) setReady(ready bool) {
 	c.ready = ready
 }
 
-// SetBuilderScans replaces all scan entries for a builder with the given
-// list. The count is set to the length of the list. Called by the poller
-// every 10s to resync the cache with what's actually on the builder
-// filesystem, eliminating leaked placeholders and stale entries.
-func (c *ScanCapacityCache) SetBuilderScans(machineID string, scans []ScanDirInfo) {
+// SetBuilderScans reconciles observed directories without discarding pending
+// dispatches, which may still be downloading SBOMs or preparing remote files.
+// A directory observed before Commit is conservatively counted alongside its
+// reservation until dispatch finishes.
+func (c *ScanCapacityCache) SetBuilderScans(machineID string, scans []ScanDirInfo, pollStartedAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(scans) == 0 {
-		delete(c.counts, machineID)
-		delete(c.scans, machineID)
-		return
+	// Preserve launches completed after this filesystem poll began. Otherwise
+	// an older empty snapshot could free a slot that was just committed.
+	scans = append([]ScanDirInfo(nil), scans...)
+	for _, existing := range c.scans[machineID] {
+		if !existing.committedAt.After(pollStartedAt) {
+			continue
+		}
+		found := false
+		for i := range scans {
+			if scans[i].Digest == existing.Digest {
+				scans[i] = existing
+				found = true
+				break
+			}
+		}
+		if !found {
+			scans = append(scans, existing)
+		}
 	}
 	c.scans[machineID] = scans
-	c.counts[machineID] = len(scans)
+	c.updateCountLocked(machineID)
 }
 
-// AddScan appends a scan entry to the scans map for a builder without
-// modifying counts (tryReserveSlot already incremented the count). This
-// makes the scan immediately visible in the scans map so that
-// GetTotalActiveScanCount and the running metric reflect it without
-// waiting for the poller to discover it on the filesystem. The poller's
-// SetBuilderScans call will eventually reconcile both maps.
-//
-// If an entry with the same digest already exists for the builder (e.g.
-// the poller discovered it on the filesystem between the scan files being
-// written and this call), the existing entry is updated in place instead
-// of appending a duplicate.
-func (c *ScanCapacityCache) AddScan(machineID string, info ScanDirInfo) {
+func (c *ScanCapacityCache) updateCountLocked(machineID string) {
+	count := len(c.scans[machineID]) + len(c.reservations[machineID])
+	if count == 0 {
+		delete(c.counts, machineID)
+	} else {
+		c.counts[machineID] = count
+	}
+	if len(c.scans[machineID]) == 0 {
+		delete(c.scans, machineID)
+	}
+	if len(c.reservations[machineID]) == 0 {
+		delete(c.reservations, machineID)
+	}
+}
+
+// ScanReservation owns one pending dispatch slot. Callers must defer Release
+// immediately and Commit only after all scan processes have launched. Both
+// operations are idempotent, including after the builder is removed.
+type ScanReservation struct {
+	BuilderVM buildertypes.BuilderVM
+	cache     *ScanCapacityCache
+}
+
+func (r *ScanReservation) Release() {
+	c := r.cache
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	scans := c.scans[machineID]
-	for i, s := range scans {
-		if s.Digest == info.Digest {
-			scans[i] = info
+	delete(c.reservations[r.BuilderVM.ID], r)
+	c.updateCountLocked(r.BuilderVM.ID)
+}
+
+// Commit replaces this reservation with the launched scan. A deferred Release
+// cannot remove the active scan or another dispatch's reservation.
+func (r *ScanReservation) Commit(info ScanDirInfo) {
+	c := r.cache
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	machineID := r.BuilderVM.ID
+	if _, ok := c.reservations[machineID][r]; !ok {
+		return
+	}
+	delete(c.reservations[machineID], r)
+	info.committedAt = time.Now()
+	for i, existing := range c.scans[machineID] {
+		if existing.Digest == info.Digest {
+			c.scans[machineID][i] = info
+			c.updateCountLocked(machineID)
 			return
 		}
 	}
-	c.scans[machineID] = append(scans, info)
+	c.scans[machineID] = append(c.scans[machineID], info)
+	c.updateCountLocked(machineID)
 }
 
 // RemoveScan removes a scan for a builder by digest. Called by the poller
@@ -148,11 +195,38 @@ func (c *ScanCapacityCache) RemoveScan(machineID, digest string) {
 	for i, s := range scans {
 		if s.Digest == digest {
 			c.scans[machineID] = append(scans[:i], scans[i+1:]...)
-			c.counts[machineID]--
-			if c.counts[machineID] <= 0 {
-				delete(c.counts, machineID)
-				delete(c.scans, machineID)
-			}
+			c.updateCountLocked(machineID)
+			return
+		}
+	}
+}
+
+// SnapshotBuilderScans captures only active scan entries for missing-builder
+// reconciliation. Take it before querying the fleet so that a stale fleet list
+// cannot invalidate dispatches started or committed later in the poll cycle.
+// Pending reservations belong to their handlers and are never reconciled here.
+func (c *ScanCapacityCache) SnapshotBuilderScans() map[string][]ScanDirInfo {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	snapshot := make(map[string][]ScanDirInfo, len(c.scans))
+	for machineID, scans := range c.scans {
+		snapshot[machineID] = append([]ScanDirInfo(nil), scans...)
+	}
+	return snapshot
+}
+
+// RemoveSnapshotScan removes only the entry captured before a fleet query.
+// A newer launch of the same digest and any pending reservations survive.
+func (c *ScanCapacityCache) RemoveSnapshotScan(machineID string, expected ScanDirInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	scans := c.scans[machineID]
+	for i, current := range scans {
+		if current.Digest == expected.Digest &&
+			current.ScanGenerationID == expected.ScanGenerationID &&
+			current.committedAt.Equal(expected.committedAt) {
+			c.scans[machineID] = append(scans[:i], scans[i+1:]...)
+			c.updateCountLocked(machineID)
 			return
 		}
 	}
@@ -164,6 +238,7 @@ func (c *ScanCapacityCache) RemoveBuilder(machineID string) {
 	defer c.mu.Unlock()
 	delete(c.counts, machineID)
 	delete(c.scans, machineID)
+	delete(c.reservations, machineID)
 }
 
 // GetBuilderScanCount returns the number of active scans for a builder.
@@ -195,11 +270,8 @@ func (c *ScanCapacityCache) GetTotalScanCount() int {
 }
 
 // GetTotalActiveScanCount returns the total number of active scan directories
-// across all builders, based on the scans map (not the counts map). This is
-// more accurate than GetTotalScanCount because counts can be temporarily
-// inflated by tryReserveSlot reservations between poller resync cycles, while
-// scans only reflects scan directories the poller has actually observed on
-// builder filesystems.
+// across all builders, excluding pending dispatch reservations. It includes
+// successful local launches as well as directories observed by the poller.
 func (c *ScanCapacityCache) GetTotalActiveScanCount() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -210,56 +282,36 @@ func (c *ScanCapacityCache) GetTotalActiveScanCount() int {
 	return total
 }
 
-// GetBuilderIDs returns the machine IDs of all builders that have active scans.
+// GetBuilderIDs includes builders with active scans or pending dispatches.
 func (c *ScanCapacityCache) GetBuilderIDs() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	ids := make([]string, 0, len(c.scans))
-	for id := range c.scans {
+	ids := make([]string, 0, len(c.counts))
+	for id := range c.counts {
 		ids = append(ids, id)
 	}
 	return ids
 }
 
-// tryReserveSlot atomically checks whether a builder has capacity for one
-// more scan and, if so, increments the count under the write lock. Returns
-// true if the slot was reserved. The poller resyncs the cache every 10s, so
-// any leaked reservations (dispatch failure before scan files are written)
-// are automatically cleaned up on the next poll cycle.
-func (c *ScanCapacityCache) tryReserveSlot(machineID string, hasBuildAssignment bool, maxScansPerBuilder int) bool {
+// tryReserveSlot atomically accounts for pending transfers as well as observed
+// scans. Build-assigned machines accept at most one scan.
+func (c *ScanCapacityCache) tryReserveSlot(b BuilderForScan, maxScansPerBuilder int) *ScanReservation {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	current := c.counts[machineID]
-
-	if hasBuildAssignment {
-		if current >= 1 {
-			return false
-		}
-	} else {
-		if current >= maxScansPerBuilder {
-			return false
-		}
+	limit := maxScansPerBuilder
+	if b.HasBuildAssignment {
+		limit = 1
 	}
-
-	c.counts[machineID] = current + 1
-	return true
-}
-
-// ReleaseScanSlot decrements the capacity count for a builder. Used when a
-// reservation was made but the scan dispatch failed before scan files were
-// written. The poller will correct the count on the next resync anyway, but
-// this avoids temporarily over-counting.
-func (c *ScanCapacityCache) ReleaseScanSlot(machineID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.counts[machineID]--
-	if c.counts[machineID] <= 0 {
-		delete(c.counts, machineID)
-		if len(c.scans[machineID]) == 0 {
-			delete(c.scans, machineID)
-		}
+	if c.counts[b.ID] >= limit {
+		return nil
 	}
+	reservation := &ScanReservation{BuilderVM: b.BuilderVM, cache: c}
+	if c.reservations[b.ID] == nil {
+		c.reservations[b.ID] = make(map[*ScanReservation]struct{})
+	}
+	c.reservations[b.ID][reservation] = struct{}{}
+	c.updateCountLocked(b.ID)
+	return reservation
 }
 
 // ReportCapacityMetrics sends gauge metrics for total and used scan capacity.
@@ -371,7 +423,7 @@ func InitScanCapacityCache(ctx context.Context) (*ScanCapacityCache, error) {
 					CreatedAt:        s.Metadata.CreatedAt,
 				})
 			}
-			cache.SetBuilderScans(b.BuilderVM.ID, activeScans)
+			cache.SetBuilderScans(b.BuilderVM.ID, activeScans, time.Now())
 		}(b)
 	}
 	wg.Wait()
@@ -409,28 +461,27 @@ type BuilderForScan struct {
 // The reservation is atomic: the capacity count is incremented under the
 // cache write lock before returning, preventing concurrent handlers from
 // all selecting the same builder and exceeding MaxScansPerBuilder.
-// The poller resyncs the cache from builder filesystems every 10s, so any
-// leaked reservations (dispatch failure before scan files are written) are
-// automatically corrected on the next poll cycle.
-func SelectBuilderForScan(ctx context.Context, cache *ScanCapacityCache) (buildertypes.BuilderVM, error) {
+// Pending reservations survive filesystem refreshes until their owner calls
+// Release or Commit. The caller must defer Release immediately.
+func SelectBuilderForScan(ctx context.Context, cache *ScanCapacityCache) (*ScanReservation, error) {
 	if cache == nil || !cache.IsReady() {
-		return buildertypes.BuilderVM{}, fmt.Errorf("scan capacity cache is not ready")
+		return nil, fmt.Errorf("scan capacity cache is not ready")
 	}
 
 	maxScansPerBuilder := param.GetParam(ctx).MaxScansPerBuilder
 
 	builders, err := GetRunningBuildersForScan(ctx)
 	if err != nil {
-		return buildertypes.BuilderVM{}, fmt.Errorf("failed to query running builders for scan: %w", err)
+		return nil, fmt.Errorf("failed to query running builders for scan: %w", err)
 	}
 
 	for _, b := range builders {
-		if cache.tryReserveSlot(b.ID, b.HasBuildAssignment, maxScansPerBuilder) {
-			return b.BuilderVM, nil
+		if reservation := cache.tryReserveSlot(b, maxScansPerBuilder); reservation != nil {
+			return reservation, nil
 		}
 	}
 
-	return buildertypes.BuilderVM{}, ErrNoBuilderAvailable
+	return nil, ErrNoBuilderAvailable
 }
 
 // GetRunningBuilders returns all running builder VMs from the machine pool,
@@ -450,7 +501,10 @@ func GetRunningBuilders(ctx context.Context) ([]buildertypes.BuilderVM, error) {
 // GetRunningBuildersForScan queries all running builders, ordered by idle-first
 // (no build assignments first), then by oldest builder first.
 func GetRunningBuildersForScan(ctx context.Context) ([]BuilderForScan, error) {
-	conn := persistence.MustGetPooledPostgresSession(ctx)
+	conn, err := persistence.GetPooledPostgresSession(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to acquire postgres connection for running builders: %w", err)
+	}
 	defer conn.Release()
 
 	query := `

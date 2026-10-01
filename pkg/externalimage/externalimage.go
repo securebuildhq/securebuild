@@ -571,30 +571,14 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 }
 
 func GetExternalImageSBOM(ctx context.Context, digest string) (*string, error) {
-	conn := persistence.MustGetPooledPostgresSession(ctx)
-	defer conn.Release()
-
-	// Query metadata only (no sbom column) to find which arch has an SBOM
-	query := `
-		select esbom.arch
-		from external_image_sbom esbom
-		inner join external_image_sbom_status status on status.digest = esbom.digest
-		where esbom.digest = $1
-		  and esbom.is_in_object_store = true
-		  and status.status = $2
-		limit 1
-	`
-
-	row := conn.QueryRow(ctx, query, digest, string(SBOMStatusSucceeded))
-
-	var arch string
-	err := row.Scan(&arch)
+	metadata, err := getExternalImageSBOMMetadata(ctx, digest)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to query external image SBOM for digest %s: %w", digest, err)
+		return nil, fmt.Errorf("failed to get external image SBOM for digest %s: %w", digest, err)
 	}
+	if len(metadata) == 0 {
+		return nil, nil
+	}
+	arch := metadata[0].Arch
 
 	// Fetch SBOM content from object store
 	store, err := newBlobStore(ctx)
@@ -609,8 +593,35 @@ func GetExternalImageSBOM(ctx context.Context, digest string) (*string, error) {
 	return &sbom, nil
 }
 
+// GetExternalImageSBOMs releases its metadata connection before any object-store
+// IO or decompression. Slow SBOM downloads must not occupy the Postgres pool.
 func GetExternalImageSBOMs(ctx context.Context, digest string) ([]types.ExternalImageSBOM, error) {
-	conn := persistence.MustGetPooledPostgresSession(ctx)
+	sboms, err := getExternalImageSBOMMetadata(ctx, digest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get external image SBOMs for digest %s: %w", digest, err)
+	}
+	if len(sboms) == 0 {
+		return sboms, nil
+	}
+	store, err := newBlobStore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create blob store: %w", err)
+	}
+	for i := range sboms {
+		content, err := store.getSBOM(ctx, sboms[i].Digest, sboms[i].Arch)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get SBOM from object store for digest %s, arch %s: %w", digest, sboms[i].Arch, err)
+		}
+		sboms[i].SBOM = content
+	}
+	return sboms, nil
+}
+
+func getExternalImageSBOMMetadata(ctx context.Context, digest string) ([]types.ExternalImageSBOM, error) {
+	conn, err := persistence.GetPooledPostgresSession(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to acquire postgres connection for SBOM metadata: %w", err)
+	}
 	defer conn.Release()
 
 	// Query metadata only (no sbom column)
@@ -631,7 +642,6 @@ func GetExternalImageSBOMs(ctx context.Context, digest string) ([]types.External
 	defer rows.Close()
 
 	var sboms []types.ExternalImageSBOM
-	var store *blobStore
 	for rows.Next() {
 		var sbom types.ExternalImageSBOM
 		var imageDigest sql.NullString
@@ -642,18 +652,6 @@ func GetExternalImageSBOMs(ctx context.Context, digest string) ([]types.External
 		if imageDigest.Valid {
 			sbom.ImageDigest = imageDigest.String
 		}
-		if store == nil {
-			store, err = newBlobStore(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create blob store: %w", err)
-			}
-		}
-		// Fetch SBOM content from object store
-		content, err := store.getSBOM(ctx, sbom.Digest, sbom.Arch)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get SBOM from object store for digest %s, arch %s: %w", sbom.Digest, sbom.Arch, err)
-		}
-		sbom.SBOM = content
 		sboms = append(sboms, sbom)
 	}
 	if err := rows.Err(); err != nil {
