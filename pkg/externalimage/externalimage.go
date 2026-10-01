@@ -573,7 +573,7 @@ func SetExternalImageScanStatus(ctx context.Context, params SetExternalImageScan
 func GetExternalImageSBOM(ctx context.Context, digest string) (*string, error) {
 	metadata, err := getExternalImageSBOMMetadata(ctx, digest)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get external image SBOM for digest %s: %w", digest, err)
 	}
 	if len(metadata) == 0 {
 		return nil, nil
@@ -597,8 +597,11 @@ func GetExternalImageSBOM(ctx context.Context, digest string) (*string, error) {
 // IO or decompression. Slow SBOM downloads must not occupy the Postgres pool.
 func GetExternalImageSBOMs(ctx context.Context, digest string) ([]types.ExternalImageSBOM, error) {
 	sboms, err := getExternalImageSBOMMetadata(ctx, digest)
-	if err != nil || len(sboms) == 0 {
-		return sboms, err
+	if err != nil {
+		return nil, fmt.Errorf("failed to get external image SBOMs for digest %s: %w", digest, err)
+	}
+	if len(sboms) == 0 {
+		return sboms, nil
 	}
 	store, err := newBlobStore(ctx)
 	if err != nil {
@@ -617,7 +620,7 @@ func GetExternalImageSBOMs(ctx context.Context, digest string) ([]types.External
 func getExternalImageSBOMMetadata(ctx context.Context, digest string) ([]types.ExternalImageSBOM, error) {
 	conn, err := persistence.GetPooledPostgresSession(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to acquire postgres connection for SBOM metadata: %w", err)
 	}
 	defer conn.Release()
 

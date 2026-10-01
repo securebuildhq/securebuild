@@ -503,7 +503,7 @@ func GetRunningBuilders(ctx context.Context) ([]buildertypes.BuilderVM, error) {
 func GetRunningBuildersForScan(ctx context.Context) ([]BuilderForScan, error) {
 	conn, err := persistence.GetPooledPostgresSession(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to acquire postgres connection for running builders: %w", err)
 	}
 	defer conn.Release()
 
