@@ -1,0 +1,29 @@
+AGENTS.md
+  s_e7a9441b225678::t_9af0c24827e85c 12-13
+  s_e7a9441b225678::t_e41963a2614685 1-11
+docs/securebuild-worker-telemetry-provenance.md
+  s_e7a9441b225678::t_16746567e7b747 370,378,383
+  s_e7a9441b225678::t_10d08194c2c5f2 28,326-328,330-348,350-354,356-366,368-369,371,373-374,376-377,379,381-382,384-387
+  s_e7a9441b225678::t_d0df0d277d28dd 1-12,14-27,32-94,115-325,388-505
+  s_e7a9441b225678::t_d2a0a108121abe 29-31
+  s_e7a9441b225678::t_497f470a4eabfe 329
+  s_e7a9441b225678::t_aa0bf0ba0bb22c 372,375,380
+  s_e7a9441b225678::t_ad57d4b7eb7a07 349,355,367
+  s_e7a9441b225678::t_9af0c24827e85c 13,95-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d528173eb95578d8609c898ac234f7e979dae256",
+  "prompts": {},
+  "sessions": {
+    "s_e7a9441b225678": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f35e-c23a-71a2-9de2-01d767221bf8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Josh Sandlin <joshs@replicated.com>"
+    }
+  }
+}
