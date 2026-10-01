@@ -44,7 +44,7 @@ func StartExternalImageScanStatusChecker(ctx context.Context, cache *scan.ScanCa
 		default:
 		}
 
-		if err := pollScanStatus(ctx, cache); err != nil {
+		if err := PollExternalImageScanStatus(ctx, cache); err != nil {
 			logger.Error(fmt.Errorf("failed to poll scan status: %w", err))
 		}
 
@@ -52,12 +52,15 @@ func StartExternalImageScanStatusChecker(ctx context.Context, cache *scan.ScanCa
 	}
 }
 
-// pollScanStatus performs one poll cycle: checks all running builders for
+// PollExternalImageScanStatus performs one poll cycle: checks all running builders for
 // completed scans and handles builders that have disappeared.
-func pollScanStatus(ctx context.Context, cache *scan.ScanCapacityCache) error {
+func PollExternalImageScanStatus(ctx context.Context, cache *scan.ScanCapacityCache) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.poll_scan_status")
 	defer span.Finish()
 
+	// Snapshot before the fleet query: later dispatches may select builders
+	// that are absent from this poll's fleet list.
+	scanSnapshot := cache.SnapshotBuilderScans()
 	builders, err := scan.GetRunningBuilders(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to query running builders: %w", err)
@@ -78,9 +81,9 @@ func pollScanStatus(ctx context.Context, cache *scan.ScanCapacityCache) error {
 	}
 	wg.Wait()
 
-	for _, machineID := range cache.GetBuilderIDs() {
+	for machineID, scans := range scanSnapshot {
 		if !runningBuilderIDs[machineID] {
-			handleMissingBuilder(ctx, cache, machineID)
+			handleMissingBuilder(ctx, cache, machineID, scans)
 		}
 	}
 
@@ -672,13 +675,7 @@ func cleanupScanDir(ctx context.Context, runner buildbackend.Runner, workDir str
 // builder are lost, so the affected digests are re-enqueued for scanning on
 // a different builder. The retry_count is effectively reset to 0 since
 // scan.json is lost with the VM.
-func handleMissingBuilder(ctx context.Context, cache *scan.ScanCapacityCache, machineID string) {
-	scans := cache.GetScansForBuilder(machineID)
-	if len(scans) == 0 {
-		cache.RemoveBuilder(machineID)
-		return
-	}
-
+func handleMissingBuilder(ctx context.Context, cache *scan.ScanCapacityCache, machineID string, scans []scan.ScanDirInfo) {
 	logger.Warn("builder no longer in machine_pool, re-enqueuing scans",
 		zap.String("machineID", machineID),
 		zap.Int("scanCount", len(scans)))
@@ -699,6 +696,7 @@ func handleMissingBuilder(ctx context.Context, cache *scan.ScanCapacityCache, ma
 				zap.Error(err))
 			continue
 		}
+		cache.RemoveSnapshotScan(machineID, s)
 		if affected == 0 {
 			logger.Info("missing builder scan was already superseded; leaving current scan unchanged",
 				zap.String("digest", s.Digest),
@@ -708,8 +706,6 @@ func handleMissingBuilder(ctx context.Context, cache *scan.ScanCapacityCache, ma
 
 		reenqueueScan(ctx, s.Digest)
 	}
-
-	cache.RemoveBuilder(machineID)
 }
 
 // reenqueueScan enqueues a new external_image_scan work item for a digest.

@@ -201,6 +201,37 @@ func (c *ScanCapacityCache) RemoveScan(machineID, digest string) {
 	}
 }
 
+// SnapshotBuilderScans captures only active scan entries for missing-builder
+// reconciliation. Take it before querying the fleet so that a stale fleet list
+// cannot invalidate dispatches started or committed later in the poll cycle.
+// Pending reservations belong to their handlers and are never reconciled here.
+func (c *ScanCapacityCache) SnapshotBuilderScans() map[string][]ScanDirInfo {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	snapshot := make(map[string][]ScanDirInfo, len(c.scans))
+	for machineID, scans := range c.scans {
+		snapshot[machineID] = append([]ScanDirInfo(nil), scans...)
+	}
+	return snapshot
+}
+
+// RemoveSnapshotScan removes only the entry captured before a fleet query.
+// A newer launch of the same digest and any pending reservations survive.
+func (c *ScanCapacityCache) RemoveSnapshotScan(machineID string, expected ScanDirInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	scans := c.scans[machineID]
+	for i, current := range scans {
+		if current.Digest == expected.Digest &&
+			current.ScanGenerationID == expected.ScanGenerationID &&
+			current.committedAt.Equal(expected.committedAt) {
+			c.scans[machineID] = append(scans[:i], scans[i+1:]...)
+			c.updateCountLocked(machineID)
+			return
+		}
+	}
+}
+
 // RemoveBuilder removes all scans for a builder (e.g. when the builder is deleted).
 func (c *ScanCapacityCache) RemoveBuilder(machineID string) {
 	c.mu.Lock()

@@ -95,3 +95,45 @@ func TestConcurrentScanReservationsRespectCapacity(t *testing.T) {
 	}
 	require.Zero(t, c.GetTotalScanCount())
 }
+
+func TestMissingBuilderSnapshotPreservesLaterDispatches(t *testing.T) {
+	c := NewScanCapacityCache()
+	b := BuilderForScan{BuilderVM: buildertypes.BuilderVM{ID: "builder"}}
+	old := ScanDirInfo{Digest: "existing", ScanGenerationID: "old"}
+	c.SetBuilderScans(b.ID, []ScanDirInfo{old}, time.Now())
+	snapshot := c.SnapshotBuilderScans()
+	pending := c.tryReserveSlot(b, 3)
+	launched := c.tryReserveSlot(b, 3)
+	require.NotNil(t, pending)
+	require.NotNil(t, launched)
+	launched.Commit(ScanDirInfo{Digest: "existing", ScanGenerationID: "new"})
+	for _, entry := range snapshot[b.ID] {
+		c.RemoveSnapshotScan(b.ID, entry)
+	}
+	require.Equal(t, 2, c.GetTotalScanCount(), "old cleanup must preserve both the replacement scan and pending download")
+	require.Equal(t, "new", c.GetScansForBuilder(b.ID)[0].ScanGenerationID)
+	// Removing a genuinely missing active scan still leaves pending work owned
+	// by its handler, which can release it when dispatch fails.
+	for _, entry := range c.SnapshotBuilderScans()[b.ID] {
+		c.RemoveSnapshotScan(b.ID, entry)
+	}
+	require.Equal(t, 1, c.GetTotalScanCount())
+	pending.Release()
+	require.Zero(t, c.GetTotalScanCount())
+}
+
+func TestMissingBuilderSnapshotPreservesCommitOfObservedDirectory(t *testing.T) {
+	c := NewScanCapacityCache()
+	b := BuilderForScan{BuilderVM: buildertypes.BuilderVM{ID: "builder"}}
+	r := c.tryReserveSlot(b, 2)
+	info := ScanDirInfo{Digest: "scan", ScanGenerationID: "generation"}
+	c.SetBuilderScans(b.ID, []ScanDirInfo{info}, time.Now())
+	snapshot := c.SnapshotBuilderScans()
+	// The poller observed files during preparation, but the handler committed
+	// that same generation after the fleet snapshot began.
+	r.Commit(info)
+	c.RemoveSnapshotScan(b.ID, snapshot[b.ID][0])
+	require.Equal(t, 1, c.GetTotalScanCount())
+	r.Release()
+	require.Equal(t, 1, c.GetTotalScanCount())
+}
