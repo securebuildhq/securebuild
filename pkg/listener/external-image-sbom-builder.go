@@ -39,14 +39,19 @@ func getSbomDownloadCapacityCache(ctx context.Context) *sbom.SbomDownloadCapacit
 // sbomDownloadPlatforms is the list of platforms that SBOM generation checks.
 var sbomDownloadPlatforms = []string{"linux/amd64", "linux/arm64"}
 
+const (
+	sbomDispatchRetryDelay          = 15 * time.Second
+	sbomWaitingForBuilderStatusText = "waiting for builder capacity"
+)
+
 // handleExternalImageSbomOnBuilder dispatches an external image SBOM generation
 // to a builder VM. It writes download metadata and launches syft via nohup for
 // each architecture, then returns immediately. The SBOM download status poller
 // collects results asynchronously.
 //
-// The shared pre-checks (get external image, check existing SBOM, set status to
-// generating, rescan check) are already done by HandleExternalImageSbom before
-// calling this function.
+// The shared pre-checks (get external image, check existing SBOM, initialize
+// pending status, rescan check) are already done by HandleExternalImageSbom
+// before calling this function.
 func handleExternalImageSbomOnBuilder(ctx context.Context, p types.ExternalImageSbomPayload, externalImage *extimgtypes.ExternalImage) error {
 	cache := getSbomDownloadCapacityCache(ctx)
 	if cache == nil || !cache.IsReady() {
@@ -56,15 +61,13 @@ func handleExternalImageSbomOnBuilder(ctx context.Context, p types.ExternalImage
 	dispatchErr := dispatchSbomDownloadToBuilder(ctx, cache, p.TeamID, p.Digest, externalImage.Registry, externalImage.ImageName)
 	if dispatchErr != nil {
 		if errors.Is(dispatchErr, sbom.ErrNoBuilderAvailableForSbomDownload) {
-			// Revert status so the scheduler can re-enqueue on the next cycle.
-			if revertErr := revertSbomDownloadToPending(ctx, p.Digest); revertErr != nil {
-				logger.Warn("failed to revert SBOM status after no builder available",
-					zap.String("digest", p.Digest),
-					zap.Error(revertErr))
+			if statusErr := externalimage.SetSBOMStatusPending(ctx, p.Digest, sbomWaitingForBuilderStatusText); statusErr != nil {
+				return fmt.Errorf("no builder available and failed to preserve pending SBOM status: %w", statusErr)
 			}
-			logger.Info("no builder available for SBOM download, will retry on next scheduler cycle",
-				zap.String("digest", p.Digest))
-			return nil
+			logger.Info("no builder available for SBOM download, scheduled retry",
+				zap.String("digest", p.Digest),
+				zap.Duration("retryDelay", sbomDispatchRetryDelay))
+			return NewRetryAfterError(dispatchErr, sbomDispatchRetryDelay, 0)
 		}
 		recordSBOMFailure(ctx, p.Digest,
 			externalimage.NewScanFailureError(externalimage.ErrFetchSBOM,
@@ -123,6 +126,13 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 	if err := prepareSbomDownloadFiles(ctx, runner, workDir, metadata, dockerConfig); err != nil {
 		cleanupSbomDownloadDir(ctx, runner, workDir)
 		return fmt.Errorf("failed to prepare SBOM download files on builder %s: %w", builderVM.ID, err)
+	}
+
+	// A builder slot is reserved and the download is ready to launch. Do not
+	// report "generating" while the request is merely waiting for capacity.
+	if err := externalimage.SetSBOMStatusGenerating(ctx, digest); err != nil {
+		cleanupSbomDownloadDir(ctx, runner, workDir)
+		return fmt.Errorf("failed to set SBOM status to generating: %w", err)
 	}
 
 	// Phase 2: Launch syft for all archs. If a launch fails after some archs
@@ -348,14 +358,5 @@ func storeBuilderSbomResult(ctx context.Context, digest, platform, spdxJSON, syf
 		zap.String("arch", arch))
 	telemetry.Increment(telemetry.MetricExternalImageSBOMSucceeded, []string{telemetry.TagChannelExternalImageSBOM})
 
-	return nil
-}
-
-// revertSbomDownloadToPending transitions SBOM status from 'generating' back to
-// 'pending' after a failed dispatch. This allows the scheduler to re-enqueue.
-func revertSbomDownloadToPending(ctx context.Context, digest string) error {
-	if err := externalimage.SetSBOMStatusFailed(ctx, digest, "dispatch failed, will retry"); err != nil {
-		return fmt.Errorf("failed to revert SBOM status to failed: %w", err)
-	}
 	return nil
 }

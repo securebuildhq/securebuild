@@ -1,6 +1,6 @@
 import { upsertExternalImage } from '@/lib/externalimage/externalimage'
 import { getImageDigest, parseImageRef } from '@/lib/externalimage/registry'
-import { enqueueWork, hasExistingSBOM } from '@/lib/utils/queue'
+import { enqueueExternalImageSBOMWork, hasExistingSBOM } from '@/lib/utils/queue'
 import { NextRequest, NextResponse } from 'next/server'
 import { findServiceAccountWithValue } from '@/lib/team/service-account'
 import { getExternalImageDigestForTag, getExternalImageLastScannedAt, getExternalImagePlatforms, getExternalImageScan, getSBOMStatus, teamOwnsDigest, EnqueueScanForDigest } from '@/lib/externalimage/externalimage'
@@ -54,10 +54,10 @@ export async function POST(request: NextRequest) {
     // Note: scan_attempted_at will be set when the scan starts (SetScanStatusRunning in Go)
     const shouldSkipSBOM = await hasExistingSBOM(digest)
     if (!shouldSkipSBOM) {
-      await enqueueWork('external_image_sbom', {
+      await enqueueExternalImageSBOMWork({
         digest: digest,
         team_id: teamId,
-      })
+      }, digest)
     }
 
     return NextResponse.json(

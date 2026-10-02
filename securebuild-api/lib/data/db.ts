@@ -88,10 +88,11 @@ export async function withTransaction<T>(db: Pool, fn: (client: PoolClient) => P
     await client.query('COMMIT');
     return result;
   } catch (err) {
-    await client.query('ROLLBACK');
+    // Preserve the original transaction error if the connection is already
+    // unusable and the best-effort rollback fails as well.
+    await client.query('ROLLBACK').catch(() => undefined);
     throw err;
   } finally {
     client.release();
   }
 }
-

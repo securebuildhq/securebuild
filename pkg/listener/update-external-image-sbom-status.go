@@ -626,25 +626,35 @@ func handleMissingBuilderForSbomDownload(ctx context.Context, cache *sbom.SbomDo
 				zap.String("digest", d.Digest),
 				zap.Error(err))
 		}
-		reenqueueSbomDownload(ctx, d.TeamID, d.Digest)
-	}
+		if err := reenqueueSbomDownload(ctx, d.TeamID, d.Digest); err != nil {
+			logger.Error(fmt.Errorf("failed to re-enqueue external image SBOM download: %w", err),
+				zap.String("digest", d.Digest),
+				zap.String("machineID", machineID))
+			continue
+		}
 
-	cache.RemoveBuilder(machineID)
+		// The cache entry is the recovery record for a lost builder. Release it
+		// only after replacement work is durably queued so a transient database
+		// failure is retried on the next poll cycle.
+		cache.RemoveDownload(machineID, d.Digest)
+	}
 }
 
 // reenqueueSbomDownload enqueues a new external_image_sbom work item for a digest.
-func reenqueueSbomDownload(ctx context.Context, teamID, digest string) {
+// Builder-loss recovery intentionally bypasses normal digest deduplication:
+// the original dispatch row may still be completing even though the builder
+// and its asynchronous Syft process are already known to be gone.
+func reenqueueSbomDownload(ctx context.Context, teamID, digest string) error {
 	payloadBytes, err := json.Marshal(listenertypes.ExternalImageSbomPayload{Digest: digest, TeamID: teamID})
 	if err != nil {
-		logger.Error(fmt.Errorf("failed to marshal re-enqueue SBOM payload: %w", err))
-		return
+		return fmt.Errorf("failed to marshal re-enqueue SBOM payload: %w", err)
 	}
 
 	if err := persistence.EnqueueWork(ctx, "external_image_sbom", string(payloadBytes)); err != nil {
-		logger.Error(fmt.Errorf("failed to re-enqueue external image SBOM download: %w", err))
-		return
+		return fmt.Errorf("failed to enqueue replacement work: %w", err)
 	}
 
 	logger.Info("re-enqueued external image SBOM download",
 		zap.String("digest", digest))
+	return nil
 }
