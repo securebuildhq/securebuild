@@ -4,6 +4,14 @@ schema:
   postgres:
     primaryKey:
       - id
+    indexes:
+      - name: idx_image_scan_latest_lookup
+        columns:
+          - image_name
+          - image_tag
+          - image_arch
+          - created_at
+        isUnique: false
     columns:
       - name: id
         type: text
