@@ -1,5 +1,9 @@
 import * as path from 'path';
-import { setupTestEnvironment, TestEnvironment } from '../../../fixtures/environment';
+import {
+  SEED_TEAM_ID,
+  setupTestEnvironment,
+  TestEnvironment,
+} from '../../../fixtures/environment';
 import { HttpClient } from '../../../fixtures/http-client';
 
 /**
@@ -178,6 +182,52 @@ describe('POST/GET /api/v1/external-image', () => {
       expect(activeWork.rows).toEqual([
         { dedupe_key: createdDigest, arch: null },
       ]);
+    });
+
+    it('adopts stored legacy SBOMs before building dashboard status', async () => {
+      await env.dbPool.query(
+        `INSERT INTO external_image_sbom
+           (digest, arch, created_at, source, image_size_bytes, image_digest, is_in_object_store)
+         VALUES ($1, 'x86_64', NOW(), 'syft', 1, $1, true)
+         ON CONFLICT (digest, arch) DO UPDATE
+         SET is_in_object_store = true`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `DELETE FROM external_image_sbom_platform_status WHERE digest = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `INSERT INTO external_image_sbom_status
+           (digest, status, status_message, created_at, updated_at, status_updated_at)
+         VALUES ($1, 'failed', 'stale legacy failure', NOW(), NOW(), NOW())
+         ON CONFLICT (digest) DO UPDATE
+         SET status = EXCLUDED.status,
+             status_message = EXCLUDED.status_message,
+             updated_at = EXCLUDED.updated_at,
+             status_updated_at = EXCLUDED.status_updated_at`,
+        [createdDigest],
+      );
+
+      const previousDBURI = process.env.DB_URI;
+      process.env.DB_URI = env.connectionString;
+      const { listExternalImages } = await import('@/lib/externalimage/externalimage');
+      const images = await listExternalImages(SEED_TEAM_ID);
+      if (previousDBURI === undefined) {
+        delete process.env.DB_URI;
+      } else {
+        process.env.DB_URI = previousDBURI;
+      }
+      const createdImage = images.find(image => image.imageName === 'test-image');
+
+      expect(createdImage?.tagCompletionStatus.latest?.sbomStatus).toBe('succeeded');
+      const adopted = await env.dbPool.query(
+        `SELECT status
+         FROM external_image_sbom_platform_status
+         WHERE digest = $1 AND arch = 'x86_64'`,
+        [createdDigest],
+      );
+      expect(adopted.rows).toEqual([{ status: 'succeeded' }]);
     });
   });
 

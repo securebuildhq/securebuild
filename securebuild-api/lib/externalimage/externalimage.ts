@@ -6,7 +6,10 @@ import { traceFunction } from '../observability/tracing';
 import { parseUTCTimestamp } from '../utils/timestamp';
 import { enqueueWork } from '../utils/queue';
 import { getRawResult, getParsedResultsDetails, getScanResultObject, getSBOM } from './blobstore';
-import { adoptStoredSBOMPlatformStatuses } from './sbom-status';
+import {
+  adoptStoredSBOMPlatformStatuses,
+  adoptTrackedSBOMPlatformStatuses,
+} from './sbom-status';
 
 
 export async function upsertExternalImage(registry: string, imageName: string, imageTag: string, digest: string, username: string | null, password: string | null, teamId: string): Promise<TrackedExternalImage> {
@@ -71,7 +74,9 @@ export async function listExternalImages(teamId: string): Promise<TrackedExterna
   try {
     const db = getDB(await getParam("DB_URI"));
 
-    // Single query that gets all external images, their tags, and completion status
+    await adoptTrackedSBOMPlatformStatuses(db, teamId)
+
+    // Listing query that gets all external images, their tags, and completion status
     // Uses EXISTS subqueries to check for completion status across all architectures
     // Also gets the SBOM status (priority: failed > generating > pending > succeeded) and scan status (priority: failed > running > queued > succeeded)
     // Note: is_scan_complete requires status='succeeded' to prevent showing stale data during rescans
@@ -569,7 +574,9 @@ export async function getExternalImageForTeam(teamId: string, registry: string, 
   try {
     const db = getDB(await getParam("DB_URI"))
 
-    // Single query that gets image info, all tags, and completion status by registry, imageName, and imageTag
+    await adoptTrackedSBOMPlatformStatuses(db, teamId, registry, imageName)
+
+    // Listing query that gets image info, all tags, and completion status by registry, imageName, and imageTag
     // Also gets the SBOM status (priority: failed > generating > pending > succeeded) and scan status (priority: failed > running > queued > succeeded)
     // Note: is_scan_complete requires status='succeeded' to prevent showing stale data during rescans
     const query = `

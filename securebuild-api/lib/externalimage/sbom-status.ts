@@ -27,3 +27,34 @@ export async function adoptStoredSBOMPlatformStatuses(
     [digestList],
   );
 }
+
+/**
+ * Lazily adopts usable SBOMs for the digests visible in an image listing.
+ * Legacy status rows remain a read fallback; only stored per-architecture
+ * evidence is promoted to a succeeded platform status.
+ */
+export async function adoptTrackedSBOMPlatformStatuses(
+  db: Queryable,
+  teamId: string,
+  registry?: string,
+  imageName?: string,
+): Promise<void> {
+  const result = await db.query(
+    `SELECT DISTINCT tag.digest
+     FROM external_image_team team
+     INNER JOIN external_image_tag tag
+       ON tag.registry = team.registry
+      AND tag.image_name = team.image_name
+      AND tag.image_tag = team.image_tag
+     WHERE team.team_id = $1
+       AND ($2::text IS NULL OR tag.registry = $2)
+       AND ($3::text IS NULL OR tag.image_name = $3)
+       AND tag.digest IS NOT NULL`,
+    [teamId, registry ?? null, imageName ?? null],
+  );
+
+  await adoptStoredSBOMPlatformStatuses(
+    db,
+    result.rows.map((row: { digest: string }) => row.digest),
+  );
+}
