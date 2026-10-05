@@ -1,0 +1,22 @@
+integration/worker/external_image/external_image_test.go
+  s_9d46a6fc3edeb8::t_8f3b7bf8e26279 314-319,631-633,649-651,932-934,937,940-946,950-953,976-979
+  s_9d46a6fc3edeb8::t_67be3c4c727218 925-928
+securebuild-api/integration/api/v1/external-image/seed-data/external-image-sbom-platform-status.yaml
+  s_9d46a6fc3edeb8::t_8f3b7bf8e26279 1-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9915faccb7c12645205c154f3163803c21576e3",
+  "prompts": {},
+  "sessions": {
+    "s_9d46a6fc3edeb8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cf6-6594-7602-85d1-c2da21371049",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
