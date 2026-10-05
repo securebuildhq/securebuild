@@ -6,7 +6,6 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,14 +18,12 @@ import (
 	"time"
 
 	"github.com/sigstore/cosign/v2/pkg/cosign"
-	"github.com/sigstore/cosign/v2/pkg/oci/static"
-	rekorclient "github.com/sigstore/rekor/pkg/client"
-	"github.com/sigstore/sigstore/pkg/cryptoutils"
+	sgbundle "github.com/sigstore/sigstore-go/pkg/bundle"
+	sgverify "github.com/sigstore/sigstore-go/pkg/verify"
 )
 
 const (
 	certificateIssuer = "https://token.actions.githubusercontent.com"
-	rekorURL          = "https://rekor.sigstore.dev"
 	maxMetadataBytes  = 10 << 20
 	maxArchiveBytes   = 512 << 20
 	maxBinaryBytes    = 256 << 20
@@ -140,15 +137,11 @@ func loadRelease(ctx context.Context, tool Tool, version, asset string) (Release
 	if err != nil {
 		return Release{}, err
 	}
-	certificate, err := download(ctx, baseURL+"/"+checksumsName+".pem", maxMetadataBytes)
+	bundle, err := download(ctx, baseURL+"/"+checksumsName+".sigstore.json", maxMetadataBytes)
 	if err != nil {
 		return Release{}, err
 	}
-	signature, err := download(ctx, baseURL+"/"+checksumsName+".sig", maxMetadataBytes)
-	if err != nil {
-		return Release{}, err
-	}
-	if err := verifyManifest(ctx, tool, checksums, certificate, signature); err != nil {
+	if err := verifyManifest(ctx, tool, checksums, bundle); err != nil {
 		return Release{}, fmt.Errorf("verify %s checksum manifest signature: %w", tool.Name, err)
 	}
 
@@ -203,45 +196,28 @@ func download(ctx context.Context, url string, limit int64) ([]byte, error) {
 	return contents, nil
 }
 
-func verifyManifest(ctx context.Context, tool Tool, manifest, certificate, signature []byte) error {
-	certificate = bytes.TrimSpace(certificate)
-	if decoded, err := base64.StdEncoding.DecodeString(string(certificate)); err == nil && bytes.Contains(decoded, []byte("BEGIN CERTIFICATE")) {
-		certificate = decoded
+func verifyManifest(ctx context.Context, tool Tool, manifest, bundleJSON []byte) error {
+	var decodedBundle sgbundle.Bundle
+	if err := decodedBundle.UnmarshalJSON(bundleJSON); err != nil {
+		return fmt.Errorf("parse Sigstore bundle: %w", err)
 	}
-	certificates, err := cryptoutils.UnmarshalCertificatesFromPEM(certificate)
+	bundle, err := sgbundle.NewBundle(decodedBundle.Bundle)
 	if err != nil {
-		return fmt.Errorf("parse signing certificate: %w", err)
-	}
-	if len(certificates) != 1 {
-		return fmt.Errorf("expected one signing certificate, got %d", len(certificates))
-	}
-
-	signature = bytes.TrimSpace(signature)
-	if _, err := base64.StdEncoding.DecodeString(string(signature)); err != nil {
-		signature = []byte(base64.StdEncoding.EncodeToString(signature))
-	}
-	staticSignature, err := static.NewSignature(manifest, string(signature), static.WithCertChain(certificate, nil))
-	if err != nil {
-		return fmt.Errorf("load signature: %w", err)
+		return fmt.Errorf("validate Sigstore bundle: %w", err)
 	}
 	trustedRoot, err := cosign.TrustedRoot()
 	if err != nil {
 		return fmt.Errorf("load Sigstore trusted root: %w", err)
 	}
-	rekor, err := rekorclient.GetRekorClient(rekorURL)
-	if err != nil {
-		return fmt.Errorf("create Rekor client: %w", err)
-	}
 	identity := certificateIdentity(tool)
 	checkOptions := &cosign.CheckOpts{
 		TrustedMaterial: trustedRoot,
-		RekorClient:     rekor,
 		Identities: []cosign.Identity{{
 			Subject: identity,
 			Issuer:  certificateIssuer,
 		}},
 	}
-	_, err = cosign.VerifyBlobSignature(ctx, staticSignature, checkOptions)
+	_, err = cosign.VerifyNewBundle(ctx, checkOptions, sgverify.WithArtifact(bytes.NewReader(manifest)), bundle)
 	return err
 }
 
