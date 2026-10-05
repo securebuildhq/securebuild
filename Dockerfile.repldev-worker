@@ -4,7 +4,7 @@ FROM alpine:3.19
 
 # Runtime deps: bubblewrap for melange; bash for install scripts; curl.
 # GNU tar (apk package "tar"): BusyBox tar lacks GNU-only flags the worker uses (e.g. --null with -T in RunnerCopyToLocalTar).
-RUN apk add --no-cache ca-certificates tzdata syft curl bash bubblewrap tar
+RUN apk add --no-cache ca-certificates tzdata curl bash bubblewrap tar
 
 # melange v0.43.3 (keep in sync with localInstallMelangeVersion in pkg/builder/pool_install_local.go)
 RUN ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && \
@@ -20,9 +20,6 @@ RUN ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && \
   tar -xzf /tmp/apko.tar.gz -C /tmp && \
   mv /tmp/apko_0.27.6_linux_${ARCH}/apko /usr/bin/apko && \
   rm -rf /tmp/apko*
-
-# grype (anchore install script; runs as root in image build)
-RUN curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/bin
 
 # Copy pre-built worker binary (built on Mac with GOOS=linux)
 COPY bin/worker /usr/local/bin/worker

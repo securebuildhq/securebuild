@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/anchore/syft/syft/format/syftjson"
 	"github.com/anchore/syft/syft/sbom"
 	"github.com/anchore/syft/syft/source/stereoscopesource"
+	"github.com/securebuildhq/securebuild/pkg/anchoretool"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
@@ -39,23 +39,14 @@ type GrypeScanner struct {
 	matcher      *grype.VulnerabilityMatcher
 }
 
-// getGrypeVersion returns the version of the grype module from the compiled binary's build info.
-// Falls back to a default version if the build info is not available (e.g., during testing).
+// getGrypeVersion returns the version of the Grype module selected by go.mod.
 func getGrypeVersion() string {
-	buildInfo, ok := debug.ReadBuildInfo()
-	if !ok {
-		logger.Warn("unable to read build info, using default grype version")
-		return "v0.109.0" // Fallback version
+	version, err := anchoretool.Version(anchoretool.Grype)
+	if err != nil {
+		logger.Warn("unable to resolve grype version from build metadata", zap.Error(err))
+		return "unknown"
 	}
-
-	for _, dep := range buildInfo.Deps {
-		if dep.Path == "github.com/anchore/grype" {
-			return dep.Version
-		}
-	}
-
-	logger.Warn("grype module not found in build info, using default version")
-	return "v0.109.0" // Fallback version
+	return "v" + version
 }
 
 // NewGrypeScanner creates a new scanner with the configured database.
@@ -195,11 +186,11 @@ func (s *GrypeScanner) ScanSBOMForCVEs(ctx context.Context, sbomJSON string) (re
 	}
 
 	// This will ensure the correct Vunnel provider is used for CVE matching
-	packages := pkg.FromCollection(sbomObj.Artifacts.Packages, pkg.SynthesisConfig{
+	packages := pkg.FromPtrs(pkg.FromCollection(sbomObj.Artifacts.Packages, sbomObj.Relationships, pkg.SynthesisConfig{
 		Distro: pkg.DistroConfig{
 			Override: grypeDistro,
 		},
-	})
+	}))
 
 	// Create package context with distro information
 	pkgContext := pkg.Context{
@@ -225,14 +216,9 @@ func (s *GrypeScanner) ScanSBOMForCVEs(ctx context.Context, sbomJSON string) (re
 		zap.Int("total_matches", remainingMatches.Count()),
 		zap.Int("fixable_matches", fixableCount))
 
-	// Convert packages to sorted slice
-	packageSlice := make([]pkg.Package, 0, len(packages))
-	for _, p := range packages {
-		packageSlice = append(packageSlice, p)
-	}
 	// Sort packages by name for consistent output
-	sort.Slice(packageSlice, func(i, j int) bool {
-		return packageSlice[i].Name < packageSlice[j].Name
+	sort.Slice(packages, func(i, j int) bool {
+		return packages[i].Name < packages[j].Name
 	})
 
 	// Create Grype's official JSON document using the presenter
@@ -241,7 +227,7 @@ func (s *GrypeScanner) ScanSBOMForCVEs(ctx context.Context, sbomJSON string) (re
 			Name:    "grype",
 			Version: getGrypeVersion(),
 		},
-		packageSlice,
+		packages,
 		pkgContext,
 		*remainingMatches, // Dereference pointer
 		nil,               // No ignored matches
