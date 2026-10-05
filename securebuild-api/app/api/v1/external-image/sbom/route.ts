@@ -167,7 +167,10 @@ const handleMultipleImages = traceFunction('api.external_image.sbom.handleMultip
     return NextResponse.json({ error: 'Failed to merge SBOMs' }, { status: 500 })
   }
 
-  const response = NextResponse.json(JSON.parse(mergedSbom))
+  // The merger already serialized the document; avoid allocating it again.
+  const response = new NextResponse(mergedSbom, {
+    headers: { 'Content-Type': 'application/json' },
+  })
 
   // Set headers for multiple images
   if (sbomSources.length > 0) {
