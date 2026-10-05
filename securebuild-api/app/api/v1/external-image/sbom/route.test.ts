@@ -118,6 +118,20 @@ describe('batch SBOM response', () => {
     expect(await response.json()).toEqual({ error: 'No SBOMs found for the requested images' });
   });
 
+  it('returns a JSON 500 when the only available SBOM has malformed JSON', async () => {
+    jest.mocked(getBatchExternalSboms).mockResolvedValue(new Map([
+      ['sha256:first', result('sha256:first', '{invalid JSON')],
+      ['sha256:second', result('sha256:second', null)],
+    ]));
+
+    const response = await GET(request());
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get('Content-Type')).toBe('application/json');
+    expect(await response.json()).toEqual({ error: 'Failed to merge SBOMs' });
+    expect(response.headers.has('X-SecureBuild-Image_Count')).toBe(false);
+  });
+
   it('returns a JSON 500 when merging fails', async () => {
     jest.mocked(getBatchExternalSboms).mockResolvedValue(new Map([
       ['sha256:first', result('sha256:first', sbom('first'))],

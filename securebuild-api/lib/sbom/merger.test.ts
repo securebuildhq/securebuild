@@ -52,6 +52,10 @@ describe('SBOM Merger', () => {
       expect(() => mergeSBOMs([])).toThrow('No SBOMs provided for merging');
     });
 
+    it('should reject malformed JSON even when only one SBOM is provided', () => {
+      expect(() => mergeSBOMs(['{invalid JSON'])).toThrow(SyntaxError);
+    });
+
     it('should throw error when invalid JSON is provided', () => {
       const validJson = JSON.stringify(createBasicSPDXDocument('valid'));
       const invalidJson = '{ "name": "test"';
