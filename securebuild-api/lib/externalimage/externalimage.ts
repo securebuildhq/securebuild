@@ -306,15 +306,19 @@ export const getExternalImageSBOM = traceFunction('lib.externalimage.getExternal
 
     await adoptStoredSBOMPlatformStatuses(db, digest)
 
-    // This compatibility endpoint has no architecture parameter. Preserve its
-    // documented/default x86_64 behavior instead of selecting an arbitrary
-    // platform when the digest has multiple SBOMs.
+    // This compatibility endpoint has no architecture parameter. Prefer the
+    // existing x86_64 default, then fall back to another usable platform so a
+    // missing x86_64 result does not hide a successful sibling SBOM.
     const query = `
       select esbom.arch, esbom.source, esbom.is_in_object_store,
              status.status as sbom_status
       from external_image_sbom esbom
       left join external_image_sbom_platform_status status on status.digest = esbom.digest and status.arch = esbom.arch
-      where esbom.digest = $1 and esbom.arch = 'x86_64'
+      where esbom.digest = $1
+        and esbom.is_in_object_store = true
+        and status.status = 'succeeded'
+      order by case when esbom.arch = 'x86_64' then 0 else 1 end, esbom.arch
+      limit 1
     `
     const result = await db.query(query, [digest])
 
@@ -508,13 +512,17 @@ export const getExternalImageSbom = traceFunction('lib.externalimage.getExternal
 
     await adoptStoredSBOMPlatformStatuses(db, digest)
 
-    // Legacy callers of this helper receive the explicit default architecture.
+    // Legacy callers prefer x86_64 and fall back to another usable platform.
     const query = `
       select esbom.arch, esbom.is_in_object_store,
              status.status as sbom_status
       from external_image_sbom esbom
       left join external_image_sbom_platform_status status on status.digest = esbom.digest and status.arch = esbom.arch
-      where esbom.digest = $1 and esbom.arch = 'x86_64'
+      where esbom.digest = $1
+        and esbom.is_in_object_store = true
+        and status.status = 'succeeded'
+      order by case when esbom.arch = 'x86_64' then 0 else 1 end, esbom.arch
+      limit 1
     `
     const result = await db.query(query, [digest])
 
