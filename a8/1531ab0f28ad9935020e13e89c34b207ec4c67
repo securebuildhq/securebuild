@@ -1,0 +1,27 @@
+securebuild-api/lib/externalimage/sbom-status.ts
+  s_9d46a6fc3edeb8::t_13f645147ae6a8 30-60
+securebuild-api/lib/externalimage/externalimage.ts
+  s_9d46a6fc3edeb8::t_13f645147ae6a8 9-12,77-78,577
+  s_9d46a6fc3edeb8::t_1488563d017135 79,579
+  s_9d46a6fc3edeb8::t_0a4c4768f13b7b 578
+securebuild-api/integration/api/v1/external-image/create.test.ts
+  s_9d46a6fc3edeb8::t_1488563d017135 212,216-220
+  s_9d46a6fc3edeb8::t_13f645147ae6a8 2-6,186-211,213-215,221-230
+  s_9d46a6fc3edeb8::t_f709959a245045 231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a81531ab0f28ad9935020e13e89c34b207ec4c67",
+  "prompts": {},
+  "sessions": {
+    "s_9d46a6fc3edeb8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cf6-6594-7602-85d1-c2da21371049",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
