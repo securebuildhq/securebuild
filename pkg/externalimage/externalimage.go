@@ -3,6 +3,7 @@ package externalimage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -349,7 +350,7 @@ func InitializeSBOMStatusPending(ctx context.Context, digest, arch string) error
 
 	_, err := conn.Exec(ctx, query, digest, arch, now, string(SBOMStatusPending))
 	if err != nil {
-		return fmt.Errorf("failed to initialize SBOM status to pending for digest %s: %w", digest, err)
+		return externalImageSBOMStatusWriteError(ctx, err, "initialize SBOM status to pending", digest)
 	}
 	if err := mirrorLegacyDefaultSBOMStatus(ctx, conn, digest, arch, SBOMStatusPending, "", now, false); err != nil {
 		return err
@@ -378,7 +379,7 @@ func SetSBOMStatusPending(ctx context.Context, digest, arch, statusMessage strin
 	`
 
 	if _, err := conn.Exec(ctx, query, digest, arch, now, string(SBOMStatusPending), statusMessage); err != nil {
-		return fmt.Errorf("failed to set SBOM status to pending for digest %s: %w", digest, err)
+		return externalImageSBOMStatusWriteError(ctx, err, "set SBOM status to pending", digest)
 	}
 	if err := mirrorLegacyDefaultSBOMStatus(ctx, conn, digest, arch, SBOMStatusPending, statusMessage, now, true); err != nil {
 		return err
@@ -409,7 +410,7 @@ func SetSBOMStatusGenerating(ctx context.Context, digest, arch string) error {
 
 	_, err := conn.Exec(ctx, query, string(SBOMStatusGenerating), now, digest, arch)
 	if err != nil {
-		return fmt.Errorf("failed to set SBOM status to generating for digest %s: %w", digest, err)
+		return externalImageSBOMStatusWriteError(ctx, err, "set SBOM status to generating", digest)
 	}
 	if err := mirrorLegacyDefaultSBOMStatus(ctx, conn, digest, arch, SBOMStatusGenerating, "", now, true); err != nil {
 		return err
@@ -439,7 +440,7 @@ func SetSBOMStatusSucceeded(ctx context.Context, digest, arch string) error {
 
 	result, err := conn.Exec(ctx, query, string(SBOMStatusSucceeded), now, digest, arch)
 	if err != nil {
-		return fmt.Errorf("failed to set SBOM status to succeeded for digest %s: %w", digest, err)
+		return externalImageSBOMStatusWriteError(ctx, err, "set SBOM status to succeeded", digest)
 	}
 
 	rowsAffected := result.RowsAffected()
@@ -483,7 +484,7 @@ func SetSBOMStatusFailed(ctx context.Context, digest, arch string, errorMessage 
 
 	result, err := conn.Exec(ctx, query, string(SBOMStatusFailed), errorMessage, now, digest, arch)
 	if err != nil {
-		return fmt.Errorf("failed to set SBOM status to failed for digest %s: %w", digest, err)
+		return externalImageSBOMStatusWriteError(ctx, err, "set SBOM status to failed", digest)
 	}
 	if result.RowsAffected() == 0 {
 		logger.Debugf("ignored stale SBOM failure for usable digest %s arch %s", digest, arch)
@@ -511,9 +512,19 @@ func mirrorLegacyDefaultSBOMStatus(ctx context.Context, conn *pgxpool.Conn, dige
 		VALUES ($1, $2, NULLIF($3, ''), $4, $4, $4)
 		ON CONFLICT (digest) `+conflict, digest, string(status), message, now)
 	if err != nil {
-		return fmt.Errorf("failed to mirror default-architecture SBOM status for digest %s: %w", digest, err)
+		return externalImageSBOMStatusWriteError(ctx, err, "mirror default-architecture SBOM status", digest)
 	}
 	return nil
+}
+
+func externalImageSBOMStatusWriteError(ctx context.Context, err error, operation, digest string) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return fmt.Errorf("failed to %s for digest %s: %w", operation, digest, err)
 }
 
 // InitializeScanStatusQueued creates a scan status record with status='queued'.
