@@ -186,11 +186,11 @@ func (s *GrypeScanner) ScanSBOMForCVEs(ctx context.Context, sbomJSON string) (re
 	}
 
 	// This will ensure the correct Vunnel provider is used for CVE matching
-	packages := pkg.FromCollection(sbomObj.Artifacts.Packages, pkg.SynthesisConfig{
+	packages := pkg.FromPtrs(pkg.FromCollection(sbomObj.Artifacts.Packages, sbomObj.Relationships, pkg.SynthesisConfig{
 		Distro: pkg.DistroConfig{
 			Override: grypeDistro,
 		},
-	})
+	}))
 
 	// Create package context with distro information
 	pkgContext := pkg.Context{
@@ -216,14 +216,9 @@ func (s *GrypeScanner) ScanSBOMForCVEs(ctx context.Context, sbomJSON string) (re
 		zap.Int("total_matches", remainingMatches.Count()),
 		zap.Int("fixable_matches", fixableCount))
 
-	// Convert packages to sorted slice
-	packageSlice := make([]pkg.Package, 0, len(packages))
-	for _, p := range packages {
-		packageSlice = append(packageSlice, p)
-	}
 	// Sort packages by name for consistent output
-	sort.Slice(packageSlice, func(i, j int) bool {
-		return packageSlice[i].Name < packageSlice[j].Name
+	sort.Slice(packages, func(i, j int) bool {
+		return packages[i].Name < packages[j].Name
 	})
 
 	// Create Grype's official JSON document using the presenter
@@ -232,7 +227,7 @@ func (s *GrypeScanner) ScanSBOMForCVEs(ctx context.Context, sbomJSON string) (re
 			Name:    "grype",
 			Version: getGrypeVersion(),
 		},
-		packageSlice,
+		packages,
 		pkgContext,
 		*remainingMatches, // Dereference pointer
 		nil,               // No ignored matches
