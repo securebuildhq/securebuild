@@ -83,7 +83,7 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 			if err != nil {
 				return fmt.Errorf("failed to marshal platform SBOM work: %w", err)
 			}
-			if _, err := externalimage.EnqueueSBOMWork(ctx, string(payloadJSON), p.Digest, arch); err != nil {
+			if _, err := externalimage.EnqueueExpandedLegacySBOMWork(ctx, string(payloadJSON), p.Digest, arch); err != nil {
 				return fmt.Errorf("failed to expand legacy SBOM work for arch %s: %w", arch, err)
 			}
 		}

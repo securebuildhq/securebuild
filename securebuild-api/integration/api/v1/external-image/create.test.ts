@@ -146,6 +146,39 @@ describe('POST/GET /api/v1/external-image', () => {
       expect(data.scan_status).toBeDefined();
       expect(Array.isArray(data.platforms)).toBe(true);
     });
+
+    it('does not bypass pending legacy digest-keyed SBOM work', async () => {
+      await env.dbPool.query(
+        `UPDATE work_queue
+         SET completed_at = NOW(), dedupe_key = NULL
+         WHERE channel = 'external_image_sbom'
+           AND completed_at IS NULL
+           AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `INSERT INTO work_queue (id, channel, payload, dedupe_key, created_at, priority)
+         VALUES ('legacy-api-sbom-work', 'external_image_sbom', $1, $2, NOW(), 0)`,
+        [JSON.stringify({ digest: createdDigest, team_id: 'team-1' }), createdDigest],
+      );
+
+      const response = await env.client.post('/api/v1/external-image', {
+        image_url: env.createImage,
+      });
+      expect(response.status).toBe(201);
+
+      const activeWork = await env.dbPool.query(
+        `SELECT dedupe_key, payload->>'arch' AS arch
+         FROM work_queue
+         WHERE channel = 'external_image_sbom'
+           AND completed_at IS NULL
+           AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      expect(activeWork.rows).toEqual([
+        { dedupe_key: createdDigest, arch: null },
+      ]);
+    });
   });
 
   describe('Phase 3 — Auth', () => {

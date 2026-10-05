@@ -105,6 +105,12 @@ async function enqueueExternalImageSBOMPlatformWork(
   const dedupeKey = `${digest}:${arch}`;
 
   return withTransaction(db, async (client) => {
+    // Serialize with old SecureBuild instances, which use the digest-only
+    // advisory lock and digest-keyed queue identity.
+    await client.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+      [`external_image_sbom:${digest}`],
+    );
     await client.query(
       `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
       [`external_image_sbom:${dedupeKey}`],
@@ -122,7 +128,12 @@ async function enqueueExternalImageSBOMPlatformWork(
            FROM work_queue
            WHERE channel = 'external_image_sbom'
              AND completed_at IS NULL
-             AND (dedupe_key = $1 OR (payload->>'digest' = $2 AND payload->>'arch' = $3))
+             AND (
+               dedupe_key = $1
+               OR (payload->>'digest' = $2 AND payload->>'arch' = $3)
+               OR dedupe_key = $2
+               OR (payload->>'digest' = $2 AND COALESCE(payload->>'arch', '') = '')
+             )
          )
          OR EXISTS (
            SELECT 1

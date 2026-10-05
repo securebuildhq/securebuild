@@ -366,6 +366,42 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 	enqueued, err = externalimage.EnqueueSBOMWork(ctx, legacyPayload, legacyDigest, "aarch64")
 	require.NoError(t, err)
 	require.False(t, enqueued, "genuine legacy digest-wide generation must remain deduplicated")
+
+	legacyQueuedDigest := "sha256:test-sbom-legacy-queued-12345678901234567890123456789012"
+	legacyQueuedPayload := `{"digest":"` + legacyQueuedDigest + `","team_id":"team-1"}`
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO work_queue (id, channel, payload, dedupe_key, created_at, priority)
+		VALUES ('legacy-sbom-work', 'external_image_sbom', $1, $2, NOW(), 0)
+	`, legacyQueuedPayload, legacyQueuedDigest)
+	require.NoError(t, err)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image_sbom_status
+			(digest, status, created_at, updated_at, status_updated_at)
+		VALUES ($1, 'pending', NOW(), NOW(), NOW())
+	`, legacyQueuedDigest)
+	require.NoError(t, err)
+
+	for _, arch := range []string{"x86_64", "aarch64"} {
+		enqueued, err = externalimage.EnqueueSBOMWork(ctx, legacyQueuedPayload, legacyQueuedDigest, arch)
+		require.NoError(t, err)
+		require.False(t, enqueued, "legacy queued work must suppress normal platform enqueue")
+	}
+	require.NoError(t, listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{
+		Digest: legacyQueuedDigest,
+		TeamID: "team-1",
+	}))
+	var expandedKeys []string
+	require.NoError(t, testDB.Pool.QueryRow(ctx, `
+		SELECT ARRAY_AGG(dedupe_key ORDER BY dedupe_key)
+		FROM work_queue
+		WHERE channel = 'external_image_sbom'
+		  AND completed_at IS NULL
+		  AND dedupe_key LIKE $1
+	`, legacyQueuedDigest+":%").Scan(&expandedKeys))
+	assert.Equal(t, []string{
+		legacyQueuedDigest + ":aarch64",
+		legacyQueuedDigest + ":x86_64",
+	}, expandedKeys, "a new worker must expand the legacy parent into both platform jobs")
 }
 
 func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {

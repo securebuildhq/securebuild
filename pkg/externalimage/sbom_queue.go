@@ -25,6 +25,17 @@ const (
 // all enqueue paths, while the queue's unique dedupe key is a final
 // database-level guard against duplicate unfinished work.
 func EnqueueSBOMWork(ctx context.Context, payload, digest, arch string) (bool, error) {
+	return enqueueSBOMWork(ctx, payload, digest, arch, false)
+}
+
+// EnqueueExpandedLegacySBOMWork creates platform work while a new worker is
+// processing the parent digest-keyed item. Only this compatibility expansion
+// may ignore unfinished legacy queue rows; platform work remains deduplicated.
+func EnqueueExpandedLegacySBOMWork(ctx context.Context, payload, digest, arch string) (bool, error) {
+	return enqueueSBOMWork(ctx, payload, digest, arch, true)
+}
+
+func enqueueSBOMWork(ctx context.Context, payload, digest, arch string, expandingLegacyWork bool) (bool, error) {
 	var payloadFields map[string]any
 	if err := json.Unmarshal([]byte(payload), &payloadFields); err != nil {
 		return false, fmt.Errorf("failed to decode SBOM work payload: %w", err)
@@ -45,9 +56,16 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest, arch string) (bool, e
 	}
 	defer tx.Rollback(ctx)
 
+	// Take the old digest lock first so mixed-version API instances cannot race
+	// a legacy digest-keyed insert against the new platform-keyed insert.
+	legacyLockKey := externalImageSBOMChannel + ":" + digest
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, legacyLockKey); err != nil {
+		return false, fmt.Errorf("failed to lock legacy SBOM enqueue for digest %s: %w", digest, err)
+	}
+
 	dedupeKey := digest + ":" + arch
-	lockKey := externalImageSBOMChannel + ":" + dedupeKey
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+	platformLockKey := externalImageSBOMChannel + ":" + dedupeKey
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, platformLockKey); err != nil {
 		return false, fmt.Errorf("failed to lock SBOM enqueue for digest %s: %w", digest, err)
 	}
 	if err := adoptStoredSBOMPlatformStatuses(ctx, tx, digest); err != nil {
@@ -63,7 +81,17 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest, arch string) (bool, e
 				FROM work_queue
 				WHERE channel = $1
 				  AND completed_at IS NULL
-				  AND (dedupe_key = $2 OR (payload->>'digest' = $3 AND payload->>'arch' = $4))
+				  AND (
+					dedupe_key = $2
+					OR (payload->>'digest' = $3 AND payload->>'arch' = $4)
+					OR (
+						NOT $7
+						AND (
+							dedupe_key = $3
+							OR (payload->>'digest' = $3 AND COALESCE(payload->>'arch', '') = '')
+						)
+					)
+				  )
 			)
 			OR EXISTS (
 				SELECT 1
@@ -92,7 +120,7 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest, arch string) (bool, e
 				FROM external_image_sbom
 				WHERE digest = $3 AND arch = $4
 			)
-	`, externalImageSBOMChannel, dedupeKey, digest, arch, string(SBOMStatusGenerating), generatingCutoff).Scan(&blocked); err != nil {
+	`, externalImageSBOMChannel, dedupeKey, digest, arch, string(SBOMStatusGenerating), generatingCutoff, expandingLegacyWork).Scan(&blocked); err != nil {
 		return false, fmt.Errorf("failed to check existing SBOM work for digest %s: %w", digest, err)
 	}
 	if blocked {
