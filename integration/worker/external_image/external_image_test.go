@@ -823,8 +823,8 @@ func TestExternalImageSBOMStatusTransitions(t *testing.T) {
 		assert.Equal(t, x86UpdatedAt, statuses[1].StatusUpdatedAt)
 	})
 
-	t.Run("legacy success migrates only platforms with stored evidence", func(t *testing.T) {
-		digest := "sha256:test-sbom-platform-backfill-123456789012345678901234567890"
+	t.Run("legacy stored SBOM is adopted without inventing sibling success", func(t *testing.T) {
+		digest := "sha256:test-sbom-platform-adoption-12345678901234567890123456789"
 		conn := persistence.MustGetPooledPostgresSession(ctx)
 		_, err := conn.Exec(ctx, `
 			INSERT INTO external_image_sbom_status
@@ -839,7 +839,11 @@ func TestExternalImageSBOMStatusTransitions(t *testing.T) {
 		`, digest)
 		conn.Release()
 		require.NoError(t, err)
-		require.NoError(t, externalimage.BackfillSBOMPlatformStatuses(ctx))
+
+		payload := `{"digest":"` + digest + `","team_id":"team-1"}`
+		enqueued, err := externalimage.EnqueueSBOMWork(ctx, payload, digest, "x86_64")
+		require.NoError(t, err)
+		require.False(t, enqueued, "a stored legacy SBOM must be adopted instead of regenerated")
 
 		statuses := getSBOMStatuses(t, ctx, digest)
 		require.Len(t, statuses, 1)

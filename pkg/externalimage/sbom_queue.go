@@ -50,6 +50,9 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest, arch string) (bool, e
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
 		return false, fmt.Errorf("failed to lock SBOM enqueue for digest %s: %w", digest, err)
 	}
+	if err := adoptStoredSBOMPlatformStatuses(ctx, tx, digest); err != nil {
+		return false, err
+	}
 
 	generatingCutoff := time.Now().UTC().Add(-externalImageSBOMGeneratingStaleAfter)
 	var blocked bool

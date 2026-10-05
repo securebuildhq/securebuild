@@ -106,11 +106,6 @@ func runWorker(ctx context.Context) error {
 		return fmt.Errorf("failed to migrate external image scan status column: %w", err)
 	}
 
-	// Fill the additive per-platform SBOM status table without overwriting live rows.
-	if err := externalimage.BackfillSBOMPlatformStatuses(ctx); err != nil {
-		return fmt.Errorf("failed to backfill external image SBOM platform statuses: %w", err)
-	}
-
 	// Create PIPELINE_DIR and populate it for both package and image pipelines
 	// Also loads reserved package pipelines from GitHub or cache
 	if err := pipeline.SetupPipelines(ctx, logger.GetLogger()); err != nil {

@@ -714,6 +714,9 @@ func getExternalImageSBOMMetadata(ctx context.Context, digest string) ([]types.E
 		return nil, fmt.Errorf("failed to acquire postgres connection for SBOM metadata: %w", err)
 	}
 	defer conn.Release()
+	if err := adoptStoredSBOMPlatformStatuses(ctx, conn, digest); err != nil {
+		return nil, err
+	}
 
 	// Query metadata only (no sbom column)
 	query := `

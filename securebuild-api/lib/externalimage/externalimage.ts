@@ -6,6 +6,7 @@ import { traceFunction } from '../observability/tracing';
 import { parseUTCTimestamp } from '../utils/timestamp';
 import { enqueueWork } from '../utils/queue';
 import { getRawResult, getParsedResultsDetails, getScanResultObject, getSBOM } from './blobstore';
+import { adoptStoredSBOMPlatformStatuses } from './sbom-status';
 
 
 export async function upsertExternalImage(registry: string, imageName: string, imageTag: string, digest: string, username: string | null, password: string | null, teamId: string): Promise<TrackedExternalImage> {
@@ -303,15 +304,17 @@ export const getExternalImageSBOM = traceFunction('lib.externalimage.getExternal
   try {
     const db = getDB(await getParam("DB_URI"))
 
-    // Query metadata only — sbom content is fetched from object store
+    await adoptStoredSBOMPlatformStatuses(db, digest)
+
+    // This compatibility endpoint has no architecture parameter. Preserve its
+    // documented/default x86_64 behavior instead of selecting an arbitrary
+    // platform when the digest has multiple SBOMs.
     const query = `
       select esbom.arch, esbom.source, esbom.is_in_object_store,
-             COALESCE(status.status, legacy_status.status) as sbom_status
+             status.status as sbom_status
       from external_image_sbom esbom
       left join external_image_sbom_platform_status status on status.digest = esbom.digest and status.arch = esbom.arch
-      left join external_image_sbom_status legacy_status
-        on legacy_status.digest = esbom.digest and esbom.arch = 'x86_64'
-      where esbom.digest = $1
+      where esbom.digest = $1 and esbom.arch = 'x86_64'
     `
     const result = await db.query(query, [digest])
 
@@ -503,15 +506,15 @@ export const getExternalImageSbom = traceFunction('lib.externalimage.getExternal
   try {
     const db = getDB(await getParam("DB_URI"))
 
-    // Query metadata only — sbom content is fetched from object store
+    await adoptStoredSBOMPlatformStatuses(db, digest)
+
+    // Legacy callers of this helper receive the explicit default architecture.
     const query = `
       select esbom.arch, esbom.is_in_object_store,
-             COALESCE(status.status, legacy_status.status) as sbom_status
+             status.status as sbom_status
       from external_image_sbom esbom
       left join external_image_sbom_platform_status status on status.digest = esbom.digest and status.arch = esbom.arch
-      left join external_image_sbom_status legacy_status
-        on legacy_status.digest = esbom.digest and esbom.arch = 'x86_64'
-      where esbom.digest = $1
+      where esbom.digest = $1 and esbom.arch = 'x86_64'
     `
     const result = await db.query(query, [digest])
 
@@ -794,6 +797,8 @@ export async function initializeSBOMStatusPending(digest: string): Promise<void>
 export async function getSBOMStatus(digest: string, arch = 'x86_64'): Promise<SBOMStatusEntry | null> {
   const db = getDB(await getParam("DB_URI"))
 
+  await adoptStoredSBOMPlatformStatuses(db, digest)
+
   const query = `
     SELECT digest, arch, status, status_message, created_at, updated_at, status_updated_at
     FROM external_image_sbom_platform_status
@@ -829,6 +834,7 @@ export async function getSBOMStatus(digest: string, arch = 'x86_64'): Promise<SB
 
 export async function getSBOMStatuses(digest: string): Promise<SBOMStatusEntry[]> {
   const db = getDB(await getParam("DB_URI"))
+  await adoptStoredSBOMPlatformStatuses(db, digest)
   const result = await db.query(`
     WITH platform_status AS (
       SELECT digest, arch, status, status_message, created_at, updated_at, status_updated_at
@@ -970,6 +976,8 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
     // Phase 1: Get scan metadata (no blob column) for owned digests only
     const ownedDigestList = [...ownedDigests]
     if (ownedDigestList.length > 0) {
+      await adoptStoredSBOMPlatformStatuses(db, ownedDigestList)
+
       const scanQuery = `
         SELECT
           escan.digest,
@@ -1211,6 +1219,8 @@ export const getBatchExternalSboms = traceFunction('lib.externalimage.getBatchEx
       return new Map()
     }
 
+    await adoptStoredSBOMPlatformStatuses(db, digests)
+
     // Single query that:
     // 1. Queries external_image_sbom for SBOM metadata (no blob column)
     // 2. Filters by architecture and digest array
@@ -1223,14 +1233,12 @@ export const getBatchExternalSboms = traceFunction('lib.externalimage.getBatchEx
         esbom.arch,
         esbom.source,
         esbom.is_in_object_store,
-        COALESCE(esbom_status.status, legacy_sbom_status.status) as sbom_status,
+        esbom_status.status as sbom_status,
         esbom.created_at as sbom_created_at,
         esbom.image_size_bytes
       FROM external_image_sbom esbom
         LEFT JOIN external_image_sbom_platform_status esbom_status
           ON esbom_status.digest = esbom.digest AND esbom_status.arch = esbom.arch
-        LEFT JOIN external_image_sbom_status legacy_sbom_status
-          ON legacy_sbom_status.digest = esbom.digest AND esbom.arch = 'x86_64'
         INNER JOIN external_image_tag etag
           ON etag.digest = esbom.digest
         INNER JOIN external_image_team eteam

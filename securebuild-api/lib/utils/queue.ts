@@ -2,6 +2,7 @@ import { getDB, withTransaction } from "../data/db";
 import { getParam } from "../data/param";
 import * as srs from "secure-random-string";
 import { PoolClient } from "pg";
+import { adoptStoredSBOMPlatformStatuses } from "../externalimage/sbom-status";
 
 interface QueuePayload {
   [key: string]: string | number | boolean | null | undefined | any;
@@ -108,6 +109,8 @@ async function enqueueExternalImageSBOMPlatformWork(
       `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
       [`external_image_sbom:${dedupeKey}`],
     );
+
+    await adoptStoredSBOMPlatformStatuses(client, digest);
 
     const generatingCutoff = new Date(
       Date.now() - EXTERNAL_IMAGE_SBOM_GENERATING_STALE_AFTER_MS,
