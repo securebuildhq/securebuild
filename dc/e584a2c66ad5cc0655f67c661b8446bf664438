@@ -1,0 +1,98 @@
+integration/worker/external_image/external_image_test.go
+  s_9d46a6fc3edeb8::t_68eb29f998af69 108,562,926
+  s_9d46a6fc3edeb8::t_df86803917f94d 249,641,1028
+  s_9d46a6fc3edeb8::t_972765e6a884b2 822-825
+  s_9d46a6fc3edeb8::t_fa4b7187cdabd7 1888,1968,1971,1983
+  s_9d46a6fc3edeb8::t_ae293aa9d9f2e4 838-842
+  s_9d46a6fc3edeb8::t_240d2b78a3252a 815-821,826-837,843
+  s_9d46a6fc3edeb8::t_18ae7d46eb68ac 346
+  s_9d46a6fc3edeb8::t_df7a4ba2833861 96,243,286,289,302,304,309,315,321,334-335,374-375,556,625,734,744,755,772,775,780,915,1025,1969
+  s_9d46a6fc3edeb8::t_5fe91266eb9cb3 792-814
+  s_9d46a6fc3edeb8::t_c86906bafd951a 292-294
+db/schema/tables/external-image-sbom-platform-status.yaml
+  s_9d46a6fc3edeb8::t_1c8a8a52de7682 1-31
+securebuild-api/integration/api/v1/external-image/create.test.ts
+  s_9d46a6fc3edeb8::t_e3ed534d8ffd26 54,61-65,77,97,116-117,120,128-129
+  s_9d46a6fc3edeb8::t_6220671a41ed1d 142-145
+integration/worker/external_image/testdata/scan-dispatch/metadata/external-image-sbom-platform-status.yaml
+  s_9d46a6fc3edeb8::t_7c367dfd1e7863 1-30
+securebuild-api/app/api/v1/external-image/route.ts
+  s_9d46a6fc3edeb8::t_4831dc443f79ca 6,159,161-162,232-241
+  s_9d46a6fc3edeb8::t_caee087033b4fb 193
+  s_9d46a6fc3edeb8::t_94c87851c78bbd 3,55-58
+securebuild-app/app/(dashboard)/executions/sbom-scans/page.tsx
+  s_9d46a6fc3edeb8::t_4f289949517fbb 418,428,434,445
+securebuild-api/lib/externalimage/externalimage.ts
+  s_9d46a6fc3edeb8::t_e3c63e214619ff 308-309,312-313,508-509,512-513,987-989,1000-1001,1226,1232-1233
+  s_9d46a6fc3edeb8::t_99dbcbf3c168df 94,581
+  s_9d46a6fc3edeb8::t_4831dc443f79ca 735,794,799-800,812,821,830-832,845-855
+  s_9d46a6fc3edeb8::t_e650a226144302 1035-1045,1053-1056
+  s_9d46a6fc3edeb8::t_69cdef6efd1552 89-92,311,511,576-579,998-999,1058,1230-1231
+  s_9d46a6fc3edeb8::t_d2d2cb1b9df627 798,801-809
+  s_9d46a6fc3edeb8::t_caee087033b4fb 698,789
+  s_9d46a6fc3edeb8::t_4560754c7f6c68 833-844
+  s_9d46a6fc3edeb8::t_c1e20f27c0375d 856-857
+pkg/listener/external-image-sbom.go
+  s_9d46a6fc3edeb8::t_93c09f2c76538f 102,106-110,125,154,171,175,181,186,213-215,227,460-461
+  s_9d46a6fc3edeb8::t_6b4b53b3e30375 221-225
+  s_9d46a6fc3edeb8::t_2e55e08a79ae8f 78-91
+pkg/externalimage/sbom_queue.go
+  s_9d46a6fc3edeb8::t_7f89f71e9fa542 67
+  s_9d46a6fc3edeb8::t_f954e786d1f474 27,48-49,63,68-70,75,77,97,111,123-126,131
+  s_9d46a6fc3edeb8::t_e2e4eb13e84e6f 5,28-38
+pkg/listener/external-image-sbom-builder.go
+  s_9d46a6fc3edeb8::t_9b022ce27499fa 59,62,70,83,99,118,133,140-141,182-189,196
+  s_9d46a6fc3edeb8::t_01f0e4b7380c70 169
+  s_9d46a6fc3edeb8::t_f95d97028376c7 123,126
+  s_9d46a6fc3edeb8::t_0a23208011b3e7 190-195,197-199,203,235
+pkg/externalimage/sbom_status_backfill.go
+  s_9d46a6fc3edeb8::t_4560754c7f6c68 1-61
+pkg/externalimage/externalimage.go
+  s_9d46a6fc3edeb8::t_a397525e6af4ba 354-356,383-385,414-416,450-452,491-494,499-515
+  s_9d46a6fc3edeb8::t_2936b197e2402e 10
+  s_9d46a6fc3edeb8::t_58579c232d8fab 390,421,430-434,436-437
+  s_9d46a6fc3edeb8::t_92121b91351467 400-404,406-407,466-473
+  s_9d46a6fc3edeb8::t_8285e73c05be36 474-481,484,488-490
+  s_9d46a6fc3edeb8::t_93c09f2c76538f 517,674-686
+  s_9d46a6fc3edeb8::t_1c8a8a52de7682 335,337-338,345-347,350,363,370-373,380,392,410,422,440,458,722-723
+  s_9d46a6fc3edeb8::t_bc5525d3fbef95 516
+  s_9d46a6fc3edeb8::t_5d7d3b7d62d0a2 518
+pkg/listener/update-external-image-sbom-status.go
+  s_9d46a6fc3edeb8::t_49f8b0924480f2 586-594
+  s_9d46a6fc3edeb8::t_01f0e4b7380c70 126
+  s_9d46a6fc3edeb8::t_0a23208011b3e7 241,256,267,269-274,286,296,301,414,418-424,450,501,596,606,614-615
+pkg/sbom/sbom_download_capacity.go
+  s_9d46a6fc3edeb8::t_9b022ce27499fa 49,60,120,130,135,337,406-411
+  s_9d46a6fc3edeb8::t_8daba4ff8b5039 412-413
+cmd/cli/run.go
+  s_9d46a6fc3edeb8::t_7e0f7ca3dd0a9c 27
+  s_9d46a6fc3edeb8::t_4560754c7f6c68 109-113
+securebuild-app/lib/vulnscan/actions/get-external-scan-data.ts
+  s_9d46a6fc3edeb8::t_4f289949517fbb 34
+pkg/externalimage/monitor.go
+  s_9d46a6fc3edeb8::t_df7d4300fb00a9 99-103,105,107,110
+pkg/listener/types/types.go
+  s_9d46a6fc3edeb8::t_1c8a8a52de7682 9
+securebuild-api/lib/utils/queue.ts
+  s_9d46a6fc3edeb8::t_94c87851c78bbd 96-101,109,122,126-127,134,136,142,149-152,157
+  s_9d46a6fc3edeb8::t_27619efd181d02 90-95,104,129
+  s_9d46a6fc3edeb8::t_8c0a945e67c3a5 89
+securebuild-app/lib/vulnscan/vulnscan.ts
+  s_9d46a6fc3edeb8::t_4f289949517fbb 94,140,243,256,265,290
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dce584a2c66ad5cc0655f67c661b8446bf664438",
+  "prompts": {},
+  "sessions": {
+    "s_9d46a6fc3edeb8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cf6-6594-7602-85d1-c2da21371049",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
