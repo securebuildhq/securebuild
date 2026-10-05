@@ -1,0 +1,47 @@
+pkg/anchoretool/release_test.go
+  s_4217ef0868f593::t_4335502e9b9c8e 1-50,85-89
+  s_4217ef0868f593::t_b02870e633f2c5 55-58,62
+  s_4217ef0868f593::t_44dee6d204c4eb 51-54,59-61,63-84
+pkg/builder/install_anchore_tool.go
+  s_4217ef0868f593::t_21f10e9677aef1 1-5,9-16,18-56,62-64,67-76,107-124,126-130,135,137-156,178,192-194
+  s_4217ef0868f593::t_c8800096542371 57-61,65-66,159-160
+  s_4217ef0868f593::t_92631713339d57 131-134,136
+  s_4217ef0868f593::t_3ac04755cd58e4 6-8,17,77-106,125,157-158,161-177,179-191
+docs/shortcut-stories/pin-syft-grype-bootstrap.md
+  s_4217ef0868f593::t_54dab31b5e1e73 1-108
+pkg/builder/pool.go
+  s_4217ef0868f593::t_194c8ea0fa5095 28,1306,1310
+pkg/builder/install_anchore_tool_test.go
+  s_4217ef0868f593::t_055d98385f1dc7 12-13
+  s_4217ef0868f593::t_c8800096542371 1-11,14-27
+Dockerfile.repldev-worker
+  s_4217ef0868f593::t_194c8ea0fa5095 7
+pkg/anchore/scanner.go
+  s_4217ef0868f593::t_c8800096542371 29,42,44-47,49
+pkg/anchoretool/release.go
+  s_4217ef0868f593::t_44dee6d204c4eb 15,206,219-222,268-269
+  s_4217ef0868f593::t_4335502e9b9c8e 1-8,10-14,16-20,25-28,30-94,96-102,104-177,185,189,217-218,223-267,270-296
+  s_4217ef0868f593::t_2c0da31f7d6d55 178-181
+  s_4217ef0868f593::t_b02870e633f2c5 95,103
+  s_4217ef0868f593::t_0902a9348183ff 9,21-24,29,182-184,186-188,190-205,207-216
+pkg/anchoretool/release_integration_test.go
+  s_4217ef0868f593::t_b02870e633f2c5 37-63
+  s_4217ef0868f593::t_735a82e5ad9d7e 20-35
+  s_4217ef0868f593::t_dd03888bc17688 1-19,36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "32b20f6be21cc3f9d6e2b73fc7debd7b4e694af8",
+  "prompts": {},
+  "sessions": {
+    "s_4217ef0868f593": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10c32-38b7-7a40-a768-f686e13828db",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
