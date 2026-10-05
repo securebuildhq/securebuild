@@ -1,0 +1,23 @@
+securebuild-api/lib/utils/queue.ts
+  s_9d46a6fc3edeb8::t_12f5aa0060707a 133-137
+  s_9d46a6fc3edeb8::t_f4f93b9c80fef9 131-132
+pkg/externalimage/sbom_queue.go
+  s_9d46a6fc3edeb8::t_12f5aa0060707a 74-78
+  s_9d46a6fc3edeb8::t_5b2fddac7beb2a 72-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "55bea15478ab0a3155f6de1b79ce894023ada3c8",
+  "prompts": {},
+  "sessions": {
+    "s_9d46a6fc3edeb8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cf6-6594-7602-85d1-c2da21371049",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
