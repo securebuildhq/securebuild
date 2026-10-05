@@ -1,0 +1,103 @@
+database: securebuild
+name: external_image_sbom_platform_status
+requires:
+  - external-image-sbom
+seedData:
+  rows:
+    # Every usable seeded SBOM has matching per-platform success evidence.
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:abc123def456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: status_updated_at
+          value:
+            str: "2024-01-01T00:00:20Z"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:abc123def456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "aarch64"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: status_updated_at
+          value:
+            str: "2024-01-01T00:00:20Z"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:stale1234567890123456789012345678901234567890123456789012345"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: status_updated_at
+          value:
+            str: "2024-01-01T00:00:20Z"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:queued123456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: status_updated_at
+          value:
+            str: "2024-01-01T00:00:20Z"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:running123456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: status_updated_at
+          value:
+            str: "2024-01-01T00:00:20Z"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:failed123456789012345678901234567890123456789012345678901234"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: created_at
+          value:
+            str: "2024-01-01T00:00:00Z"
+        - column: status_updated_at
+          value:
+            str: "2024-01-01T00:00:20Z"

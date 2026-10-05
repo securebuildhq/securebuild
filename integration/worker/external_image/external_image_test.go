@@ -311,6 +311,12 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 		WHERE digest = $1
 	`, digest)
 	require.NoError(t, err)
+	_, err = testDB.Pool.Exec(ctx, `
+		UPDATE external_image_sbom_status
+		SET status_updated_at = NOW() - INTERVAL '32 minutes'
+		WHERE digest = $1
+	`, digest)
+	require.NoError(t, err)
 
 	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest, "x86_64")
 	require.NoError(t, err)
@@ -622,7 +628,9 @@ func TestExternalImagePartialArchitectureFailure(t *testing.T) {
 
 	digest := "sha256:test-partial-refresh-12345678901234567890123456789012"
 	require.NoError(t, externalimage.AddExternalImage(ctx, "docker.io", "library/multiarch", "latest", digest, "", ""))
-	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest, "x86_64"))
+	for _, arch := range []string{"x86_64", "aarch64"} {
+		require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest, arch))
+	}
 
 	mockFetchSBOM := func(context.Context, string, string, string) ([]sbom.SBOMResult, error) {
 		return []sbom.SBOMResult{
@@ -638,7 +646,9 @@ func TestExternalImagePartialArchitectureFailure(t *testing.T) {
 	}
 
 	ctx = setupMocks(ctx, mockFetchSBOM, allSuccessful)
-	require.NoError(t, listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{Digest: digest, Arch: "x86_64"}))
+	for _, arch := range []string{"x86_64", "aarch64"} {
+		require.NoError(t, listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{Digest: digest, Arch: arch}))
+	}
 	require.NoError(t, listener.RunScanForDigest(ctx, digest))
 
 	initialRows := getScanStatuses(t, ctx, digest)
@@ -912,29 +922,35 @@ func TestExternalImageMultiArchWorkflow(t *testing.T) {
 		err := externalimage.AddExternalImage(ctx, "docker.io", "library/nginx", "latest", testDigest, "", "")
 		require.NoError(t, err)
 
-		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest, "x86_64")
-		require.NoError(t, err)
+		for _, arch := range []string{"x86_64", "aarch64"} {
+			err = externalimage.InitializeSBOMStatusPending(ctx, testDigest, arch)
+			require.NoError(t, err)
+		}
 
 		// Verify initial pending SBOM status
 		sbomStatuses := getSBOMStatuses(t, ctx, testDigest)
-		require.Len(t, sbomStatuses, 1)
-		assert.Equal(t, "pending", sbomStatuses[0].Status)
-
-		// Process SBOM handler
-		payload := listenertypes.ExternalImageSbomPayload{
-			Digest: testDigest,
-			Arch:   "x86_64",
+		require.Len(t, sbomStatuses, 2)
+		for _, status := range sbomStatuses {
+			assert.Equal(t, "pending", status.Status)
 		}
 
+		// Process SBOM handler
 		ctx = setupMocks(ctx, mockFetchSBOM, mockScanExternalImage)
 
-		err = listener.HandleExternalImageSbom(ctx, payload)
-		require.NoError(t, err)
+		for _, arch := range []string{"x86_64", "aarch64"} {
+			err = listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{
+				Digest: testDigest,
+				Arch:   arch,
+			})
+			require.NoError(t, err)
+		}
 
 		// Verify SBOM status is succeeded
 		sbomStatuses = getSBOMStatuses(t, ctx, testDigest)
-		require.Len(t, sbomStatuses, 1, "Should have single SBOM status")
-		assert.Equal(t, "succeeded", sbomStatuses[0].Status)
+		require.Len(t, sbomStatuses, 2, "Should have one SBOM status per architecture")
+		for _, status := range sbomStatuses {
+			assert.Equal(t, "succeeded", status.Status)
+		}
 
 		// Verify both architectures have queued scan status
 		scanStatuses := getScanStatuses(t, ctx, testDigest)
@@ -957,8 +973,10 @@ func TestExternalImageMultiArchWorkflow(t *testing.T) {
 
 		// Verify SBOM status remains succeeded
 		sbomStatuses = getSBOMStatuses(t, ctx, testDigest)
-		require.Len(t, sbomStatuses, 1)
-		assert.Equal(t, "succeeded", sbomStatuses[0].Status)
+		require.Len(t, sbomStatuses, 2)
+		for _, status := range sbomStatuses {
+			assert.Equal(t, "succeeded", status.Status)
+		}
 	})
 }
 
