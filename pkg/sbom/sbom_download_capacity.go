@@ -46,6 +46,7 @@ var ErrNoBuilderAvailableForSbomDownload = fmt.Errorf("no builder available for 
 type SbomDownloadMetadata struct {
 	TeamID     string    `json:"team_id,omitempty"`
 	Digest     string    `json:"digest"`
+	Arch       string    `json:"arch,omitempty"`
 	Registry   string    `json:"registry"`
 	ImageName  string    `json:"image_name"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -56,6 +57,7 @@ type SbomDownloadMetadata struct {
 type SbomDownloadDirInfo struct {
 	TeamID    string
 	Digest    string
+	Arch      string
 	WorkDir   string
 	CreatedAt time.Time
 }
@@ -115,7 +117,7 @@ func (c *SbomDownloadCapacityCache) AddDownload(machineID string, info SbomDownl
 	defer c.mu.Unlock()
 	downloads := c.scans[machineID]
 	for i, d := range downloads {
-		if d.Digest == info.Digest {
+		if d.Digest == info.Digest && d.Arch == info.Arch {
 			downloads[i] = info
 			return
 		}
@@ -125,12 +127,12 @@ func (c *SbomDownloadCapacityCache) AddDownload(machineID string, info SbomDownl
 
 // RemoveDownload removes a download for a builder by digest. Called by the
 // poller when a download completes.
-func (c *SbomDownloadCapacityCache) RemoveDownload(machineID, digest string) {
+func (c *SbomDownloadCapacityCache) RemoveDownload(machineID, digest, arch string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	downloads := c.scans[machineID]
 	for i, d := range downloads {
-		if d.Digest == digest {
+		if d.Digest == digest && d.Arch == arch {
 			c.scans[machineID] = append(downloads[:i], downloads[i+1:]...)
 			c.counts[machineID]--
 			if c.counts[machineID] <= 0 {
@@ -332,6 +334,7 @@ func InitSbomDownloadCapacityCache(ctx context.Context) (*SbomDownloadCapacityCa
 				activeDownloads = append(activeDownloads, SbomDownloadDirInfo{
 					TeamID:    d.Metadata.TeamID,
 					Digest:    d.Metadata.Digest,
+					Arch:      d.Metadata.Arch,
 					WorkDir:   d.WorkDir,
 					CreatedAt: d.Metadata.CreatedAt,
 				})
@@ -398,6 +401,14 @@ func ResolveSbomDownloadWorkDir(ctx context.Context, vm buildertypes.BuilderVM, 
 		return "", err
 	}
 	return filepath.Join(baseDir, digest), nil
+}
+
+func ResolveSbomPlatformDownloadWorkDir(ctx context.Context, vm buildertypes.BuilderVM, digest, arch string) (string, error) {
+	baseDir, err := ResolveSbomDownloadBaseDir(ctx, vm)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(baseDir, digest, arch), nil
 }
 
 // SbomDownloadDirStatus represents the status of an SBOM download directory on a builder.

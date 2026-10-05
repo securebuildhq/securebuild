@@ -1,9 +1,9 @@
 import { upsertExternalImage } from '@/lib/externalimage/externalimage'
 import { getImageDigest, parseImageRef } from '@/lib/externalimage/registry'
-import { enqueueExternalImageSBOMWork, hasExistingSBOM } from '@/lib/utils/queue'
+import { enqueueExternalImageSBOMWork } from '@/lib/utils/queue'
 import { NextRequest, NextResponse } from 'next/server'
 import { findServiceAccountWithValue } from '@/lib/team/service-account'
-import { getExternalImageDigestForTag, getExternalImageLastScannedAt, getExternalImagePlatforms, getExternalImageScan, getSBOMStatus, teamOwnsDigest, EnqueueScanForDigest } from '@/lib/externalimage/externalimage'
+import { getExternalImageDigestForTag, getExternalImageLastScannedAt, getExternalImagePlatforms, getExternalImageScan, getSBOMStatuses, teamOwnsDigest, EnqueueScanForDigest } from '@/lib/externalimage/externalimage'
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,13 +52,10 @@ export async function POST(request: NextRequest) {
     // Only enqueue SBOM work if needed (no existing SBOM)
     // This prevents duplicate work items and unnecessary processing
     // Note: scan_attempted_at will be set when the scan starts (SetScanStatusRunning in Go)
-    const shouldSkipSBOM = await hasExistingSBOM(digest)
-    if (!shouldSkipSBOM) {
-      await enqueueExternalImageSBOMWork({
-        digest: digest,
-        team_id: teamId,
-      }, digest)
-    }
+    await enqueueExternalImageSBOMWork({
+      digest: digest,
+      team_id: teamId,
+    }, digest)
 
     return NextResponse.json(
       {
@@ -159,9 +156,10 @@ export async function GET(request: NextRequest) {
       getExternalImagePlatforms(currentDigest),
       getExternalImageScan(currentDigest, 'x86_64', 'parsed'),
       getExternalImageScan(currentDigest, 'aarch64', 'parsed'),
-      getSBOMStatus(currentDigest),
+      getSBOMStatuses(currentDigest),
     ])
-    const sbomStatus = sbomStatusResult ?? null
+    const sbomStatuses = sbomStatusResult
+    const defaultSBOMStatus = sbomStatuses.find(status => status.arch === 'x86_64') ?? null
 
     // On-demand scan trigger: if the scan is stale (>4h or missing) and not
     // already queued/running, enqueue a scan via the external_image_scan channel.
@@ -192,7 +190,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Determine overall scan status (priority: failed > running > queued > succeeded)
-    // Note: SBOM generation status is tracked separately in external_image_sbom_status
+    // SBOM generation status is tracked separately per architecture.
     let scanStatus: string | null = null
     let scanStatusMessage: string | null = null
     let scanStatusUpdatedAt: Date | null = null
@@ -231,9 +229,16 @@ export async function GET(request: NextRequest) {
       scan_status: scanStatus,
       scan_status_message: scanStatusMessage,
       scan_status_updated_at: scanStatusUpdatedAt,
-      sbom_status: sbomStatus?.status ?? null,
-      sbom_status_message: sbomStatus?.statusMessage ?? null,
-      sbom_status_updated_at: sbomStatus?.statusUpdatedAt ?? null,
+      sbom_statuses: sbomStatuses.map(status => ({
+        arch: status.arch,
+        status: status.status,
+        status_message: status.statusMessage,
+        status_updated_at: status.statusUpdatedAt,
+      })),
+      // Backward compatibility: legacy scalar fields explicitly represent x86_64.
+      sbom_status: defaultSBOMStatus?.status ?? null,
+      sbom_status_message: defaultSBOMStatus?.statusMessage ?? null,
+      sbom_status_updated_at: defaultSBOMStatus?.statusUpdatedAt ?? null,
     })
   } catch (error) {
     console.error('Error retrieving external image:', error)

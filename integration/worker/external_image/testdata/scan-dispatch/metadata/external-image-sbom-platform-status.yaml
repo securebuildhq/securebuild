@@ -1,0 +1,30 @@
+database: securebuild
+name: external_image_sbom_platform_status
+seedData:
+  rows:
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:dispatch-capacity"
+        - column: arch
+          value:
+            str: "x86_64"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+    - columns:
+        - column: digest
+          value:
+            str: "sha256:dispatch-capacity"
+        - column: arch
+          value:
+            str: "aarch64"
+        - column: status
+          value:
+            str: "succeeded"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"

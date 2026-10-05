@@ -23,8 +23,8 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/pipeline"
-	"github.com/securebuildhq/securebuild/pkg/scan"
 	"github.com/securebuildhq/securebuild/pkg/sbom"
+	"github.com/securebuildhq/securebuild/pkg/scan"
 	"github.com/securebuildhq/securebuild/pkg/security"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
 	"github.com/securebuildhq/securebuild/pkg/updater"
@@ -104,6 +104,11 @@ func runWorker(ctx context.Context) error {
 	// Migrate external_image_scan status column (idempotent, safe to run multiple times)
 	if err := externalimage.MigrateScanStatusColumn(ctx); err != nil {
 		return fmt.Errorf("failed to migrate external image scan status column: %w", err)
+	}
+
+	// Fill the additive per-platform SBOM status table without overwriting live rows.
+	if err := externalimage.BackfillSBOMPlatformStatuses(ctx); err != nil {
+		return fmt.Errorf("failed to backfill external image SBOM platform statuses: %w", err)
 	}
 
 	// Create PIPELINE_DIR and populate it for both package and image pipelines

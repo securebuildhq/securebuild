@@ -86,12 +86,12 @@ export async function listExternalImages(teamId: string): Promise<TrackedExterna
         EXISTS(SELECT 1 FROM external_image_scan escan WHERE escan.digest = etag.digest AND escan.status = 'succeeded') as is_scan_complete,
         (
           SELECT CASE
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_status esbom_status WHERE esbom_status.digest = etag.digest AND esbom_status.status = 'failed') THEN 'failed'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_status esbom_status WHERE esbom_status.digest = etag.digest AND esbom_status.status = 'generating') THEN 'generating'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_status esbom_status WHERE esbom_status.digest = etag.digest AND esbom_status.status = 'pending') THEN 'pending'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_status esbom_status WHERE esbom_status.digest = etag.digest AND esbom_status.status = 'succeeded') THEN 'succeeded'
+            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'failed') THEN 'failed'
+            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'generating') THEN 'generating'
+            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'pending') THEN 'pending'
+            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'succeeded') THEN 'succeeded'
             -- If SBOM exists but no status row, infer succeeded (for backwards compatibility with SBOMs created before status tracking)
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom esbom WHERE esbom.digest = etag.digest) THEN 'succeeded'
+            WHEN EXISTS(SELECT 1 FROM external_image_sbom esbom WHERE esbom.digest = etag.digest AND esbom.arch = 'x86_64') THEN 'succeeded'
             ELSE NULL
           END
         ) as sbom_status,
@@ -305,9 +305,12 @@ export const getExternalImageSBOM = traceFunction('lib.externalimage.getExternal
 
     // Query metadata only — sbom content is fetched from object store
     const query = `
-      select esbom.arch, esbom.source, esbom.is_in_object_store, status.status as sbom_status
+      select esbom.arch, esbom.source, esbom.is_in_object_store,
+             COALESCE(status.status, legacy_status.status) as sbom_status
       from external_image_sbom esbom
-      left join external_image_sbom_status status on status.digest = esbom.digest
+      left join external_image_sbom_platform_status status on status.digest = esbom.digest and status.arch = esbom.arch
+      left join external_image_sbom_status legacy_status
+        on legacy_status.digest = esbom.digest and esbom.arch = 'x86_64'
       where esbom.digest = $1
     `
     const result = await db.query(query, [digest])
@@ -502,9 +505,12 @@ export const getExternalImageSbom = traceFunction('lib.externalimage.getExternal
 
     // Query metadata only — sbom content is fetched from object store
     const query = `
-      select esbom.arch, esbom.is_in_object_store, status.status as sbom_status
+      select esbom.arch, esbom.is_in_object_store,
+             COALESCE(status.status, legacy_status.status) as sbom_status
       from external_image_sbom esbom
-      left join external_image_sbom_status status on status.digest = esbom.digest
+      left join external_image_sbom_platform_status status on status.digest = esbom.digest and status.arch = esbom.arch
+      left join external_image_sbom_status legacy_status
+        on legacy_status.digest = esbom.digest and esbom.arch = 'x86_64'
       where esbom.digest = $1
     `
     const result = await db.query(query, [digest])
@@ -567,12 +573,12 @@ export async function getExternalImageForTeam(teamId: string, registry: string, 
         EXISTS(SELECT 1 FROM external_image_scan escan WHERE escan.digest = etag.digest AND escan.status = 'succeeded') as is_scan_complete,
         (
           SELECT CASE
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_status esbom_status WHERE esbom_status.digest = etag.digest AND esbom_status.status = 'failed') THEN 'failed'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_status esbom_status WHERE esbom_status.digest = etag.digest AND esbom_status.status = 'generating') THEN 'generating'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_status esbom_status WHERE esbom_status.digest = etag.digest AND esbom_status.status = 'pending') THEN 'pending'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_status esbom_status WHERE esbom_status.digest = etag.digest AND esbom_status.status = 'succeeded') THEN 'succeeded'
+            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'failed') THEN 'failed'
+            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'generating') THEN 'generating'
+            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'pending') THEN 'pending'
+            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'succeeded') THEN 'succeeded'
             -- If SBOM exists but no status row, infer succeeded (for backwards compatibility with SBOMs created before status tracking)
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom esbom WHERE esbom.digest = etag.digest) THEN 'succeeded'
+            WHEN EXISTS(SELECT 1 FROM external_image_sbom esbom WHERE esbom.digest = etag.digest AND esbom.arch = 'x86_64') THEN 'succeeded'
             ELSE NULL
           END
         ) as sbom_status,
@@ -689,7 +695,7 @@ export async function getExternalImagePlatforms(digest: string): Promise<string[
 // SBOM and Scan status types and functions
 /**
  * SBOM status represents the state of SBOM generation for an external image.
- * Tracked separately from scan status in the external_image_sbom_status table.
+ * Tracked separately per architecture in external_image_sbom_platform_status.
  *
  * Status progression:
  * 1. pending: Image tracked, SBOM generation job not yet started
@@ -726,6 +732,7 @@ export interface ScanStatusEntry {
 
 export interface SBOMStatusEntry {
   digest: string
+  arch: string
   status: SBOMStatus
   statusMessage: string | null
   createdAt: Date
@@ -779,23 +786,30 @@ export async function initializeSBOMStatusPending(digest: string): Promise<void>
 }
 
 /**
- * Get the SBOM status for a digest from the external_image_sbom_status table.
+ * Get the SBOM status for one digest and architecture.
  *
  * @param digest - The image digest to check
  * @returns SBOM status entry or null if not found
  */
-export async function getSBOMStatus(digest: string): Promise<SBOMStatusEntry | null> {
+export async function getSBOMStatus(digest: string, arch = 'x86_64'): Promise<SBOMStatusEntry | null> {
   const db = getDB(await getParam("DB_URI"))
 
   const query = `
-    SELECT
-      digest, status, status_message,
-      created_at, updated_at, status_updated_at
-    FROM external_image_sbom_status
-    WHERE digest = $1
+    SELECT digest, arch, status, status_message, created_at, updated_at, status_updated_at
+    FROM external_image_sbom_platform_status
+    WHERE digest = $1 AND arch = $2
+    UNION ALL
+    SELECT digest, $2 AS arch, status, status_message, created_at, updated_at, status_updated_at
+    FROM external_image_sbom_status legacy
+    WHERE digest = $1 AND $2 = 'x86_64'
+      AND NOT EXISTS (
+        SELECT 1 FROM external_image_sbom_platform_status
+        WHERE digest = $1 AND arch = $2
+      )
+    LIMIT 1
   `
 
-  const result = await db.query(query, [digest])
+  const result = await db.query(query, [digest, arch])
 
   if (result.rows.length === 0) {
     return null
@@ -804,12 +818,41 @@ export async function getSBOMStatus(digest: string): Promise<SBOMStatusEntry | n
   const row = result.rows[0]
   return {
     digest: row.digest,
+    arch: row.arch,
     status: row.status as SBOMStatus,
     statusMessage: row.status_message,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     statusUpdatedAt: row.status_updated_at,
   }
+}
+
+export async function getSBOMStatuses(digest: string): Promise<SBOMStatusEntry[]> {
+  const db = getDB(await getParam("DB_URI"))
+  const result = await db.query(`
+    WITH platform_status AS (
+      SELECT digest, arch, status, status_message, created_at, updated_at, status_updated_at
+      FROM external_image_sbom_platform_status
+      WHERE digest = $1
+    )
+    SELECT * FROM platform_status
+    UNION ALL
+    SELECT legacy.digest, 'x86_64' AS arch, legacy.status, legacy.status_message,
+           legacy.created_at, legacy.updated_at, legacy.status_updated_at
+    FROM external_image_sbom_status legacy
+    WHERE legacy.digest = $1
+      AND NOT EXISTS (SELECT 1 FROM platform_status WHERE arch = 'x86_64')
+    ORDER BY arch
+  `, [digest])
+  return result.rows.map(row => ({
+    digest: row.digest,
+    arch: row.arch,
+    status: row.status as SBOMStatus,
+    statusMessage: row.status_message,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    statusUpdatedAt: row.status_updated_at,
+  }))
 }
 
 /**
@@ -941,9 +984,9 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
           escan.status as scan_status,
           escan.scan_status_message as scan_status_message,
           escan.scan_status_updated_at as scan_status_updated_at,
-          esbom_status.status as sbom_status,
-          esbom_status.status_message as sbom_status_message,
-          esbom_status.status_updated_at as sbom_status_updated_at
+          COALESCE(esbom_status.status, legacy_sbom_status.status) as sbom_status,
+          COALESCE(esbom_status.status_message, legacy_sbom_status.status_message) as sbom_status_message,
+          COALESCE(esbom_status.status_updated_at, legacy_sbom_status.status_updated_at) as sbom_status_updated_at
         FROM external_image_scan escan
           LEFT JOIN external_image_scan_generation generation
             ON generation.generation_id = escan.selected_scan_generation_id
@@ -952,8 +995,10 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
           LEFT JOIN external_image_sbom esbom
             ON esbom.digest = escan.digest
             AND esbom.arch = escan.arch
-          LEFT JOIN external_image_sbom_status esbom_status
-            ON esbom_status.digest = escan.digest
+          LEFT JOIN external_image_sbom_platform_status esbom_status
+            ON esbom_status.digest = escan.digest AND esbom_status.arch = escan.arch
+          LEFT JOIN external_image_sbom_status legacy_sbom_status
+            ON legacy_sbom_status.digest = escan.digest AND escan.arch = 'x86_64'
         WHERE
           escan.arch = $1
           AND escan.digest = ANY($2)
@@ -987,6 +1032,17 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
     const ownedDigestsWithoutScans = ownedDigestList.filter(d => !resultMap.has(d))
     if (ownedDigestsWithoutScans.length > 0) {
       const sbomStatusQuery = `
+        WITH platform_status AS (
+          SELECT
+            esbom_status.digest,
+            esbom_status.status as sbom_status,
+            esbom_status.status_message as sbom_status_message,
+            esbom_status.status_updated_at as sbom_status_updated_at
+          FROM external_image_sbom_platform_status esbom_status
+          WHERE esbom_status.digest = ANY($1) AND esbom_status.arch = $2
+        )
+        SELECT * FROM platform_status
+        UNION ALL
         SELECT
           esbom_status.digest,
           esbom_status.status as sbom_status,
@@ -994,9 +1050,12 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
           esbom_status.status_updated_at as sbom_status_updated_at
         FROM external_image_sbom_status esbom_status
         WHERE
-          esbom_status.digest = ANY($1)
+          esbom_status.digest = ANY($1) AND $2 = 'x86_64'
+          AND NOT EXISTS (
+            SELECT 1 FROM platform_status WHERE platform_status.digest = esbom_status.digest
+          )
       `
-      const sbomStatusResult = await db.query(sbomStatusQuery, [ownedDigestsWithoutScans])
+      const sbomStatusResult = await db.query(sbomStatusQuery, [ownedDigestsWithoutScans, arch])
 
       // Add SBOM status entries for digests without scan data yet
       for (const row of sbomStatusResult.rows) {
@@ -1164,12 +1223,14 @@ export const getBatchExternalSboms = traceFunction('lib.externalimage.getBatchEx
         esbom.arch,
         esbom.source,
         esbom.is_in_object_store,
-        esbom_status.status as sbom_status,
+        COALESCE(esbom_status.status, legacy_sbom_status.status) as sbom_status,
         esbom.created_at as sbom_created_at,
         esbom.image_size_bytes
       FROM external_image_sbom esbom
-        LEFT JOIN external_image_sbom_status esbom_status
-          ON esbom_status.digest = esbom.digest
+        LEFT JOIN external_image_sbom_platform_status esbom_status
+          ON esbom_status.digest = esbom.digest AND esbom_status.arch = esbom.arch
+        LEFT JOIN external_image_sbom_status legacy_sbom_status
+          ON legacy_sbom_status.digest = esbom.digest AND esbom.arch = 'x86_64'
         INNER JOIN external_image_tag etag
           ON etag.digest = esbom.digest
         INNER JOIN external_image_team eteam

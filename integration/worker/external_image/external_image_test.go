@@ -93,7 +93,7 @@ func TestExternalImageScanStatusTransitions(t *testing.T) {
 		require.NoError(t, err)
 
 		// Step 2: Initialize SBOM pending status (simulates monitor before enqueuing)
-		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest)
+		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest, "x86_64")
 		require.NoError(t, err)
 
 		// Verify single SBOM status exists
@@ -105,6 +105,7 @@ func TestExternalImageScanStatusTransitions(t *testing.T) {
 		// Create payload
 		payload := listenertypes.ExternalImageSbomPayload{
 			Digest: testDigest,
+			Arch:   "x86_64",
 		}
 
 		// Set up mocks
@@ -239,13 +240,13 @@ func TestExternalImageSbomWaitsForBuilderCapacity(t *testing.T) {
 
 	digest := "sha256:test-sbom-capacity-1234567890123456789012345678901234"
 	require.NoError(t, externalimage.AddExternalImage(ctx, "docker.io", "library/nginx", "capacity-test", digest, "", ""))
-	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest))
+	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest, "x86_64"))
 
 	cache, err := sbom.InitSbomDownloadCapacityCache(ctx)
 	require.NoError(t, err)
 	ctx = listener.WithSbomDownloadCapacityCache(ctx, cache)
 
-	err = listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{Digest: digest})
+	err = listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{Digest: digest, Arch: "x86_64"})
 	require.Error(t, err)
 	var retryAfter *listener.RetryAfterError
 	require.True(t, errors.As(err, &retryAfter))
@@ -282,12 +283,15 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 	digest := "sha256:test-sbom-enqueue-1234567890123456789012345678901234"
 	payload := `{"digest":"` + digest + `","team_id":"team-1"}`
 
-	enqueued, err := externalimage.EnqueueSBOMWork(ctx, payload, digest)
+	enqueued, err := externalimage.EnqueueSBOMWork(ctx, payload, digest, "x86_64")
 	require.NoError(t, err)
 	require.True(t, enqueued)
-	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest, "x86_64")
 	require.NoError(t, err)
 	require.False(t, enqueued, "pending work must be deduplicated")
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest, "aarch64")
+	require.NoError(t, err)
+	require.True(t, enqueued, "x86 work must not suppress missing arm work")
 
 	_, err = testDB.Pool.Exec(ctx, `
 		UPDATE work_queue
@@ -295,26 +299,26 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 		WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1
 	`, digest)
 	require.NoError(t, err)
-	require.NoError(t, externalimage.SetSBOMStatusGenerating(ctx, digest))
+	require.NoError(t, externalimage.SetSBOMStatusGenerating(ctx, digest, "x86_64"))
 
-	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest, "x86_64")
 	require.NoError(t, err)
 	require.False(t, enqueued, "generating work must be deduplicated after dispatch completes")
 
 	_, err = testDB.Pool.Exec(ctx, `
-		UPDATE external_image_sbom_status
+		UPDATE external_image_sbom_platform_status
 		SET status_updated_at = NOW() - INTERVAL '32 minutes'
 		WHERE digest = $1
 	`, digest)
 	require.NoError(t, err)
 
-	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest, "x86_64")
 	require.NoError(t, err)
 	require.True(t, enqueued, "a stale generating digest must allow recovery")
 
 	var status string
 	require.NoError(t, testDB.Pool.QueryRow(ctx, `
-		SELECT status FROM external_image_sbom_status WHERE digest = $1
+		SELECT status FROM external_image_sbom_platform_status WHERE digest = $1
 	`, digest).Scan(&status))
 	require.Equal(t, string(externalimage.SBOMStatusPending), status)
 
@@ -327,8 +331,8 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 	`, digest)
 	require.NoError(t, err)
 
-	require.NoError(t, externalimage.SetSBOMStatusFailed(ctx, digest, "terminal test failure"))
-	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest)
+	require.NoError(t, externalimage.SetSBOMStatusFailed(ctx, digest, "x86_64", "terminal test failure"))
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest, "x86_64")
 	require.NoError(t, err)
 	require.True(t, enqueued, "a terminally failed digest must allow a later retry")
 
@@ -339,7 +343,7 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 		WHERE channel = 'external_image_sbom'
 		  AND completed_at IS NOT NULL
 		  AND dedupe_key = $1
-	`, digest).Scan(&completedRowsWithKey))
+	`, digest+":x86_64").Scan(&completedRowsWithKey))
 	assert.Zero(t, completedRowsWithKey, "enqueue must release keys retained by older workers")
 }
 
@@ -367,8 +371,8 @@ func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {
 	digest := "sha256:test-missing-builder-race-123456789012345678901234567890"
 	teamID := "team-missing-builder"
 	payload := `{"digest":"` + digest + `","team_id":"` + teamID + `"}`
-	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest))
-	require.NoError(t, externalimage.SetSBOMStatusGenerating(ctx, digest))
+	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest, "x86_64"))
+	require.NoError(t, externalimage.SetSBOMStatusGenerating(ctx, digest, "x86_64"))
 
 	// Model the window after dispatch registered the asynchronous download but
 	// before the listener persisted completion of the original queue row.
@@ -549,12 +553,13 @@ func TestExternalImageScanFailure(t *testing.T) {
 		err := externalimage.AddExternalImage(ctx, "docker.io", "library/nginx", "latest", testDigest, "", "")
 		require.NoError(t, err)
 
-		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest)
+		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest, "x86_64")
 		require.NoError(t, err)
 
 		// Process SBOM handler
 		payload := listenertypes.ExternalImageSbomPayload{
 			Digest: testDigest,
+			Arch:   "x86_64",
 		}
 
 		ctx = setupMocks(ctx, mockFetchSBOM, mockScanExternalImage)
@@ -617,7 +622,7 @@ func TestExternalImagePartialArchitectureFailure(t *testing.T) {
 
 	digest := "sha256:test-partial-refresh-12345678901234567890123456789012"
 	require.NoError(t, externalimage.AddExternalImage(ctx, "docker.io", "library/multiarch", "latest", digest, "", ""))
-	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest))
+	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest, "x86_64"))
 
 	mockFetchSBOM := func(context.Context, string, string, string) ([]sbom.SBOMResult, error) {
 		return []sbom.SBOMResult{
@@ -633,7 +638,7 @@ func TestExternalImagePartialArchitectureFailure(t *testing.T) {
 	}
 
 	ctx = setupMocks(ctx, mockFetchSBOM, allSuccessful)
-	require.NoError(t, listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{Digest: digest}))
+	require.NoError(t, listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{Digest: digest, Arch: "x86_64"}))
 	require.NoError(t, listener.RunScanForDigest(ctx, digest))
 
 	initialRows := getScanStatuses(t, ctx, digest)
@@ -726,7 +731,7 @@ func TestExternalImageSBOMStatusTransitions(t *testing.T) {
 		require.NoError(t, err)
 
 		// Step 1: Initialize to pending
-		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest)
+		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest, "x86_64")
 		require.NoError(t, err)
 
 		// Verify pending status
@@ -736,7 +741,7 @@ func TestExternalImageSBOMStatusTransitions(t *testing.T) {
 		assert.Nil(t, sbomStatuses[0].StatusMessage)
 
 		// Step 2: Set to generating
-		err = externalimage.SetSBOMStatusGenerating(ctx, testDigest)
+		err = externalimage.SetSBOMStatusGenerating(ctx, testDigest, "x86_64")
 		require.NoError(t, err)
 
 		// Verify generating status
@@ -747,7 +752,7 @@ func TestExternalImageSBOMStatusTransitions(t *testing.T) {
 		assert.NotNil(t, sbomStatuses[0].StatusUpdatedAt)
 
 		// Step 3: Set to succeeded
-		err = externalimage.SetSBOMStatusSucceeded(ctx, testDigest)
+		err = externalimage.SetSBOMStatusSucceeded(ctx, testDigest, "x86_64")
 		require.NoError(t, err)
 
 		// Verify succeeded status
@@ -764,15 +769,15 @@ func TestExternalImageSBOMStatusTransitions(t *testing.T) {
 		err := externalimage.AddExternalImage(ctx, "docker.io", "library/nginx", "sbom-fail-test", failureDigest, "", "")
 		require.NoError(t, err)
 
-		err = externalimage.InitializeSBOMStatusPending(ctx, failureDigest)
+		err = externalimage.InitializeSBOMStatusPending(ctx, failureDigest, "x86_64")
 		require.NoError(t, err)
 
-		err = externalimage.SetSBOMStatusGenerating(ctx, failureDigest)
+		err = externalimage.SetSBOMStatusGenerating(ctx, failureDigest, "x86_64")
 		require.NoError(t, err)
 
 		// Set to failed with error message
 		errorMsg := "failed to download SBOM from registry: 404 not found"
-		err = externalimage.SetSBOMStatusFailed(ctx, failureDigest, errorMsg)
+		err = externalimage.SetSBOMStatusFailed(ctx, failureDigest, "x86_64", errorMsg)
 		require.NoError(t, err)
 
 		// Verify failure status
@@ -783,6 +788,58 @@ func TestExternalImageSBOMStatusTransitions(t *testing.T) {
 		assert.Equal(t, "failed", status.Status)
 		assert.NotNil(t, status.StatusMessage)
 		assert.Equal(t, errorMsg, *status.StatusMessage)
+	})
+
+	t.Run("platform failure and retry preserve successful sibling", func(t *testing.T) {
+		digest := "sha256:test-sbom-platform-independent-1234567890123456789012345678"
+		require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest, "x86_64"))
+		require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest, "aarch64"))
+		require.NoError(t, externalimage.SetSBOMStatusGenerating(ctx, digest, "x86_64"))
+		require.NoError(t, externalimage.SetSBOMStatusGenerating(ctx, digest, "aarch64"))
+		require.NoError(t, externalimage.SetSBOMStatusSucceeded(ctx, digest, "x86_64"))
+		require.NoError(t, externalimage.SetSBOMStatusFailed(ctx, digest, "aarch64", "arm download failed"))
+
+		statuses := getSBOMStatuses(t, ctx, digest)
+		require.Len(t, statuses, 2)
+		assert.Equal(t, "failed", statuses[0].Status)
+		assert.Equal(t, "succeeded", statuses[1].Status)
+		x86UpdatedAt := statuses[1].StatusUpdatedAt
+
+		require.NoError(t, externalimage.SetSBOMStatusPending(ctx, digest, "aarch64", "retrying"))
+		statuses = getSBOMStatuses(t, ctx, digest)
+		require.Len(t, statuses, 2)
+		assert.Equal(t, "pending", statuses[0].Status)
+		assert.Equal(t, "succeeded", statuses[1].Status)
+		assert.Equal(t, x86UpdatedAt, statuses[1].StatusUpdatedAt)
+	})
+
+	t.Run("legacy success migrates only platforms with stored evidence", func(t *testing.T) {
+		digest := "sha256:test-sbom-platform-backfill-123456789012345678901234567890"
+		conn := persistence.MustGetPooledPostgresSession(ctx)
+		_, err := conn.Exec(ctx, `
+			INSERT INTO external_image_sbom_status
+				(digest, status, created_at, updated_at, status_updated_at)
+			VALUES ($1, 'succeeded', now(), now(), now())
+		`, digest)
+		require.NoError(t, err)
+		_, err = conn.Exec(ctx, `
+			INSERT INTO external_image_sbom
+				(digest, arch, source, created_at, is_in_object_store)
+			VALUES ($1, 'x86_64', 'syft', now(), true)
+		`, digest)
+		conn.Release()
+		require.NoError(t, err)
+		require.NoError(t, externalimage.BackfillSBOMPlatformStatuses(ctx))
+
+		statuses := getSBOMStatuses(t, ctx, digest)
+		require.Len(t, statuses, 1)
+		assert.Equal(t, "x86_64", statuses[0].Arch)
+		assert.Equal(t, "succeeded", statuses[0].Status)
+
+		require.NoError(t, externalimage.SetSBOMStatusFailed(ctx, digest, "x86_64", "late failure from stale attempt"))
+		statuses = getSBOMStatuses(t, ctx, digest)
+		require.Len(t, statuses, 1)
+		assert.Equal(t, "succeeded", statuses[0].Status)
 	})
 }
 
@@ -855,7 +912,7 @@ func TestExternalImageMultiArchWorkflow(t *testing.T) {
 		err := externalimage.AddExternalImage(ctx, "docker.io", "library/nginx", "latest", testDigest, "", "")
 		require.NoError(t, err)
 
-		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest)
+		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest, "x86_64")
 		require.NoError(t, err)
 
 		// Verify initial pending SBOM status
@@ -866,6 +923,7 @@ func TestExternalImageMultiArchWorkflow(t *testing.T) {
 		// Process SBOM handler
 		payload := listenertypes.ExternalImageSbomPayload{
 			Digest: testDigest,
+			Arch:   "x86_64",
 		}
 
 		ctx = setupMocks(ctx, mockFetchSBOM, mockScanExternalImage)
@@ -964,10 +1022,10 @@ func TestExternalImageScanBlobUpload(t *testing.T) {
 		err := externalimage.AddExternalImage(ctx, "docker.io", "library/nginx", "latest", testDigest, "", "")
 		require.NoError(t, err)
 
-		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest)
+		err = externalimage.InitializeSBOMStatusPending(ctx, testDigest, "x86_64")
 		require.NoError(t, err)
 
-		payload := listenertypes.ExternalImageSbomPayload{Digest: testDigest}
+		payload := listenertypes.ExternalImageSbomPayload{Digest: testDigest, Arch: "x86_64"}
 		ctx = setupMocks(ctx, mockFetchSBOM, mockScanExternalImage)
 
 		err = listener.HandleExternalImageSbom(ctx, payload)
@@ -1827,6 +1885,7 @@ type scanStatusRow struct {
 
 type sbomStatusRow struct {
 	Digest          string
+	Arch            string
 	Status          string
 	StatusMessage   *string
 	CreatedAt       time.Time
@@ -1906,9 +1965,10 @@ func getSBOMStatuses(t *testing.T, ctx context.Context, digest string) []sbomSta
 	defer conn.Release()
 
 	query := `
-		SELECT digest, status, status_message, created_at, updated_at, status_updated_at
-		FROM external_image_sbom_status
+		SELECT digest, arch, status, status_message, created_at, updated_at, status_updated_at
+		FROM external_image_sbom_platform_status
 		WHERE digest = $1
+		ORDER BY arch
 	`
 
 	rows, err := conn.Query(ctx, query, digest)
@@ -1920,6 +1980,7 @@ func getSBOMStatuses(t *testing.T, ctx context.Context, digest string) []sbomSta
 		var status sbomStatusRow
 		err := rows.Scan(
 			&status.Digest,
+			&status.Arch,
 			&status.Status,
 			&status.StatusMessage,
 			&status.CreatedAt,

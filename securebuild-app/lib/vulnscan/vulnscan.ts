@@ -91,7 +91,7 @@ export async function getExternalSBOMCounts(
       COUNT(*) FILTER (WHERE status = 'succeeded') AS succeeded,
       COUNT(*) FILTER (WHERE status = 'failed') AS failed,
       COUNT(*) AS total
-    FROM external_image_sbom_status
+    FROM external_image_sbom_platform_status
     WHERE created_at > now() - $1::interval OR status_updated_at > now() - $1::interval
   `,
     [timePeriodToInterval(timePeriod)]
@@ -137,6 +137,7 @@ export async function getExternalScanThroughput(
 
 export interface ExternalSBOMStatusItem {
   digest: string;
+  arch: string;
   status: string;
   statusMessage: string | null;
   createdAt: Date;
@@ -239,7 +240,7 @@ export async function listExternalSBOMStatuses(
   const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";
 
   const countResult = await db.query(
-    `SELECT COUNT(*) AS total FROM external_image_sbom_status s ${whereClause}`,
+    `SELECT COUNT(*) AS total FROM external_image_sbom_platform_status s ${whereClause}`,
     queryParams
   );
   const totalCount = parseInt(countResult.rows[0].total);
@@ -252,6 +253,7 @@ export async function listExternalSBOMStatuses(
     `
     SELECT
       s.digest,
+      s.arch,
       s.status,
       s.status_message,
       s.created_at,
@@ -260,7 +262,7 @@ export async function listExternalSBOMStatuses(
       t.registry,
       t.image_name,
       t.image_tag
-    FROM external_image_sbom_status s
+    FROM external_image_sbom_platform_status s
     LEFT JOIN LATERAL (
       SELECT registry, image_name, image_tag
       FROM external_image_tag
@@ -285,6 +287,7 @@ export async function listExternalSBOMStatuses(
 
   const statuses: ExternalSBOMStatusItem[] = result.rows.map((row: Record<string, unknown>) => ({
     digest: row.digest as string,
+    arch: row.arch as string,
     status: row.status as string,
     statusMessage: (row.status_message as string) || null,
     createdAt: row.created_at as Date,

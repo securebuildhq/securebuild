@@ -51,15 +51,18 @@ describe('POST/GET /api/v1/external-image', () => {
       }
 
       const result = await env.dbPool.query(
-        `SELECT COUNT(*)::int AS count, MAX(dedupe_key) AS dedupe_key
+        `SELECT COUNT(*)::int AS count, ARRAY_AGG(dedupe_key ORDER BY dedupe_key) AS dedupe_keys
          FROM work_queue
          WHERE channel = 'external_image_sbom'
            AND completed_at IS NULL
            AND payload->>'digest' = $1`,
         [createdDigest],
       );
-      expect(result.rows[0].count).toBe(1);
-      expect(result.rows[0].dedupe_key).toBe(createdDigest);
+      expect(result.rows[0].count).toBe(2);
+      expect(result.rows[0].dedupe_keys).toEqual([
+        `${createdDigest}:aarch64`,
+        `${createdDigest}:x86_64`,
+      ]);
 
       // Dispatch completion releases the queue key before asynchronous Syft
       // generation completes. The generating status must still suppress a
@@ -71,7 +74,7 @@ describe('POST/GET /api/v1/external-image', () => {
         [createdDigest],
       );
       await env.dbPool.query(
-        `UPDATE external_image_sbom_status SET status = 'generating' WHERE digest = $1`,
+        `UPDATE external_image_sbom_platform_status SET status = 'generating' WHERE digest = $1`,
         [createdDigest],
       );
 
@@ -91,7 +94,7 @@ describe('POST/GET /api/v1/external-image', () => {
       expect(duringGeneration.rows[0].count).toBe(0);
 
       await env.dbPool.query(
-        `UPDATE external_image_sbom_status
+        `UPDATE external_image_sbom_platform_status
          SET status_updated_at = NOW() - INTERVAL '32 minutes'
          WHERE digest = $1`,
         [createdDigest],
@@ -110,11 +113,11 @@ describe('POST/GET /api/v1/external-image', () => {
               AND completed_at IS NULL
               AND payload->>'digest' = $1) AS count,
            (SELECT status
-            FROM external_image_sbom_status
-            WHERE digest = $1) AS status`,
+            FROM external_image_sbom_platform_status
+            WHERE digest = $1 AND arch = 'x86_64') AS status`,
         [createdDigest],
       );
-      expect(recoveredGeneration.rows[0].count).toBe(1);
+      expect(recoveredGeneration.rows[0].count).toBe(2);
       expect(recoveredGeneration.rows[0].status).toBe('pending');
 
       const retainedCompletedKeys = await env.dbPool.query(
@@ -122,8 +125,8 @@ describe('POST/GET /api/v1/external-image', () => {
          FROM work_queue
          WHERE channel = 'external_image_sbom'
            AND completed_at IS NOT NULL
-           AND dedupe_key = $1`,
-        [createdDigest],
+           AND dedupe_key LIKE $1`,
+        [`${createdDigest}:%`],
       );
       expect(retainedCompletedKeys.rows[0].count).toBe(0);
     });
@@ -136,6 +139,10 @@ describe('POST/GET /api/v1/external-image', () => {
       const data = res.data as Record<string, unknown>;
       expect(data.digest).toBe(createdDigest);
       expect(data.sbom_status).toBe('pending');
+      expect(data.sbom_statuses).toEqual(expect.arrayContaining([
+        expect.objectContaining({ arch: 'x86_64', status: 'pending' }),
+        expect.objectContaining({ arch: 'aarch64', status: 'pending' }),
+      ]));
       expect(data.scan_status).toBeDefined();
       expect(Array.isArray(data.platforms)).toBe(true);
     });

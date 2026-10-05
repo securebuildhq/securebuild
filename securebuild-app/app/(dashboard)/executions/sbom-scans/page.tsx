@@ -415,6 +415,7 @@ export default function SBOMScansPage() {
                 <TableRow>
                   <TableHead>Image</TableHead>
                   <TableHead>Digest</TableHead>
+                  <TableHead>Architecture</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Updated</TableHead>
@@ -424,13 +425,13 @@ export default function SBOMScansPage() {
               <TableBody>
                 {sbomStatuses.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                       No SBOM generations found
                     </TableCell>
                   </TableRow>
                 ) : (
                   sbomStatuses.map((status) => (
-                    <TableRow key={status.digest}>
+                    <TableRow key={`${status.digest}:${status.arch}`}>
                       <TableCell className="font-medium">
                         {status.imageName ? (
                           `${status.registry ? status.registry + "/" : ""}${status.imageName}${status.imageTag ? ":" + status.imageTag : ""}`
@@ -441,6 +442,7 @@ export default function SBOMScansPage() {
                       <TableCell className="font-mono text-xs" title={status.digest}>
                         {truncateDigest(status.digest)}
                       </TableCell>
+                      <TableCell>{status.arch}</TableCell>
                       <TableCell>{getSBOMStatusBadge(status.status)}</TableCell>
                       <TableCell className="text-sm">
                         {formatTimeAgo(status.createdAt)}

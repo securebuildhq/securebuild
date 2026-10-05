@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/securebuildhq/securebuild/pkg/externalimage/types"
 	"github.com/securebuildhq/securebuild/pkg/image"
 	"github.com/securebuildhq/securebuild/pkg/logger"
@@ -331,26 +332,27 @@ func uniqueArchitectures(archs []string) []string {
 	return result
 }
 
-// InitializeSBOMStatusPending initializes SBOM status to pending for a digest.
+// InitializeSBOMStatusPending initializes SBOM status for one platform.
 // Uses ON CONFLICT DO NOTHING to avoid overwriting existing status.
-// SBOM generation is an atomic operation that processes all architectures at once,
-// so we track a single status per digest (not per architecture).
-func InitializeSBOMStatusPending(ctx context.Context, digest string) error {
-	logger.Debugf("initializing SBOM status to pending for digest %s", digest)
+func InitializeSBOMStatusPending(ctx context.Context, digest, arch string) error {
+	logger.Debugf("initializing SBOM status to pending for digest %s arch %s", digest, arch)
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
 	now := time.Now()
 
 	query := `
-		INSERT INTO external_image_sbom_status (digest, created_at, status, updated_at, status_updated_at)
-		VALUES ($1, $2, $3, $2, $2)
-		ON CONFLICT (digest) DO NOTHING
+		INSERT INTO external_image_sbom_platform_status (digest, arch, created_at, status, updated_at, status_updated_at)
+		VALUES ($1, $2, $3, $4, $3, $3)
+		ON CONFLICT (digest, arch) DO NOTHING
 	`
 
-	_, err := conn.Exec(ctx, query, digest, now, string(SBOMStatusPending))
+	_, err := conn.Exec(ctx, query, digest, arch, now, string(SBOMStatusPending))
 	if err != nil {
 		return fmt.Errorf("failed to initialize SBOM status to pending for digest %s: %w", digest, err)
+	}
+	if err := mirrorLegacyDefaultSBOMStatus(ctx, conn, digest, arch, SBOMStatusPending, "", now, false); err != nil {
+		return err
 	}
 
 	return nil
@@ -358,33 +360,36 @@ func InitializeSBOMStatusPending(ctx context.Context, digest string) error {
 
 // SetSBOMStatusPending marks an existing SBOM request as waiting to start. It
 // also creates the status row when the enqueue path did not initialize one.
-func SetSBOMStatusPending(ctx context.Context, digest, statusMessage string) error {
+func SetSBOMStatusPending(ctx context.Context, digest, arch, statusMessage string) error {
 	logger.Debugf("setting SBOM status to pending for digest %s", digest)
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
 	now := time.Now()
 	query := `
-		INSERT INTO external_image_sbom_status
-			(digest, created_at, status, status_message, updated_at, status_updated_at)
-		VALUES ($1, $2, $3, NULLIF($4, ''), $2, $2)
-		ON CONFLICT (digest) DO UPDATE
+		INSERT INTO external_image_sbom_platform_status
+			(digest, arch, created_at, status, status_message, updated_at, status_updated_at)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $3, $3)
+		ON CONFLICT (digest, arch) DO UPDATE
 		SET status = EXCLUDED.status,
 		    status_message = EXCLUDED.status_message,
 		    updated_at = EXCLUDED.updated_at,
 		    status_updated_at = EXCLUDED.status_updated_at
 	`
 
-	if _, err := conn.Exec(ctx, query, digest, now, string(SBOMStatusPending), statusMessage); err != nil {
+	if _, err := conn.Exec(ctx, query, digest, arch, now, string(SBOMStatusPending), statusMessage); err != nil {
 		return fmt.Errorf("failed to set SBOM status to pending for digest %s: %w", digest, err)
+	}
+	if err := mirrorLegacyDefaultSBOMStatus(ctx, conn, digest, arch, SBOMStatusPending, statusMessage, now, true); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-// SetSBOMStatusGenerating updates SBOM status to 'generating' for all architectures of a digest.
+// SetSBOMStatusGenerating updates one platform to 'generating'.
 // This is used when SBOM generation starts to indicate the download is in progress.
-func SetSBOMStatusGenerating(ctx context.Context, digest string) error {
+func SetSBOMStatusGenerating(ctx context.Context, digest, arch string) error {
 	logger.Debugf("setting SBOM status to generating for digest %s", digest)
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
@@ -392,25 +397,29 @@ func SetSBOMStatusGenerating(ctx context.Context, digest string) error {
 	now := time.Now()
 
 	query := `
-		UPDATE external_image_sbom_status
-		SET status = $1,
+		INSERT INTO external_image_sbom_platform_status
+			(digest, arch, status, status_message, created_at, updated_at, status_updated_at)
+		VALUES ($3, $4, $1, NULL, $2, $2, $2)
+		ON CONFLICT (digest, arch) DO UPDATE
+		SET status = EXCLUDED.status,
 		    status_message = NULL,
-		    updated_at = $2,
-		    status_updated_at = $2
-		WHERE digest = $3
+		    updated_at = EXCLUDED.updated_at,
+		    status_updated_at = EXCLUDED.status_updated_at
 	`
 
-	_, err := conn.Exec(ctx, query, string(SBOMStatusGenerating), now, digest)
+	_, err := conn.Exec(ctx, query, string(SBOMStatusGenerating), now, digest, arch)
 	if err != nil {
 		return fmt.Errorf("failed to set SBOM status to generating for digest %s: %w", digest, err)
+	}
+	if err := mirrorLegacyDefaultSBOMStatus(ctx, conn, digest, arch, SBOMStatusGenerating, "", now, true); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-// SetSBOMStatusSucceeded marks SBOM generation as succeeded for the digest.
-// This should be called after successfully storing all SBOMs in external_image_sbom table.
-func SetSBOMStatusSucceeded(ctx context.Context, digest string) error {
+// SetSBOMStatusSucceeded marks one platform succeeded after its SBOM is stored.
+func SetSBOMStatusSucceeded(ctx context.Context, digest, arch string) error {
 	logger.Debugf("setting SBOM status to succeeded for digest %s", digest)
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
@@ -418,15 +427,17 @@ func SetSBOMStatusSucceeded(ctx context.Context, digest string) error {
 	now := time.Now()
 
 	query := `
-		UPDATE external_image_sbom_status
-		SET status = $1,
+		INSERT INTO external_image_sbom_platform_status
+			(digest, arch, status, status_message, created_at, updated_at, status_updated_at)
+		VALUES ($3, $4, $1, NULL, $2, $2, $2)
+		ON CONFLICT (digest, arch) DO UPDATE
+		SET status = EXCLUDED.status,
 		    status_message = NULL,
-		    updated_at = $2,
-		    status_updated_at = $2
-		WHERE digest = $3
+		    updated_at = EXCLUDED.updated_at,
+		    status_updated_at = EXCLUDED.status_updated_at
 	`
 
-	result, err := conn.Exec(ctx, query, string(SBOMStatusSucceeded), now, digest)
+	result, err := conn.Exec(ctx, query, string(SBOMStatusSucceeded), now, digest, arch)
 	if err != nil {
 		return fmt.Errorf("failed to set SBOM status to succeeded for digest %s: %w", digest, err)
 	}
@@ -436,12 +447,15 @@ func SetSBOMStatusSucceeded(ctx context.Context, digest string) error {
 	if rowsAffected == 0 {
 		return fmt.Errorf("no SBOM status row found to update for digest %s (expected 1 row, updated 0 rows)", digest)
 	}
+	if err := mirrorLegacyDefaultSBOMStatus(ctx, conn, digest, arch, SBOMStatusSucceeded, "", now, true); err != nil {
+		return err
+	}
 
 	return nil
 }
 
 // SetSBOMStatusFailed marks SBOM generation as failed with an error message.
-func SetSBOMStatusFailed(ctx context.Context, digest string, errorMessage string) error {
+func SetSBOMStatusFailed(ctx context.Context, digest, arch string, errorMessage string) error {
 	logger.Debugf("setting SBOM status to failed for digest %s", digest)
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
@@ -449,19 +463,56 @@ func SetSBOMStatusFailed(ctx context.Context, digest string, errorMessage string
 	now := time.Now()
 
 	query := `
-		UPDATE external_image_sbom_status
-		SET status = $1,
-		    status_message = $2,
-		    updated_at = $3,
-		    status_updated_at = $3
-		WHERE digest = $4
+		INSERT INTO external_image_sbom_platform_status
+			(digest, arch, status, status_message, created_at, updated_at, status_updated_at)
+		VALUES ($4, $5, $1, $2, $3, $3, $3)
+		ON CONFLICT (digest, arch) DO UPDATE
+		SET status = EXCLUDED.status,
+		    status_message = EXCLUDED.status_message,
+		    updated_at = EXCLUDED.updated_at,
+		    status_updated_at = EXCLUDED.status_updated_at
+		WHERE NOT (
+			external_image_sbom_platform_status.status = 'succeeded'
+			AND EXISTS (
+				SELECT 1 FROM external_image_sbom
+				WHERE digest = EXCLUDED.digest AND arch = EXCLUDED.arch
+				  AND is_in_object_store = true
+			)
+		)
 	`
 
-	_, err := conn.Exec(ctx, query, string(SBOMStatusFailed), errorMessage, now, digest)
+	result, err := conn.Exec(ctx, query, string(SBOMStatusFailed), errorMessage, now, digest, arch)
 	if err != nil {
 		return fmt.Errorf("failed to set SBOM status to failed for digest %s: %w", digest, err)
 	}
+	if result.RowsAffected() == 0 {
+		logger.Debugf("ignored stale SBOM failure for usable digest %s arch %s", digest, arch)
+		return nil
+	}
+	if err := mirrorLegacyDefaultSBOMStatus(ctx, conn, digest, arch, SBOMStatusFailed, errorMessage, now, true); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func mirrorLegacyDefaultSBOMStatus(ctx context.Context, conn *pgxpool.Conn, digest, arch string, status SBOMStatus, message string, now time.Time, overwrite bool) error {
+	if arch != "x86_64" {
+		return nil
+	}
+	conflict := "DO NOTHING"
+	if overwrite {
+		conflict = `DO UPDATE SET status = EXCLUDED.status, status_message = EXCLUDED.status_message,
+			updated_at = EXCLUDED.updated_at, status_updated_at = EXCLUDED.status_updated_at`
+	}
+	_, err := conn.Exec(ctx, `
+		INSERT INTO external_image_sbom_status
+			(digest, status, status_message, created_at, updated_at, status_updated_at)
+		VALUES ($1, $2, NULLIF($3, ''), $4, $4, $4)
+		ON CONFLICT (digest) `+conflict, digest, string(status), message, now)
+	if err != nil {
+		return fmt.Errorf("failed to mirror default-architecture SBOM status for digest %s: %w", digest, err)
+	}
 	return nil
 }
 
@@ -620,6 +671,19 @@ func GetExternalImageSBOM(ctx context.Context, digest string) (*string, error) {
 	return &sbom, nil
 }
 
+func HasExternalImageSBOMForArch(ctx context.Context, digest, arch string) (bool, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+	var exists bool
+	err := conn.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM external_image_sbom
+			WHERE digest = $1 AND arch = $2 AND is_in_object_store = true
+		)
+	`, digest, arch).Scan(&exists)
+	return exists, err
+}
+
 // GetExternalImageSBOMs releases its metadata connection before any object-store
 // IO or decompression. Slow SBOM downloads must not occupy the Postgres pool.
 func GetExternalImageSBOMs(ctx context.Context, digest string) ([]types.ExternalImageSBOM, error) {
@@ -655,7 +719,8 @@ func getExternalImageSBOMMetadata(ctx context.Context, digest string) ([]types.E
 	query := `
 		select esbom.digest, esbom.arch, esbom.source, esbom.created_at, esbom.image_digest
 		from external_image_sbom esbom
-		inner join external_image_sbom_status status on status.digest = esbom.digest
+		inner join external_image_sbom_platform_status status
+		  on status.digest = esbom.digest and status.arch = esbom.arch
 		where esbom.digest = $1
 		  and esbom.is_in_object_store = true
 		  and status.status = $2

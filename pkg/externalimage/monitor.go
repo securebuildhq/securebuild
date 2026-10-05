@@ -96,36 +96,18 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 				}
 
 				// queue the initial work for SBOM
-				p := listenertypes.ExternalImageSbomPayload{
-					Digest: currentDigest,
-					TeamID: externalImage.TeamID,
-				}
-
-				payload, err := json.Marshal(p)
-				if err != nil {
-					return fmt.Errorf("failed to marshal SBOM payload for digest %s: %w", currentDigest, err)
-				}
-
-				// Do not enqueue duplicate SBOM work if SBOM already exists for this digest.
-				hasExisting, err := HasExistingSBOM(ctx, currentDigest)
-				if err != nil {
-					if ctx.Err() != nil {
-						return ctx.Err()
-					}
-					logger.Warnf("failed to check for existing SBOM for digest %s: %s", currentDigest, err.Error())
-					// If for some reason we fail to check, we will enqueue
-					// the work as a safety net as hasExisting will be false.
-				}
-
-				if hasExisting {
-					logger.Infof("skipping enqueueing SBOM work for digest %s because SBOM already exists", currentDigest)
-				} else {
-					enqueued, err := EnqueueSBOMWork(ctx, string(payload), currentDigest)
+				for _, arch := range []string{"x86_64", "aarch64"} {
+					p := listenertypes.ExternalImageSbomPayload{Digest: currentDigest, Arch: arch, TeamID: externalImage.TeamID}
+					payload, err := json.Marshal(p)
 					if err != nil {
-						return fmt.Errorf("failed to enqueue external image SBOM work for digest %s: %w", currentDigest, err)
+						return fmt.Errorf("failed to marshal SBOM payload for digest %s arch %s: %w", currentDigest, arch, err)
+					}
+					enqueued, err := EnqueueSBOMWork(ctx, string(payload), currentDigest, arch)
+					if err != nil {
+						return fmt.Errorf("failed to enqueue external image SBOM work for digest %s arch %s: %w", currentDigest, arch, err)
 					}
 					if !enqueued {
-						logger.Infof("skipping duplicate SBOM work for digest %s because unfinished work already exists", currentDigest)
+						logger.Infof("skipping duplicate SBOM work for digest %s arch %s", currentDigest, arch)
 					}
 				}
 			}
