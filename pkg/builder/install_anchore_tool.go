@@ -19,7 +19,10 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const remoteVersionProbeTimeout = 15 * time.Second
+const (
+	localAnchoreToolInstallDir = "/usr/local/bin"
+	remoteVersionProbeTimeout  = 15 * time.Second
+)
 
 func installAnchoreTool(ctx context.Context, vm types.BuilderVM, tool anchoretool.Tool, updateGrypeDB bool) error {
 	if vm.Type == "local" {
@@ -32,6 +35,9 @@ func installAnchoreTool(ctx context.Context, vm types.BuilderVM, tool anchoretoo
 	}
 	client, err := GetSSHClient(ctx, vm)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		return fmt.Errorf("failed to get ssh client for VM %s: %w", vm.ID, err)
 	}
 	defer client.Close()
@@ -143,12 +149,12 @@ func localInstallAnchoreTool(ctx context.Context, vm types.BuilderVM, tool ancho
 		return err
 	}
 	if path, err := exec.LookPath(tool.Name); err == nil {
-		installedVersion, versionErr := localCommandCombinedOutput(ctx, tool.Name, "version")
+		installedVersion, versionErr := localCommandCombinedOutput(ctx, path, "version")
 		if versionErr == nil && anchoretool.VersionMatches(installedVersion, version) {
 			logger.Info(tool.Name+" already matches worker version, skipping install",
 				zap.String("vmID", vm.ID), zap.String("path", path), zap.String("version", version))
 			if updateGrypeDB {
-				output, updateErr := localCommandCombinedOutput(ctx, "grype", "db", "update")
+				output, updateErr := localCommandCombinedOutput(ctx, path, "db", "update")
 				if updateErr != nil {
 					return fmt.Errorf("update grype database: %w (output: %s)", updateErr, strings.TrimSpace(output))
 				}
@@ -164,7 +170,12 @@ func localInstallAnchoreTool(ctx context.Context, vm types.BuilderVM, tool ancho
 	if err := installLocalBinary(tool.Name, release.Binary); err != nil {
 		return err
 	}
-	installedVersion, err := localCommandCombinedOutput(ctx, tool.Name, "version")
+	installedPath := filepath.Join(localAnchoreToolInstallDir, tool.Name)
+	resolvedPath, err := requireLocalToolOnPath(tool.Name, installedPath)
+	if err != nil {
+		return err
+	}
+	installedVersion, err := localCommandCombinedOutput(ctx, resolvedPath, "version")
 	if err != nil {
 		return fmt.Errorf("check installed %s version: %w", tool.Name, err)
 	}
@@ -172,7 +183,7 @@ func localInstallAnchoreTool(ctx context.Context, vm types.BuilderVM, tool ancho
 		return fmt.Errorf("installed %s version does not match worker version %s: %s", tool.Name, release.Version, strings.TrimSpace(installedVersion))
 	}
 	if updateGrypeDB {
-		if output, err := localCommandCombinedOutput(ctx, "grype", "db", "update"); err != nil {
+		if output, err := localCommandCombinedOutput(ctx, resolvedPath, "db", "update"); err != nil {
 			return fmt.Errorf("update grype database: %w (output: %s)", err, strings.TrimSpace(output))
 		}
 	}
@@ -181,8 +192,27 @@ func localInstallAnchoreTool(ctx context.Context, vm types.BuilderVM, tool ancho
 	return nil
 }
 
+func requireLocalToolOnPath(name, installedPath string) (string, error) {
+	resolvedPath, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("verified %s was installed at %s, but it is not available on PATH: %w", name, installedPath, err)
+	}
+	installedInfo, err := os.Stat(installedPath)
+	if err != nil {
+		return "", fmt.Errorf("stat installed %s binary at %s: %w", name, installedPath, err)
+	}
+	resolvedInfo, err := os.Stat(resolvedPath)
+	if err != nil {
+		return "", fmt.Errorf("stat PATH-resolved %s binary at %s: %w", name, resolvedPath, err)
+	}
+	if !os.SameFile(installedInfo, resolvedInfo) {
+		return "", fmt.Errorf("verified %s was installed at %s, but PATH resolves %s; place %s before the shadowing directory", name, installedPath, resolvedPath, localAnchoreToolInstallDir)
+	}
+	return resolvedPath, nil
+}
+
 func installLocalBinary(name string, contents []byte) (err error) {
-	installDir := "/usr/local/bin"
+	installDir := localAnchoreToolInstallDir
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		return fmt.Errorf("create %s: %w", installDir, err)
 	}
