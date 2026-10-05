@@ -1,0 +1,23 @@
+securebuild-api/app/api/v1/external-image/sbom/route.test.ts
+  s_4693251c8dc40e::t_34890b47f9d20f 121-134
+securebuild-api/lib/sbom/merger.ts
+  s_4693251c8dc40e::t_30de5f63d28692 140-141,411
+securebuild-api/lib/sbom/merger.test.ts
+  s_4693251c8dc40e::t_34890b47f9d20f 55-58,558
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30eff6e16b0f357f5c4cd484222e515380c432e4",
+  "prompts": {},
+  "sessions": {
+    "s_4693251c8dc40e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10d7d-c52a-7503-aad4-80615bc06424",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Mikhail Swift <mikhail@replicated.com>"
+    }
+  }
+}
