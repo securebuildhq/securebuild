@@ -25,6 +25,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/mikesmitty/edkey"
+	"github.com/securebuildhq/securebuild/pkg/anchoretool"
 	"github.com/securebuildhq/securebuild/pkg/builder/types"
 	"github.com/securebuildhq/securebuild/pkg/dynamicparam"
 	"github.com/securebuildhq/securebuild/pkg/execution"
@@ -1302,103 +1303,11 @@ melange version
 }
 
 func installGrype(ctx context.Context, vm types.BuilderVM) error {
-	if vm.Type == "local" {
-		return localInstallGrype(ctx, vm)
-	}
-
-	logger.Trace("installing grype", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
-
-	client, err := GetSSHClient(ctx, vm)
-	if err != nil {
-		return fmt.Errorf("failed to get ssh client for VM %s: %w", vm.ID, err)
-	}
-	defer client.Close()
-
-	cmd := `
-set -e
-
-echo "Installing grype..."
-curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
-echo "Checking grype version..."
-grype version
-echo "Downloading grype vulnerability database..."
-grype db update
-`
-
-	stdoutCh := make(chan string)
-	stderrCh := make(chan string)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		for line := range stdoutCh {
-			logger.Trace("grype stdout", zap.String("vmID", vm.ID), zap.String("output", line))
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		for line := range stderrCh {
-			logger.Trace("grype stderr", zap.String("vmID", vm.ID), zap.String("output", line))
-		}
-	}()
-
-	err = RunCommand(ctx, client.Client, vm.ID, cmd, stdoutCh, stderrCh)
-	wg.Wait()
-
-	if err != nil {
-		return fmt.Errorf("failed to install grype on VM %s: %w", vm.ID, err)
-	}
-
-	return nil
+	return installAnchoreTool(ctx, vm, anchoretool.Grype, true)
 }
 
 func installSyft(ctx context.Context, vm types.BuilderVM) error {
-	if vm.Type == "local" {
-		return localInstallSyft(ctx, vm)
-	}
-
-	logger.Trace("installing syft", zap.String("vmID", vm.ID), zap.String("ipAddress", vm.IPAddress), zap.Int("port", vm.Port))
-
-	client, err := GetSSHClient(ctx, vm)
-	if err != nil {
-		return fmt.Errorf("failed to get ssh client for VM %s: %w", vm.ID, err)
-	}
-	defer client.Close()
-
-	cmd := `
-set -e
-
-echo "Installing syft..."
-curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin
-echo "Checking syft version..."
-syft version
-`
-
-	stdoutCh := make(chan string)
-	stderrCh := make(chan string)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		for line := range stdoutCh {
-			logger.Trace("syft stdout", zap.String("vmID", vm.ID), zap.String("output", line))
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		for line := range stderrCh {
-			logger.Trace("syft stderr", zap.String("vmID", vm.ID), zap.String("output", line))
-		}
-	}()
-
-	err = RunCommand(ctx, client.Client, vm.ID, cmd, stdoutCh, stderrCh)
-	wg.Wait()
-
-	if err != nil {
-		return fmt.Errorf("failed to install syft on VM %s: %w", vm.ID, err)
-	}
-
-	return nil
+	return installAnchoreTool(ctx, vm, anchoretool.Syft, false)
 }
 
 func installDocker(ctx context.Context, vm types.BuilderVM) error {

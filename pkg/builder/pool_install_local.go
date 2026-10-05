@@ -82,44 +82,6 @@ apko version
 	return runLocalInstallScript(ctx, "install apko", script)
 }
 
-func localInstallGrype(ctx context.Context, vm types.BuilderVM) error {
-	if path, err := exec.LookPath("grype"); err == nil {
-		ver, _ := localCommandCombinedOutput(ctx, "grype", "version")
-		logger.Info("grype already on PATH, skipping install",
-			zap.String("vmID", vm.ID),
-			zap.String("path", path),
-			zap.String("version", strings.TrimSpace(ver)))
-		return nil
-	}
-	script := `
-set -e
-echo "Installing grype..."
-curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
-echo "Checking grype version..."
-grype version
-`
-	return runLocalInstallScript(ctx, "install grype", script)
-}
-
-func localInstallSyft(ctx context.Context, vm types.BuilderVM) error {
-	if path, err := exec.LookPath("syft"); err == nil {
-		ver, _ := localCommandCombinedOutput(ctx, "syft", "version")
-		logger.Info("syft already on PATH, skipping install",
-			zap.String("vmID", vm.ID),
-			zap.String("path", path),
-			zap.String("version", strings.TrimSpace(ver)))
-		return nil
-	}
-	script := `
-set -e
-echo "Installing syft..."
-curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-echo "Checking syft version..."
-syft version
-`
-	return runLocalInstallScript(ctx, "install syft", script)
-}
-
 func localInstallDocker(ctx context.Context, vm types.BuilderVM) error {
 	if out, err := localCommandCombinedOutput(ctx, "docker", "--version"); err == nil {
 		logger.Info("docker already installed, skipping installation",
