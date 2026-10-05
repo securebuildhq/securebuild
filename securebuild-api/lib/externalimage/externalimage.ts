@@ -85,16 +85,16 @@ export async function listExternalImages(teamId: string): Promise<TrackedExterna
         etag.created_at,
         EXISTS(SELECT 1 FROM external_image_sbom esbom WHERE esbom.digest = etag.digest) as is_sbom_complete,
         EXISTS(SELECT 1 FROM external_image_scan escan WHERE escan.digest = etag.digest AND escan.status = 'succeeded') as is_scan_complete,
-        (
-          SELECT CASE
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'failed') THEN 'failed'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'generating') THEN 'generating'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'pending') THEN 'pending'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'succeeded') THEN 'succeeded'
-            -- If SBOM exists but no status row, infer succeeded (for backwards compatibility with SBOMs created before status tracking)
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom esbom WHERE esbom.digest = etag.digest AND esbom.arch = 'x86_64') THEN 'succeeded'
-            ELSE NULL
-          END
+        COALESCE(
+          (SELECT status FROM external_image_sbom_platform_status s
+           WHERE s.digest = etag.digest AND s.arch = 'x86_64'),
+          (SELECT status FROM external_image_sbom_status legacy
+           WHERE legacy.digest = etag.digest),
+          CASE WHEN EXISTS(
+            SELECT 1 FROM external_image_sbom esbom
+            WHERE esbom.digest = etag.digest AND esbom.arch = 'x86_64'
+              AND esbom.is_in_object_store = true
+          ) THEN 'succeeded' END
         ) as sbom_status,
         (
           SELECT CASE
@@ -582,16 +582,16 @@ export async function getExternalImageForTeam(teamId: string, registry: string, 
         etag.created_at,
         EXISTS(SELECT 1 FROM external_image_sbom esbom WHERE esbom.digest = etag.digest) as is_sbom_complete,
         EXISTS(SELECT 1 FROM external_image_scan escan WHERE escan.digest = etag.digest AND escan.status = 'succeeded') as is_scan_complete,
-        (
-          SELECT CASE
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'failed') THEN 'failed'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'generating') THEN 'generating'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'pending') THEN 'pending'
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom_platform_status s WHERE s.digest = etag.digest AND s.arch = 'x86_64' AND s.status = 'succeeded') THEN 'succeeded'
-            -- If SBOM exists but no status row, infer succeeded (for backwards compatibility with SBOMs created before status tracking)
-            WHEN EXISTS(SELECT 1 FROM external_image_sbom esbom WHERE esbom.digest = etag.digest AND esbom.arch = 'x86_64') THEN 'succeeded'
-            ELSE NULL
-          END
+        COALESCE(
+          (SELECT status FROM external_image_sbom_platform_status s
+           WHERE s.digest = etag.digest AND s.arch = 'x86_64'),
+          (SELECT status FROM external_image_sbom_status legacy
+           WHERE legacy.digest = etag.digest),
+          CASE WHEN EXISTS(
+            SELECT 1 FROM external_image_sbom esbom
+            WHERE esbom.digest = etag.digest AND esbom.arch = 'x86_64'
+              AND esbom.is_in_object_store = true
+          ) THEN 'succeeded' END
         ) as sbom_status,
         (
           SELECT CASE
