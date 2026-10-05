@@ -304,6 +304,9 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest, "x86_64")
 	require.NoError(t, err)
 	require.False(t, enqueued, "generating work must be deduplicated after dispatch completes")
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, payload, digest, "aarch64")
+	require.NoError(t, err)
+	require.True(t, enqueued, "mirrored legacy x86 generation must not suppress arm work")
 
 	_, err = testDB.Pool.Exec(ctx, `
 		UPDATE external_image_sbom_platform_status
@@ -351,6 +354,18 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 		  AND dedupe_key = $1
 	`, digest+":x86_64").Scan(&completedRowsWithKey))
 	assert.Zero(t, completedRowsWithKey, "enqueue must release keys retained by older workers")
+
+	legacyDigest := "sha256:test-sbom-legacy-generating-1234567890123456789012345678"
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image_sbom_status
+			(digest, status, created_at, updated_at, status_updated_at)
+		VALUES ($1, 'generating', NOW(), NOW(), NOW())
+	`, legacyDigest)
+	require.NoError(t, err)
+	legacyPayload := `{"digest":"` + legacyDigest + `","team_id":"team-1"}`
+	enqueued, err = externalimage.EnqueueSBOMWork(ctx, legacyPayload, legacyDigest, "aarch64")
+	require.NoError(t, err)
+	require.False(t, enqueued, "genuine legacy digest-wide generation must remain deduplicated")
 }
 
 func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {

@@ -74,10 +74,18 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest, arch string) (bool, e
 			)
 			OR EXISTS (
 				SELECT 1
-				FROM external_image_sbom_status
-				WHERE digest = $3
-				  AND status = $5
-				  AND COALESCE(status_updated_at, updated_at, created_at) > $6
+				FROM external_image_sbom_status legacy
+				WHERE legacy.digest = $3
+				  AND legacy.status = $5
+				  AND COALESCE(legacy.status_updated_at, legacy.updated_at, legacy.created_at) > $6
+				  AND NOT EXISTS (
+					SELECT 1
+					FROM external_image_sbom_platform_status platform
+					WHERE platform.digest = legacy.digest
+					  AND platform.arch = 'x86_64'
+					  AND platform.status = $5
+					  AND COALESCE(platform.status_updated_at, platform.updated_at, platform.created_at) > $6
+				  )
 			)
 			OR EXISTS (
 				SELECT 1

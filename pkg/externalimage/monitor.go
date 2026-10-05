@@ -3,6 +3,7 @@ package externalimage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -96,19 +97,25 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 				}
 
 				// queue the initial work for SBOM
+				var enqueueErrors []error
 				for _, arch := range []string{"x86_64", "aarch64"} {
 					p := listenertypes.ExternalImageSbomPayload{Digest: currentDigest, Arch: arch, TeamID: externalImage.TeamID}
 					payload, err := json.Marshal(p)
 					if err != nil {
-						return fmt.Errorf("failed to marshal SBOM payload for digest %s arch %s: %w", currentDigest, arch, err)
+						enqueueErrors = append(enqueueErrors, fmt.Errorf("failed to marshal SBOM payload for digest %s arch %s: %w", currentDigest, arch, err))
+						continue
 					}
 					enqueued, err := EnqueueSBOMWork(ctx, string(payload), currentDigest, arch)
 					if err != nil {
-						return fmt.Errorf("failed to enqueue external image SBOM work for digest %s arch %s: %w", currentDigest, arch, err)
+						enqueueErrors = append(enqueueErrors, fmt.Errorf("failed to enqueue external image SBOM work for digest %s arch %s: %w", currentDigest, arch, err))
+						continue
 					}
 					if !enqueued {
 						logger.Infof("skipping duplicate SBOM work for digest %s arch %s", currentDigest, arch)
 					}
+				}
+				if len(enqueueErrors) > 0 {
+					return errors.Join(enqueueErrors...)
 				}
 			}
 		}
