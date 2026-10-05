@@ -1,7 +1,9 @@
 package builder
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -67,21 +69,18 @@ func installAnchoreTool(ctx context.Context, vm types.BuilderVM, tool anchoretoo
 			return fmt.Errorf("load verified %s release: %w", tool.Name, err)
 		}
 
-		remoteTempPath := fmt.Sprintf("/tmp/securebuild-%s-%s", tool.Name, release.Version)
-		if err := CreateRemoteBinaryFile(client.Client, remoteTempPath, release.Binary); err != nil {
-			return fmt.Errorf("upload verified %s binary to VM %s: %w", tool.Name, vm.ID, err)
+		if err := installRemoteVerifiedBinary(ctx, client.Client, vm.ID, tool.Name, release.Binary); err != nil {
+			return fmt.Errorf("install verified %s binary on VM %s: %w", tool.Name, vm.ID, err)
 		}
-		command := fmt.Sprintf(`
+		validationCommand := fmt.Sprintf(`
 set -e
-trap 'rm -f %[1]s' EXIT
-sudo install -m 0755 %[1]s /usr/local/bin/%[2]s
-installed_version="$(%[2]s version)"
+installed_version="$(%[1]s version)"
 printf '%%s\n' "$installed_version"
 actual_version="$(printf '%%s\n' "$installed_version" | awk -F ': *' 'tolower($1) == "version" {sub(/^v/, "", $2); print $2}')"
-test "$actual_version" = %[3]q
-`, remoteTempPath, tool.Name, release.Version)
-		if err := runRemoteInstallCommand(ctx, client.Client, vm.ID, tool.Name, command); err != nil {
-			return fmt.Errorf("install verified %s on VM %s: %w", tool.Name, vm.ID, err)
+test "$actual_version" = %[2]q
+`, filepath.Join(localAnchoreToolInstallDir, tool.Name), release.Version)
+		if err := runRemoteInstallCommand(ctx, client.Client, vm.ID, tool.Name, validationCommand); err != nil {
+			return fmt.Errorf("validate installed %s on VM %s: %w", tool.Name, vm.ID, err)
 		}
 		logger.Info("installed verified Anchore tool",
 			zap.String("vmID", vm.ID), zap.String("tool", tool.Name), zap.String("version", release.Version))
@@ -93,6 +92,66 @@ test "$actual_version" = %[3]q
 		}
 	}
 	return nil
+}
+
+func installRemoteVerifiedBinary(ctx context.Context, client *ssh.Client, vmID, name string, contents []byte) error {
+	digest := fmt.Sprintf("%x", sha256.Sum256(contents))
+	command := remoteVerifiedBinaryInstallCommand(name, digest)
+	logger.Trace("streaming verified Anchore binary to root-owned staging file",
+		zap.String("vmID", vmID), zap.String("tool", name), zap.String("sha256", digest))
+
+	session, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("create SSH install session: %w: %w", ErrSSH, err)
+	}
+	defer session.Close()
+	session.Stdin = bytes.NewReader(contents)
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			session.Close()
+		case <-done:
+		}
+	}()
+
+	output, err := session.CombinedOutput(command)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if err != nil {
+		return fmt.Errorf("stream and atomically install binary: %w (output: %s)", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func remoteVerifiedBinaryInstallCommand(name, digest string) string {
+	destination := filepath.Join(localAnchoreToolInstallDir, name)
+	return verifiedBinaryInstallCommand(destination, digest)
+}
+
+func verifiedBinaryInstallCommand(destination, digest string) string {
+	return fmt.Sprintf(`sudo sh -c '
+set -eu
+destination="$1"
+expected="$2"
+mkdir -p "$(dirname "$destination")"
+staged="$(mktemp "${destination}.securebuild.XXXXXX")"
+cleanup() {
+  if [ -n "${staged:-}" ]; then
+    rm -f "$staged"
+  fi
+}
+trap cleanup EXIT
+cat > "$staged"
+actual="$(sha256sum "$staged" | cut -d " " -f 1)"
+test "$actual" = "$expected"
+chmod 0755 "$staged"
+mv -f "$staged" "$destination"
+staged=""
+' securebuild-install %q %q`, destination, digest)
 }
 
 func runRemoteInstallCommand(ctx context.Context, client *ssh.Client, vmID, toolName, command string) error {
