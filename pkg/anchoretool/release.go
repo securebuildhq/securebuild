@@ -48,10 +48,17 @@ type Release struct {
 	Version string
 }
 
+type releaseLoad struct {
+	done    chan struct{}
+	release Release
+	err     error
+}
+
 var (
 	releaseHTTPClient = &http.Client{Timeout: 2 * time.Minute}
 	releaseCacheMu    sync.Mutex
 	releaseCache      = map[string]Release{}
+	releaseLoads      = map[string]*releaseLoad{}
 )
 
 // Version returns the version of an Anchore CLI from the worker's Go build
@@ -89,18 +96,40 @@ func Load(ctx context.Context, tool Tool, goos, goarch string) (Release, error) 
 	}
 
 	cacheKey := tool.Name + "/" + version + "/" + goos + "/" + goarch
+	return loadCachedRelease(ctx, cacheKey, func(ctx context.Context) (Release, error) {
+		return loadRelease(ctx, tool, version, asset)
+	})
+}
+
+func loadCachedRelease(ctx context.Context, cacheKey string, loader func(context.Context) (Release, error)) (Release, error) {
 	releaseCacheMu.Lock()
-	defer releaseCacheMu.Unlock()
 	if cached, ok := releaseCache[cacheKey]; ok {
+		releaseCacheMu.Unlock()
 		return cached, nil
 	}
-
-	release, err := loadRelease(ctx, tool, version, asset)
-	if err != nil {
-		return Release{}, err
+	if active, ok := releaseLoads[cacheKey]; ok {
+		releaseCacheMu.Unlock()
+		select {
+		case <-active.done:
+			return active.release, active.err
+		case <-ctx.Done():
+			return Release{}, ctx.Err()
+		}
 	}
-	releaseCache[cacheKey] = release
-	return release, nil
+	active := &releaseLoad{done: make(chan struct{})}
+	releaseLoads[cacheKey] = active
+	releaseCacheMu.Unlock()
+
+	active.release, active.err = loader(ctx)
+
+	releaseCacheMu.Lock()
+	delete(releaseLoads, cacheKey)
+	if active.err == nil {
+		releaseCache[cacheKey] = active.release
+	}
+	close(active.done)
+	releaseCacheMu.Unlock()
+	return active.release, active.err
 }
 
 func loadRelease(ctx context.Context, tool Tool, version, asset string) (Release, error) {

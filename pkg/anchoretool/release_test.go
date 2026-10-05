@@ -4,13 +4,106 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLoadCachedReleaseDeduplicatesSameKey(t *testing.T) {
+	gate := make(chan struct{})
+	started := make(chan struct{}, 1)
+	var calls atomic.Int32
+	loader := func(context.Context) (Release, error) {
+		calls.Add(1)
+		started <- struct{}{}
+		<-gate
+		return Release{Version: "1.0.0"}, nil
+	}
+
+	type result struct {
+		release Release
+		err     error
+	}
+	results := make(chan result, 2)
+	load := func() {
+		release, err := loadCachedRelease(context.Background(), t.Name(), loader)
+		results <- result{release: release, err: err}
+	}
+	go load()
+	<-started
+	go load()
+	close(gate)
+
+	for range 2 {
+		result := <-results
+		require.NoError(t, result.err)
+		assert.Equal(t, "1.0.0", result.release.Version)
+	}
+	assert.EqualValues(t, 1, calls.Load())
+}
+
+func TestLoadCachedReleaseAllowsDifferentKeysConcurrently(t *testing.T) {
+	gate := make(chan struct{})
+	started := make(chan struct{}, 2)
+	finished := make(chan struct{}, 2)
+	loader := func(context.Context) (Release, error) {
+		started <- struct{}{}
+		<-gate
+		return Release{}, nil
+	}
+
+	for _, suffix := range []string{"grype", "syft"} {
+		go func(key string) {
+			_, _ = loadCachedRelease(context.Background(), t.Name()+key, loader)
+			finished <- struct{}{}
+		}(suffix)
+	}
+
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for range 2 {
+		select {
+		case <-started:
+		case <-timer.C:
+			close(gate)
+			t.Fatal("different cache keys did not load concurrently")
+		}
+	}
+	close(gate)
+	<-finished
+	<-finished
+}
+
+func TestLoadCachedReleaseWaiterCanCancel(t *testing.T) {
+	gate := make(chan struct{})
+	started := make(chan struct{})
+	leaderDone := make(chan struct{})
+	go func() {
+		_, _ = loadCachedRelease(context.Background(), t.Name(), func(context.Context) (Release, error) {
+			close(started)
+			<-gate
+			return Release{}, nil
+		})
+		close(leaderDone)
+	}()
+	<-started
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := loadCachedRelease(ctx, t.Name(), func(context.Context) (Release, error) {
+		t.Fatal("waiter unexpectedly started another load")
+		return Release{}, nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	close(gate)
+	<-leaderDone
+}
 
 func TestChecksumForAsset(t *testing.T) {
 	digest := sha256.Sum256([]byte("archive"))

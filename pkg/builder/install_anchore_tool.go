@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/securebuildhq/securebuild/pkg/anchoretool"
 	"github.com/securebuildhq/securebuild/pkg/builder/types"
@@ -16,6 +18,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/crypto/ssh"
 )
+
+const remoteVersionProbeTimeout = 15 * time.Second
 
 func installAnchoreTool(ctx context.Context, vm types.BuilderVM, tool anchoretool.Tool, updateGrypeDB bool) error {
 	if vm.Type == "local" {
@@ -32,7 +36,18 @@ func installAnchoreTool(ctx context.Context, vm types.BuilderVM, tool anchoretoo
 	}
 	defer client.Close()
 
-	installedVersion, versionErr := remoteCommandCombinedOutput(client.Client, tool.Name+" version")
+	probeCtx, cancelProbe := context.WithTimeout(ctx, remoteVersionProbeTimeout)
+	probeCommand := fmt.Sprintf("if command -v %[1]s >/dev/null 2>&1; then %[1]s version; fi", tool.Name)
+	installedVersion, versionErr := runRemoteCommand(probeCtx, client.Client, vm.ID, tool.Name, probeCommand)
+	probeContextErr := probeCtx.Err()
+	cancelProbe()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(probeContextErr, context.DeadlineExceeded) {
+		logger.Warn(tool.Name+" version probe timed out; replacing the existing binary",
+			zap.String("vmID", vm.ID), zap.Duration("timeout", remoteVersionProbeTimeout))
+	}
 	if versionErr == nil && anchoretool.VersionMatches(installedVersion, version) {
 		logger.Info(tool.Name+" already matches worker version, skipping install",
 			zap.String("vmID", vm.ID), zap.String("version", version))
@@ -75,35 +90,40 @@ test "$actual_version" = %[3]q
 }
 
 func runRemoteInstallCommand(ctx context.Context, client *ssh.Client, vmID, toolName, command string) error {
+	_, err := runRemoteCommand(ctx, client, vmID, toolName, command)
+	return err
+}
+
+func runRemoteCommand(ctx context.Context, client *ssh.Client, vmID, toolName, command string) (string, error) {
 	stdoutCh := make(chan string)
 	stderrCh := make(chan string)
+	var stdout strings.Builder
+	var stderr strings.Builder
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		for line := range stdoutCh {
 			logger.Trace(toolName+" stdout", zap.String("vmID", vmID), zap.String("output", line))
+			stdout.WriteString(line)
+			stdout.WriteByte('\n')
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		for line := range stderrCh {
 			logger.Trace(toolName+" stderr", zap.String("vmID", vmID), zap.String("output", line))
+			stderr.WriteString(line)
+			stderr.WriteByte('\n')
 		}
 	}()
 	err := RunCommand(ctx, client, vmID, command, stdoutCh, stderrCh)
 	wg.Wait()
-	return err
-}
-
-func remoteCommandCombinedOutput(client *ssh.Client, command string) (string, error) {
-	session, err := client.NewSession()
-	if err != nil {
-		return "", err
+	combinedOutput := stdout.String() + stderr.String()
+	if err != nil && stderr.Len() > 0 {
+		return combinedOutput, fmt.Errorf("%w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
 	}
-	defer session.Close()
-	output, err := session.CombinedOutput(command)
-	return string(output), err
+	return combinedOutput, err
 }
 
 func builderArchitectureToGoArch(architecture string) (string, error) {
