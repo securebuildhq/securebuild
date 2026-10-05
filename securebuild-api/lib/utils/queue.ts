@@ -130,6 +130,13 @@ async function enqueueExternalImageSBOMPlatformWork(
          )
          OR EXISTS (
            SELECT 1
+           FROM external_image_sbom_status
+           WHERE digest = $2
+             AND status = 'generating'
+             AND COALESCE(status_updated_at, updated_at, created_at) > $4
+         )
+         OR EXISTS (
+           SELECT 1
            FROM external_image_sbom
            WHERE digest = $2 AND arch = $3
          ) AS blocked`,

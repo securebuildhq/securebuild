@@ -71,6 +71,13 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest, arch string) (bool, e
 			)
 			OR EXISTS (
 				SELECT 1
+				FROM external_image_sbom_status
+				WHERE digest = $3
+				  AND status = $5
+				  AND COALESCE(status_updated_at, updated_at, created_at) > $6
+			)
+			OR EXISTS (
+				SELECT 1
 				FROM external_image_sbom
 				WHERE digest = $3 AND arch = $4
 			)
