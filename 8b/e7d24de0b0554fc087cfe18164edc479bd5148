@@ -1,0 +1,24 @@
+pkg/builder/install_anchore_tool.go
+  s_4217ef0868f593::t_6a89a2e23efdb3 38-40,152,157,174-178,186,195-208,210-211
+  s_4217ef0868f593::t_5c9f2e733e1267 22-25,173,209,215
+  s_4217ef0868f593::t_b1a2221b2992b7 212-213
+pkg/builder/install_anchore_tool_test.go
+  s_4217ef0868f593::t_6a89a2e23efdb3 4-5,12-49
+  s_4217ef0868f593::t_5326e059ddc123 50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8be7d24de0b0554fc087cfe18164edc479bd5148",
+  "prompts": {},
+  "sessions": {
+    "s_4217ef0868f593": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10c32-38b7-7a40-a768-f686e13828db",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
