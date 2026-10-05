@@ -1,0 +1,21 @@
+securebuild-api/app/api/v1/external-image/sbom/route.test.ts
+  s_4693251c8dc40e::t_69fdba852e308b 1-132
+securebuild-api/app/api/v1/external-image/sbom/route.ts
+  s_4693251c8dc40e::t_dfaf67b9ab527d 170-173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "573d6b2f7f81bb4dd4c3389cc634b5a830ebb8b8",
+  "prompts": {},
+  "sessions": {
+    "s_4693251c8dc40e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10d7d-c52a-7503-aad4-80615bc06424",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Mikhail Swift <mikhail@replicated.com>"
+    }
+  }
+}
