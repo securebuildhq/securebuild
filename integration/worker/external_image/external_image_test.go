@@ -275,6 +275,8 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 	require.NoError(t, err)
 	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
 		filepath.Join(projectRoot, "db", "schema", "tables"), false))
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
+		filepath.Join(projectRoot, "integration", "worker", "external_image", "testdata", "sbom-enqueue"), true))
 
 	ctx, err = param.Init(param.InitSourceEnvironment, map[string]string{"DB_URI": testDB.ConnStr})
 	require.NoError(t, err)
@@ -370,18 +372,6 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 
 	legacyQueuedDigest := "sha256:test-sbom-legacy-queued-12345678901234567890123456789012"
 	legacyQueuedPayload := `{"digest":"` + legacyQueuedDigest + `","team_id":"team-1"}`
-	_, err = testDB.Pool.Exec(ctx, `
-		INSERT INTO external_image (registry, image_name, created_at)
-		VALUES ('registry.example.com', 'legacy/image', NOW())
-		ON CONFLICT (registry, image_name) DO NOTHING
-	`)
-	require.NoError(t, err)
-	_, err = testDB.Pool.Exec(ctx, `
-		INSERT INTO external_image_tag
-			(registry, image_name, image_tag, digest, created_at, next_check_digest_at, next_scan_at)
-		VALUES ('registry.example.com', 'legacy/image', 'latest', $1, NOW(), NOW(), NOW())
-	`, legacyQueuedDigest)
-	require.NoError(t, err)
 	_, err = testDB.Pool.Exec(ctx, `
 		INSERT INTO work_queue (id, channel, payload, dedupe_key, created_at, priority)
 		VALUES ('legacy-sbom-work', 'external_image_sbom', $1, $2, NOW(), 0)

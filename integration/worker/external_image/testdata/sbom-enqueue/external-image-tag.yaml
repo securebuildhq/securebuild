@@ -1,0 +1,28 @@
+database: securebuild
+name: external_image_tag
+requires:
+  - external-image
+seedData:
+  rows:
+    - columns:
+        - column: registry
+          value:
+            str: "registry.example.com"
+        - column: image_name
+          value:
+            str: "legacy/image"
+        - column: image_tag
+          value:
+            str: "latest"
+        - column: digest
+          value:
+            str: "sha256:test-sbom-legacy-queued-12345678901234567890123456789012"
+        - column: created_at
+          value:
+            str: "2026-10-06T00:00:00Z"
+        - column: next_check_digest_at
+          value:
+            str: "2026-10-07T00:00:00Z"
+        - column: next_scan_at
+          value:
+            str: "2026-10-07T00:00:00Z"
