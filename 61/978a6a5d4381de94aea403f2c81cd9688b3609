@@ -1,0 +1,21 @@
+pkg/listener/external-image-sbom.go
+  s_9d46a6fc3edeb8::t_e040726bcac8f8 72-74,80-85,90-95
+pkg/listener/external-image-sbom_test.go
+  s_9d46a6fc3edeb8::t_e040726bcac8f8 1-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61978a6a5d4381de94aea403f2c81cd9688b3609",
+  "prompts": {},
+  "sessions": {
+    "s_9d46a6fc3edeb8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cf6-6594-7602-85d1-c2da21371049",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
