@@ -50,6 +50,10 @@ export async function POST(request: NextRequest) {
 
     await upsertExternalImage(parsed.registry, parsed.repository, parsed.tag, digest, credentials?.username, credentials?.password, teamId)
 
+    if (descriptor.architectures.length === 0) {
+      console.warn(`External image ${image_url} has no supported SBOM architectures; tracking it without enqueueing work`)
+    }
+
     // Only enqueue SBOM work if needed (no existing SBOM)
     // This prevents duplicate work items and unnecessary processing
     // Note: scan_attempted_at will be set when the scan starts (SetScanStatusRunning in Go)

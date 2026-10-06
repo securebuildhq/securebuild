@@ -44,3 +44,13 @@ func TestSupportedArchitecture(t *testing.T) {
 		assert.Equal(t, tt.ok, ok)
 	}
 }
+
+func TestSupportedIndexArchitecturesAllowsUnsupportedOnlyImages(t *testing.T) {
+	manifest := &v1.IndexManifest{Manifests: []v1.Descriptor{
+		{Platform: &v1.Platform{OS: "linux", Architecture: "arm", Variant: "v7"}},
+		{Platform: &v1.Platform{OS: "linux", Architecture: "ppc64le"}},
+		{Platform: &v1.Platform{OS: "windows", Architecture: "amd64"}},
+	}}
+
+	assert.Empty(t, supportedIndexArchitectures(manifest))
+}

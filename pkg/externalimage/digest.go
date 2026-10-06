@@ -83,9 +83,6 @@ func getImageDescriptor(ctx context.Context, refStr, registryHost, username, pas
 		return nil, fmt.Errorf("unsupported image descriptor media type %q", desc.MediaType)
 	}
 
-	if len(architectures) == 0 {
-		return nil, fmt.Errorf("image has no supported linux/amd64 or linux/arm64 platform")
-	}
 	return &ImageDescriptor{Digest: desc.Digest.String(), Architectures: architectures}, nil
 }
 

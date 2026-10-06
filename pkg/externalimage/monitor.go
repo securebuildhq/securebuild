@@ -91,6 +91,13 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 			// Mark this tag as successfully checked
 			successfulTags = append(successfulTags, tag)
 			currentDigest := descriptor.Digest
+			if len(descriptor.Architectures) == 0 {
+				logger.Info("external image has no supported SBOM architectures; tracking digest without enqueueing work",
+					zap.String("registry", externalImage.Registry),
+					zap.String("image_name", externalImage.ImageName),
+					zap.String("tag", tag),
+					zap.String("digest", currentDigest))
+			}
 
 			if currentDigest != externalImage.Digest {
 				if err := AddExternalImage(ctx, externalImage.Registry, externalImage.ImageName, tag, currentDigest, username, password); err != nil {

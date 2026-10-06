@@ -239,4 +239,26 @@ describe('getImageDigest OCI support', () => {
     expect(mockedRegistryCall).toHaveBeenCalledTimes(1);
     expect(mockedGetImageConfig).not.toHaveBeenCalled();
   });
+
+  test('returns the digest without architectures for an unsupported-only index', async () => {
+    mockedRegistryCall.mockResolvedValue(registryResponse({
+      schemaVersion: 2,
+      mediaType: 'application/vnd.oci.image.index.v1+json',
+      manifests: [
+        { platform: { os: 'linux', architecture: 'arm', variant: 'v7' } },
+        { platform: { os: 'linux', architecture: 'ppc64le' } },
+        { platform: { os: 'windows', architecture: 'amd64' } },
+      ],
+    }, 'application/vnd.oci.image.index.v1+json', 'sha256:unsupported-index'));
+
+    await expect(getImageDescriptor({
+      registry: 'ghcr.io',
+      repository: 'test/image',
+      tag: 'unsupported',
+    })).resolves.toEqual({
+      digest: 'sha256:unsupported-index',
+      architectures: [],
+    });
+    expect(mockedGetImageConfig).not.toHaveBeenCalled();
+  });
 });

@@ -112,6 +112,13 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		if err != nil {
 			return err
 		}
+		if len(architectures) == 0 {
+			logger.Info("discarding legacy SBOM work: image has no supported architectures",
+				zap.String("digest", p.Digest),
+				zap.String("registry", externalImage.Registry),
+				zap.String("image_name", externalImage.ImageName))
+			return nil
+		}
 		for _, arch := range architectures {
 			platformPayload := p
 			platformPayload.Arch = arch

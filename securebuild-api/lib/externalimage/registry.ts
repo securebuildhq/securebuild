@@ -351,9 +351,6 @@ export async function getImageDescriptor(
 
     const architectures = architectureOrder
       .filter(architecture => discoveredArchitectures.has(architecture));
-    if (architectures.length === 0) {
-      throw new Error('Image has no supported linux/amd64 or linux/arm64 platform');
-    }
 
     if (!hideLogs) {
       console.log(`Retrieved digest ${digest} for architectures: ${architectures.join(', ')}`);
