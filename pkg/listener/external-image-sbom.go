@@ -69,15 +69,30 @@ func getScanExternalImageFunc(ctx context.Context) func(context.Context, string)
 }
 
 func resolveExternalImageArchitectures(ctx context.Context, p types.ExternalImageSbomPayload, externalImage *extimgtypes.ExternalImage) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if f, ok := ctx.Value(resolveExternalImageArchitecturesKey).(func(context.Context, types.ExternalImageSbomPayload, *extimgtypes.ExternalImage) ([]string, error)); ok {
 		return f(ctx, p, externalImage)
 	}
 	username, password, err := externalimage.GetExternalImageCredentials(ctx, p.TeamID, externalImage.Registry, externalImage.ImageName)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("failed to get external image credentials: %w", err)
 	}
 	descriptor, err := externalimage.GetImageDescriptorForDigest(ctx, externalImage.Registry, externalImage.ImageName, p.Digest, username, password)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("failed to resolve external image platforms: %w", err)
 	}
 	return descriptor.Architectures, nil
