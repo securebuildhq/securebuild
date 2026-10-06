@@ -279,7 +279,8 @@ export async function listExternalSBOMStatuses(
         ELSE 3
       END,
       s.updated_at DESC NULLS LAST,
-      s.digest
+      s.digest,
+      s.arch
     LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
   `,
     [...queryParams, String(limit), String(offset)]

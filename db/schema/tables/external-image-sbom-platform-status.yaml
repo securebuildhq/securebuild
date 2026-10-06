@@ -5,6 +5,19 @@ schema:
     primaryKey:
     - digest
     - arch
+    indexes:
+    - name: external_image_sbom_platform_status_created_at_idx
+      columns:
+      - created_at
+    - name: external_image_sbom_platform_status_status_updated_at_idx
+      columns:
+      - status_updated_at
+    - name: external_image_sbom_platform_status_status_updated_idx
+      columns:
+      - status
+      - updated_at
+      - digest
+      - arch
     columns:
     - name: digest
       type: text
