@@ -25,8 +25,9 @@ import (
 type contextKey string
 
 const (
-	fetchSBOMFuncKey         contextKey = "fetchSBOMFunc"
-	scanExternalImageFuncKey contextKey = "scanExternalImageFunc"
+	fetchSBOMFuncKey                     contextKey = "fetchSBOMFunc"
+	scanExternalImageFuncKey             contextKey = "scanExternalImageFunc"
+	resolveExternalImageArchitecturesKey contextKey = "resolveExternalImageArchitectures"
 )
 
 // WithMockFetchSBOM returns a context that carries a mock SBOM fetch function.
@@ -39,6 +40,12 @@ func WithMockFetchSBOM(ctx context.Context, mock func(context.Context, string, s
 // Each caller gets its own isolated mock, making parallel tests safe.
 func WithMockScanExternalImage(ctx context.Context, mock func(context.Context, string) (map[string]string, error)) context.Context {
 	return context.WithValue(ctx, scanExternalImageFuncKey, mock)
+}
+
+// WithMockResolveExternalImageArchitectures replaces registry platform
+// discovery for tests that exercise legacy architecture-less queue items.
+func WithMockResolveExternalImageArchitectures(ctx context.Context, mock func(context.Context, types.ExternalImageSbomPayload, *extimgtypes.ExternalImage) ([]string, error)) context.Context {
+	return context.WithValue(ctx, resolveExternalImageArchitecturesKey, mock)
 }
 
 // getFetchSBOMFunc returns the SBOM fetch function from the context if injected,
@@ -61,6 +68,36 @@ func getScanExternalImageFunc(ctx context.Context) func(context.Context, string)
 	return scan.ScanExternalImage
 }
 
+func resolveExternalImageArchitectures(ctx context.Context, p types.ExternalImageSbomPayload, externalImage *extimgtypes.ExternalImage) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if f, ok := ctx.Value(resolveExternalImageArchitecturesKey).(func(context.Context, types.ExternalImageSbomPayload, *extimgtypes.ExternalImage) ([]string, error)); ok {
+		return f(ctx, p, externalImage)
+	}
+	username, password, err := externalimage.GetExternalImageCredentials(ctx, p.TeamID, externalImage.Registry, externalImage.ImageName)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("failed to get external image credentials: %w", err)
+	}
+	descriptor, err := externalimage.GetImageDescriptorForDigest(ctx, externalImage.Registry, externalImage.ImageName, p.Digest, username, password)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("failed to resolve external image platforms: %w", err)
+	}
+	return descriptor.Architectures, nil
+}
+
 // HandleExternalImageSbom processes an external image SBOM generation request.
 // In production, it dispatches SBOM generation to a builder VM (syft runs
 // async via nohup, results collected by the poller). When a mock SBOM fetch
@@ -75,8 +112,29 @@ func getScanExternalImageFunc(ctx context.Context) func(context.Context, string)
 func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPayload) error {
 	attempt, maxAttempts := GetAttemptInfo(ctx)
 	logger.Info("HandleExternalImageSbom", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
+
+	externalImage, err := externalimage.GetExternalImageForDigest(ctx, p.Digest)
+	if err != nil {
+		if errors.Is(err, externalimage.ErrExternalImageNotFound) {
+			telemetry.Increment(telemetry.MetricExternalImageSBOMFailed, []string{telemetry.TagChannelExternalImageSBOM, externalimage.ReasonForDatadogMetric(err)})
+			return NewNonRetryableError(err)
+		}
+		return fmt.Errorf("failed to get external image: %w", err)
+	}
+
 	if p.Arch == "" {
-		for _, arch := range []string{"x86_64", "aarch64"} {
+		architectures, err := resolveExternalImageArchitectures(ctx, p, externalImage)
+		if err != nil {
+			return err
+		}
+		if len(architectures) == 0 {
+			logger.Info("discarding legacy SBOM work: image has no supported architectures",
+				zap.String("digest", p.Digest),
+				zap.String("registry", externalImage.Registry),
+				zap.String("image_name", externalImage.ImageName))
+			return nil
+		}
+		for _, arch := range architectures {
 			platformPayload := p
 			platformPayload.Arch = arch
 			payloadJSON, err := json.Marshal(platformPayload)
@@ -88,15 +146,6 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 			}
 		}
 		return nil
-	}
-
-	externalImage, err := externalimage.GetExternalImageForDigest(ctx, p.Digest)
-	if err != nil {
-		if errors.Is(err, externalimage.ErrExternalImageNotFound) {
-			telemetry.Increment(telemetry.MetricExternalImageSBOMFailed, []string{telemetry.TagChannelExternalImageSBOM, externalimage.ReasonForDatadogMetric(err)})
-			return NewNonRetryableError(err)
-		}
-		return fmt.Errorf("failed to get external image: %w", err)
 	}
 
 	currentExists, err := externalimage.HasExternalImageSBOMForArch(ctx, p.Digest, p.Arch)

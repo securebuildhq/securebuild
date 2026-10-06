@@ -71,7 +71,7 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 
 		// Check each tag individually since each tag can have a different digest
 		for _, tag := range externalImage.Tags {
-			currentDigest, err := GetImageDigest(ctx, externalImage.Registry, externalImage.ImageName, tag, username, password)
+			descriptor, err := GetImageDescriptor(ctx, externalImage.Registry, externalImage.ImageName, tag, username, password)
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -90,6 +90,14 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 
 			// Mark this tag as successfully checked
 			successfulTags = append(successfulTags, tag)
+			currentDigest := descriptor.Digest
+			if len(descriptor.Architectures) == 0 {
+				logger.Info("external image has no supported SBOM architectures; tracking digest without enqueueing work",
+					zap.String("registry", externalImage.Registry),
+					zap.String("image_name", externalImage.ImageName),
+					zap.String("tag", tag),
+					zap.String("digest", currentDigest))
+			}
 
 			if currentDigest != externalImage.Digest {
 				if err := AddExternalImage(ctx, externalImage.Registry, externalImage.ImageName, tag, currentDigest, username, password); err != nil {
@@ -98,7 +106,7 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 
 				// queue the initial work for SBOM
 				var enqueueErrors []error
-				for _, arch := range []string{"x86_64", "aarch64"} {
+				for _, arch := range descriptor.Architectures {
 					p := listenertypes.ExternalImageSbomPayload{Digest: currentDigest, Arch: arch, TeamID: externalImage.TeamID}
 					payload, err := json.Marshal(p)
 					if err != nil {

@@ -62,11 +62,8 @@ describe('POST/GET /api/v1/external-image', () => {
            AND payload->>'digest' = $1`,
         [createdDigest],
       );
-      expect(result.rows[0].count).toBe(2);
-      expect(result.rows[0].dedupe_keys).toEqual([
-        `${createdDigest}:aarch64`,
-        `${createdDigest}:x86_64`,
-      ]);
+      expect(result.rows[0].count).toBe(1);
+      expect(result.rows[0].dedupe_keys).toEqual([`${createdDigest}:x86_64`]);
 
       // Dispatch completion releases the queue key before asynchronous Syft
       // generation completes. The generating status must still suppress a
@@ -121,7 +118,7 @@ describe('POST/GET /api/v1/external-image', () => {
             WHERE digest = $1 AND arch = 'x86_64') AS status`,
         [createdDigest],
       );
-      expect(recoveredGeneration.rows[0].count).toBe(2);
+      expect(recoveredGeneration.rows[0].count).toBe(1);
       expect(recoveredGeneration.rows[0].status).toBe('pending');
 
       const retainedCompletedKeys = await env.dbPool.query(
@@ -143,10 +140,9 @@ describe('POST/GET /api/v1/external-image', () => {
       const data = res.data as Record<string, unknown>;
       expect(data.digest).toBe(createdDigest);
       expect(data.sbom_status).toBe('pending');
-      expect(data.sbom_statuses).toEqual(expect.arrayContaining([
+      expect(data.sbom_statuses).toEqual([
         expect.objectContaining({ arch: 'x86_64', status: 'pending' }),
-        expect.objectContaining({ arch: 'aarch64', status: 'pending' }),
-      ]));
+      ]);
       expect(data.scan_status).toBeDefined();
       expect(Array.isArray(data.platforms)).toBe(true);
     });
@@ -230,7 +226,7 @@ describe('POST/GET /api/v1/external-image', () => {
       expect(adopted.rows).toEqual([{ status: 'succeeded' }]);
     });
 
-    it('attempts arm64 when the x86_64 enqueue transaction fails', async () => {
+    it('attempts every discovered platform when one enqueue transaction fails', async () => {
       await env.dbPool.query(
         `DELETE FROM work_queue
          WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1`,
@@ -260,12 +256,15 @@ describe('POST/GET /api/v1/external-image', () => {
         FOR EACH ROW EXECUTE FUNCTION reject_x86_sbom_platform_status()
       `);
 
+      const previousDBURI = process.env.DB_URI;
       try {
-        const response = await env.client.post('/api/v1/external-image', {
-          image_url: env.createImage,
-        });
-        expect(response.status).toBe(500);
-
+        process.env.DB_URI = env.connectionString;
+        const { enqueueExternalImageSBOMWork } = await import('@/lib/utils/queue');
+        await expect(enqueueExternalImageSBOMWork(
+          { digest: createdDigest, team_id: SEED_TEAM_ID },
+          createdDigest,
+          ['x86_64', 'aarch64'],
+        )).rejects.toBeInstanceOf(AggregateError);
         const activeWork = await env.dbPool.query(
           `SELECT dedupe_key, payload->>'arch' AS arch
            FROM work_queue
@@ -279,6 +278,11 @@ describe('POST/GET /api/v1/external-image', () => {
           { dedupe_key: `${createdDigest}:aarch64`, arch: 'aarch64' },
         ]);
       } finally {
+        if (previousDBURI === undefined) {
+          delete process.env.DB_URI;
+        } else {
+          process.env.DB_URI = previousDBURI;
+        }
         await env.dbPool.query(
           `DROP TRIGGER reject_x86_sbom_platform_status ON external_image_sbom_platform_status`,
         );

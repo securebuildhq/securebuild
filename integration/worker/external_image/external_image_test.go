@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/securebuildhq/securebuild/integration/testutil"
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
+	externalimagetypes "github.com/securebuildhq/securebuild/pkg/externalimage/types"
 	"github.com/securebuildhq/securebuild/pkg/listener"
 	listenertypes "github.com/securebuildhq/securebuild/pkg/listener/types"
 	"github.com/securebuildhq/securebuild/pkg/param"
@@ -274,6 +275,8 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 	require.NoError(t, err)
 	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
 		filepath.Join(projectRoot, "db", "schema", "tables"), false))
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
+		filepath.Join(projectRoot, "integration", "worker", "external_image", "testdata", "sbom-enqueue"), true))
 
 	ctx, err = param.Init(param.InitSourceEnvironment, map[string]string{"DB_URI": testDB.ConnStr})
 	require.NoError(t, err)
@@ -386,7 +389,11 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 		require.NoError(t, err)
 		require.False(t, enqueued, "legacy queued work must suppress normal platform enqueue")
 	}
-	require.NoError(t, listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{
+	legacyExpansionCtx := listener.WithMockResolveExternalImageArchitectures(ctx,
+		func(context.Context, listenertypes.ExternalImageSbomPayload, *externalimagetypes.ExternalImage) ([]string, error) {
+			return []string{"x86_64"}, nil
+		})
+	require.NoError(t, listener.HandleExternalImageSbom(legacyExpansionCtx, listenertypes.ExternalImageSbomPayload{
 		Digest: legacyQueuedDigest,
 		TeamID: "team-1",
 	}))
@@ -399,9 +406,8 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 		  AND dedupe_key LIKE $1
 	`, legacyQueuedDigest+":%").Scan(&expandedKeys))
 	assert.Equal(t, []string{
-		legacyQueuedDigest + ":aarch64",
 		legacyQueuedDigest + ":x86_64",
-	}, expandedKeys, "a new worker must expand the legacy parent into both platform jobs")
+	}, expandedKeys, "a new worker must expand the legacy parent into only the discovered platform jobs")
 }
 
 func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {

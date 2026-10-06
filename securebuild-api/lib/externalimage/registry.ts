@@ -1,5 +1,7 @@
 
-import { getManifest } from '@snyk/docker-registry-v2-client';
+import { createHash } from 'crypto';
+import { contentTypes, getImageConfig, registryCall, validation } from '@snyk/docker-registry-v2-client';
+import type { types } from '@snyk/docker-registry-v2-client';
 import { ECRClient, GetAuthorizationTokenCommand } from '@aws-sdk/client-ecr';
 import { ECRPUBLICClient, GetAuthorizationTokenCommand as GetAuthorizationTokenCommandPublic } from '@aws-sdk/client-ecr-public';
 
@@ -13,6 +15,21 @@ interface ImageRef {
 interface Credentials {
   username?: string;
   password?: string;
+}
+
+export type ExternalImageArchitecture = 'x86_64' | 'aarch64';
+
+export interface ExternalImageDescriptor {
+  digest: string;
+  architectures: ExternalImageArchitecture[];
+}
+
+const architectureOrder: ExternalImageArchitecture[] = ['x86_64', 'aarch64'];
+
+interface RegistryManifest {
+  config?: { digest?: string };
+  manifests?: Array<{ platform?: types.Platform }>;
+  mediaType?: string;
 }
 
 function isDockerHub(registry: string): boolean {
@@ -217,12 +234,57 @@ function isLocalRegistry(registry: string): boolean {
   return host === 'localhost' || host === '127.0.0.1' || host === '::1';
 }
 
-export async function getImageDigest(parsed: ImageRef, credentials?: Credentials, hideLogs?: boolean): Promise<string> {
+function toExternalImageArchitecture(os: unknown, architecture: unknown): ExternalImageArchitecture | null {
+  // SecureBuild status and queue identity are architecture-scoped. OCI
+  // variants (for example arm64/v8) remain registry selection metadata and
+  // intentionally collapse into the existing aarch64 architecture.
+  if (os !== 'linux') return null;
+  if (architecture === 'amd64') return 'x86_64';
+  if (architecture === 'arm64') return 'aarch64';
+  return null;
+}
+
+function parseRegistryManifest(body: unknown): RegistryManifest {
+  let parsed = body;
+  if (Buffer.isBuffer(parsed)) parsed = parsed.toString('utf8');
+  if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Registry returned an invalid manifest response');
+  }
+  return parsed as RegistryManifest;
+}
+
+function responseDigest(response: { headers: Record<string, unknown>; raw?: Buffer }, body: unknown): string {
+  const header = response.headers['docker-content-digest'];
+  if (typeof header === 'string' && header !== '') return header;
+
+  const raw = response.raw ?? (Buffer.isBuffer(body)
+    ? body
+    : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body)));
+  return `sha256:${createHash('sha256').update(raw).digest('hex')}`;
+}
+
+function isImageIndex(manifest: RegistryManifest, contentType: unknown): boolean {
+  const normalizedContentType = typeof contentType === 'string' ? contentType.split(';', 1)[0] : '';
+  return normalizedContentType === contentTypes.MANIFEST_LIST_V2 ||
+    normalizedContentType === contentTypes.OCI_INDEX_V1 ||
+    manifest.mediaType === contentTypes.MANIFEST_LIST_V2 ||
+    manifest.mediaType === contentTypes.OCI_INDEX_V1 ||
+    Array.isArray(manifest.manifests);
+}
+
+export async function getImageDescriptor(
+  parsed: ImageRef,
+  credentials?: Credentials,
+  hideLogs?: boolean,
+): Promise<ExternalImageDescriptor> {
   console.log(`Getting digest(s) for ${parsed.registry}/${parsed.repository}:${parsed.tag}`);
 
   try {
     // Get the manifest reference (SHA or tag)
     const manifestRef = parsed.contentSha || parsed.tag;
+    validation.validateRepoOrImageRef(parsed.repository);
+    validation.validateRepoOrImageRef(manifestRef);
     console.log(`Fetching manifest for ${parsed.repository}:${manifestRef} from ${parsed.registry}`);
 
     // Get appropriate credentials (exchange AWS creds for ECR token if needed)
@@ -239,49 +301,68 @@ export async function getImageDigest(parsed: ImageRef, credentials?: Credentials
     }
 
     // Local registries run without TLS; instruct the registry client to use HTTP.
-    const requestOptions: Record<string, unknown> = {
-      acceptManifest: [
-        'application/vnd.docker.distribution.manifest.v2+json',
-        'application/vnd.docker.distribution.manifest.list.v2+json',
-        'application/vnd.oci.image.manifest.v1+json',
-        'application/vnd.oci.image.index.v1+json'
-      ].join(', ')
-    };
+    const acceptedManifestTypes = [
+      contentTypes.MANIFEST_V2,
+      contentTypes.MANIFEST_LIST_V2,
+      contentTypes.OCI_MANIFEST_V1,
+      contentTypes.OCI_INDEX_V1,
+    ].join(', ');
+    const requestOptions: Record<string, unknown> = {};
     if (isLocalRegistry(parsed.registry)) {
       requestOptions.protocol = 'http:';
     }
 
-    // Get the manifest using Snyk client
-    const manifest = await getManifest(
-      parsed.registry,
-      parsed.repository,
-      manifestRef,
+    const response = await registryCall(
+      `${parsed.registry}/v2/${parsed.repository}/manifests/${manifestRef}`,
       username,
       password,
-      requestOptions,
-      undefined
+      {
+        ...requestOptions,
+        headers: { Accept: acceptedManifestTypes },
+      },
     );
-    
-    // the index digest is the most inclusive digest that contains all the platform digests
-    if (manifest.indexDigest) {
-      if (!hideLogs) {
-        console.log(`Retrieved index digest: ${manifest.indexDigest}`);
+    const manifest = parseRegistryManifest(response.body);
+    const digest = parsed.contentSha || responseDigest(response, response.body);
+    const discoveredArchitectures = new Set<ExternalImageArchitecture>();
+
+    if (isImageIndex(manifest, response.headers['content-type'])) {
+      for (const descriptor of manifest.manifests ?? []) {
+        const architecture = toExternalImageArchitecture(
+          descriptor.platform?.os,
+          descriptor.platform?.architecture,
+        );
+        if (architecture) discoveredArchitectures.add(architecture);
       }
-      return manifest.indexDigest;
-    }
-    
-    // fallback to the manifest digest if the index digest is not available
-    if (manifest.manifestDigest) {
-      if (!hideLogs) {
-        console.log(`Retrieved digest: ${manifest.manifestDigest}`);
-      }
-      return manifest.manifestDigest;
+    } else if (manifest.config?.digest) {
+      const config = await getImageConfig(
+        parsed.registry,
+        parsed.repository,
+        manifest.config.digest,
+        username,
+        password,
+        requestOptions,
+      );
+      const architecture = toExternalImageArchitecture(config.os, config.architecture);
+      if (architecture) discoveredArchitectures.add(architecture);
+    } else {
+      // Schema 1 and other config-less manifests can still provide a stable
+      // digest, but not reliable platform metadata. Preserve the digest and
+      // leave architectures empty so callers do not enqueue guessed work.
     }
 
-    throw new Error('Unable to determine manifest digest');
+    const architectures = architectureOrder
+      .filter(architecture => discoveredArchitectures.has(architecture));
+
+    if (!hideLogs) {
+      console.log(`Retrieved digest ${digest} for architectures: ${architectures.join(', ')}`);
+    }
+    return { digest, architectures };
   } catch (error) {
-    console.error(`getImageDigest error:`, error);
-    throw new Error(`Failed to get image digest for ${parsed.registry}/${parsed.repository}:${parsed.tag}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error(`getImageDescriptor error:`, error);
+    throw new Error(`Failed to get image descriptor for ${parsed.registry}/${parsed.repository}:${parsed.tag}: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
+export async function getImageDigest(parsed: ImageRef, credentials?: Credentials, hideLogs?: boolean): Promise<string> {
+  return (await getImageDescriptor(parsed, credentials, hideLogs)).digest;
+}
