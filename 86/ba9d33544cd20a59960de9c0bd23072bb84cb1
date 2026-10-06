@@ -1,0 +1,44 @@
+pkg/externalimage/monitor.go
+  s_9d46a6fc3edeb8::t_3093f2b342f8a5 74,93,102
+pkg/listener/external-image-sbom.go
+  s_9d46a6fc3edeb8::t_355513a7e55d55 28-30,45-50,71-85,100-109,111-115
+securebuild-api/app/api/v1/external-image/route.ts
+  s_9d46a6fc3edeb8::t_7884380be28cab 2,48-49,59
+securebuild-api/lib/externalimage/registry.ts
+  s_9d46a6fc3edeb8::t_7884380be28cab 2-3,19-33,236-251,285-302,304-310,312-336,339-342,344-345,349-351
+integration/worker/external_image/external_image_test.go
+  s_9d46a6fc3edeb8::t_960002fada46c2 404,420
+  s_9d46a6fc3edeb8::t_ad2dc1a352c7b2 374-375,380-384
+  s_9d46a6fc3edeb8::t_33ca8eaa1caad1 20
+  s_9d46a6fc3edeb8::t_9408877fdb7890 373,376-379
+  s_9d46a6fc3edeb8::t_c319079291e9d2 402-403,405-406
+pkg/externalimage/digest_test.go
+  s_9d46a6fc3edeb8::t_9535db1de3e6fe 1-41
+securebuild-api/lib/utils/queue.ts
+  s_9d46a6fc3edeb8::t_7884380be28cab 6,91,95
+securebuild-api/lib/externalimage/registry.test.ts
+  s_9d46a6fc3edeb8::t_94735dbcb7fa82 1-2,89,93,129,180,183-232
+pkg/externalimage/digest.go
+  s_9d46a6fc3edeb8::t_741bae90d03312 51
+  s_9d46a6fc3edeb8::t_cce62434258fe1 13-17,22-41,56-100,103-123
+  s_9d46a6fc3edeb8::t_332d18b82e76ac 8,44
+securebuild-api/integration/api/v1/external-image/create.test.ts
+  s_9d46a6fc3edeb8::t_af5c9589cb5e10 65-66,121,143,145,229,261-267
+  s_9d46a6fc3edeb8::t_5be3ceb1538dcf 259,281-285
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86ba9d33544cd20a59960de9c0bd23072bb84cb1",
+  "prompts": {},
+  "sessions": {
+    "s_9d46a6fc3edeb8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cf6-6594-7602-85d1-c2da21371049",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
