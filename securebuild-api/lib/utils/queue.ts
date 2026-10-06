@@ -89,9 +89,18 @@ export async function enqueueExternalImageSBOMWork(
   digest: string,
 ): Promise<string | null> {
   let firstID: string | null = null;
+  const errors: Error[] = [];
   for (const arch of ['x86_64', 'aarch64']) {
-    const id = await enqueueExternalImageSBOMPlatformWork({ ...payload, arch }, digest, arch);
-    if (firstID === null && id !== null) firstID = id;
+    try {
+      const id = await enqueueExternalImageSBOMPlatformWork({ ...payload, arch }, digest, arch);
+      if (firstID === null && id !== null) firstID = id;
+    } catch (error) {
+      console.error(`Failed to enqueue SBOM work for ${digest}/${arch}`, error);
+      errors.push(new Error(`Failed to enqueue SBOM work for ${digest}/${arch}`, { cause: error }));
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, `Failed to enqueue one or more SBOM platforms for ${digest}`);
   }
   return firstID;
 }

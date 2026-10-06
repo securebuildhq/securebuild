@@ -229,6 +229,62 @@ describe('POST/GET /api/v1/external-image', () => {
       );
       expect(adopted.rows).toEqual([{ status: 'succeeded' }]);
     });
+
+    it('attempts arm64 when the x86_64 enqueue transaction fails', async () => {
+      await env.dbPool.query(
+        `DELETE FROM work_queue
+         WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `DELETE FROM external_image_sbom_platform_status WHERE digest = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `DELETE FROM external_image_sbom WHERE digest = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(`
+        CREATE FUNCTION reject_x86_sbom_platform_status() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.arch = 'x86_64' THEN
+            RAISE EXCEPTION 'test x86_64 status failure';
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+      `);
+      await env.dbPool.query(`
+        CREATE TRIGGER reject_x86_sbom_platform_status
+        BEFORE INSERT OR UPDATE ON external_image_sbom_platform_status
+        FOR EACH ROW EXECUTE FUNCTION reject_x86_sbom_platform_status()
+      `);
+
+      try {
+        const response = await env.client.post('/api/v1/external-image', {
+          image_url: env.createImage,
+        });
+        expect(response.status).toBe(500);
+
+        const activeWork = await env.dbPool.query(
+          `SELECT dedupe_key, payload->>'arch' AS arch
+           FROM work_queue
+           WHERE channel = 'external_image_sbom'
+             AND completed_at IS NULL
+             AND payload->>'digest' = $1
+           ORDER BY payload->>'arch'`,
+          [createdDigest],
+        );
+        expect(activeWork.rows).toEqual([
+          { dedupe_key: `${createdDigest}:aarch64`, arch: 'aarch64' },
+        ]);
+      } finally {
+        await env.dbPool.query(
+          `DROP TRIGGER reject_x86_sbom_platform_status ON external_image_sbom_platform_status`,
+        );
+        await env.dbPool.query(`DROP FUNCTION reject_x86_sbom_platform_status()`);
+      }
+    });
   });
 
   describe('Phase 3 — Auth', () => {
