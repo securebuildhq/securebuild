@@ -1,0 +1,26 @@
+pkg/externalimage/digest_test.go
+  s_9d46a6fc3edeb8::t_d3bf3fed1353ec 10,12-13,17-19
+securebuild-api/lib/externalimage/registry.test.ts
+  s_9d46a6fc3edeb8::t_8d32efcb2136f9 2,88,90-110,124-128,138-139,142-146,152-153,156-160,174-178,186-187,195-199,210,213-214,216-229,239-240
+  s_9d46a6fc3edeb8::t_7f7cab85edd046 123
+securebuild-api/lib/externalimage/registry.ts
+  s_9d46a6fc3edeb8::t_1f1d60f1b8e8be 238-240
+  s_9d46a6fc3edeb8::t_c5fef9d8f5c0c4 2,27-33,247-273,304-310,315-325,328-332,334,336-338,352
+  s_9d46a6fc3edeb8::t_7f7cab85edd046 3,286-287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6aee5c96a7a2e3aa932a147ffa72224879987ab",
+  "prompts": {},
+  "sessions": {
+    "s_9d46a6fc3edeb8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cf6-6594-7602-85d1-c2da21371049",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
