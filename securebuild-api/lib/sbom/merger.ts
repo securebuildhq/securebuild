@@ -137,7 +137,8 @@ export function mergeSBOMs(sbomStrings: string[]): string {
   }
 
   if (sbomStrings.length === 1) {
-    // Single SBOM, return as-is
+    // Validate JSON before returning the original string without reserializing it.
+    JSON.parse(sbomStrings[0]);
     return sbomStrings[0];
   }
 
