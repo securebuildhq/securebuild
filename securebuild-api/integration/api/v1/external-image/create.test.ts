@@ -1,5 +1,9 @@
 import * as path from 'path';
-import { setupTestEnvironment, TestEnvironment } from '../../../fixtures/environment';
+import {
+  SEED_TEAM_ID,
+  setupTestEnvironment,
+  TestEnvironment,
+} from '../../../fixtures/environment';
 import { HttpClient } from '../../../fixtures/http-client';
 
 /**
@@ -51,15 +55,18 @@ describe('POST/GET /api/v1/external-image', () => {
       }
 
       const result = await env.dbPool.query(
-        `SELECT COUNT(*)::int AS count, MAX(dedupe_key) AS dedupe_key
+        `SELECT COUNT(*)::int AS count, ARRAY_AGG(dedupe_key ORDER BY dedupe_key) AS dedupe_keys
          FROM work_queue
          WHERE channel = 'external_image_sbom'
            AND completed_at IS NULL
            AND payload->>'digest' = $1`,
         [createdDigest],
       );
-      expect(result.rows[0].count).toBe(1);
-      expect(result.rows[0].dedupe_key).toBe(createdDigest);
+      expect(result.rows[0].count).toBe(2);
+      expect(result.rows[0].dedupe_keys).toEqual([
+        `${createdDigest}:aarch64`,
+        `${createdDigest}:x86_64`,
+      ]);
 
       // Dispatch completion releases the queue key before asynchronous Syft
       // generation completes. The generating status must still suppress a
@@ -71,7 +78,7 @@ describe('POST/GET /api/v1/external-image', () => {
         [createdDigest],
       );
       await env.dbPool.query(
-        `UPDATE external_image_sbom_status SET status = 'generating' WHERE digest = $1`,
+        `UPDATE external_image_sbom_platform_status SET status = 'generating' WHERE digest = $1`,
         [createdDigest],
       );
 
@@ -91,7 +98,7 @@ describe('POST/GET /api/v1/external-image', () => {
       expect(duringGeneration.rows[0].count).toBe(0);
 
       await env.dbPool.query(
-        `UPDATE external_image_sbom_status
+        `UPDATE external_image_sbom_platform_status
          SET status_updated_at = NOW() - INTERVAL '32 minutes'
          WHERE digest = $1`,
         [createdDigest],
@@ -110,11 +117,11 @@ describe('POST/GET /api/v1/external-image', () => {
               AND completed_at IS NULL
               AND payload->>'digest' = $1) AS count,
            (SELECT status
-            FROM external_image_sbom_status
-            WHERE digest = $1) AS status`,
+            FROM external_image_sbom_platform_status
+            WHERE digest = $1 AND arch = 'x86_64') AS status`,
         [createdDigest],
       );
-      expect(recoveredGeneration.rows[0].count).toBe(1);
+      expect(recoveredGeneration.rows[0].count).toBe(2);
       expect(recoveredGeneration.rows[0].status).toBe('pending');
 
       const retainedCompletedKeys = await env.dbPool.query(
@@ -122,8 +129,8 @@ describe('POST/GET /api/v1/external-image', () => {
          FROM work_queue
          WHERE channel = 'external_image_sbom'
            AND completed_at IS NOT NULL
-           AND dedupe_key = $1`,
-        [createdDigest],
+           AND dedupe_key LIKE $1`,
+        [`${createdDigest}:%`],
       );
       expect(retainedCompletedKeys.rows[0].count).toBe(0);
     });
@@ -136,8 +143,147 @@ describe('POST/GET /api/v1/external-image', () => {
       const data = res.data as Record<string, unknown>;
       expect(data.digest).toBe(createdDigest);
       expect(data.sbom_status).toBe('pending');
+      expect(data.sbom_statuses).toEqual(expect.arrayContaining([
+        expect.objectContaining({ arch: 'x86_64', status: 'pending' }),
+        expect.objectContaining({ arch: 'aarch64', status: 'pending' }),
+      ]));
       expect(data.scan_status).toBeDefined();
       expect(Array.isArray(data.platforms)).toBe(true);
+    });
+
+    it('does not bypass pending legacy digest-keyed SBOM work', async () => {
+      await env.dbPool.query(
+        `UPDATE work_queue
+         SET completed_at = NOW(), dedupe_key = NULL
+         WHERE channel = 'external_image_sbom'
+           AND completed_at IS NULL
+           AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `INSERT INTO work_queue (id, channel, payload, dedupe_key, created_at, priority)
+         VALUES ('legacy-api-sbom-work', 'external_image_sbom', $1, $2, NOW(), 0)`,
+        [JSON.stringify({ digest: createdDigest, team_id: 'team-1' }), createdDigest],
+      );
+
+      const response = await env.client.post('/api/v1/external-image', {
+        image_url: env.createImage,
+      });
+      expect(response.status).toBe(201);
+
+      const activeWork = await env.dbPool.query(
+        `SELECT dedupe_key, payload->>'arch' AS arch
+         FROM work_queue
+         WHERE channel = 'external_image_sbom'
+           AND completed_at IS NULL
+           AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      expect(activeWork.rows).toEqual([
+        { dedupe_key: createdDigest, arch: null },
+      ]);
+    });
+
+    it('adopts stored legacy SBOMs before building dashboard status', async () => {
+      await env.dbPool.query(
+        `INSERT INTO external_image_sbom
+           (digest, arch, created_at, source, image_size_bytes, image_digest, is_in_object_store)
+         VALUES ($1, 'x86_64', NOW(), 'syft', 1, $1, true)
+         ON CONFLICT (digest, arch) DO UPDATE
+         SET is_in_object_store = true`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `DELETE FROM external_image_sbom_platform_status WHERE digest = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `INSERT INTO external_image_sbom_status
+           (digest, status, status_message, created_at, updated_at, status_updated_at)
+         VALUES ($1, 'failed', 'stale legacy failure', NOW(), NOW(), NOW())
+         ON CONFLICT (digest) DO UPDATE
+         SET status = EXCLUDED.status,
+             status_message = EXCLUDED.status_message,
+             updated_at = EXCLUDED.updated_at,
+             status_updated_at = EXCLUDED.status_updated_at`,
+        [createdDigest],
+      );
+
+      const previousDBURI = process.env.DB_URI;
+      process.env.DB_URI = env.connectionString;
+      const { listExternalImages } = await import('@/lib/externalimage/externalimage');
+      const images = await listExternalImages(SEED_TEAM_ID);
+      if (previousDBURI === undefined) {
+        delete process.env.DB_URI;
+      } else {
+        process.env.DB_URI = previousDBURI;
+      }
+      const createdImage = images.find(image => image.imageName === 'test-image');
+
+      expect(createdImage?.tagCompletionStatus.latest?.sbomStatus).toBe('succeeded');
+      const adopted = await env.dbPool.query(
+        `SELECT status
+         FROM external_image_sbom_platform_status
+         WHERE digest = $1 AND arch = 'x86_64'`,
+        [createdDigest],
+      );
+      expect(adopted.rows).toEqual([{ status: 'succeeded' }]);
+    });
+
+    it('attempts arm64 when the x86_64 enqueue transaction fails', async () => {
+      await env.dbPool.query(
+        `DELETE FROM work_queue
+         WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `DELETE FROM external_image_sbom_platform_status WHERE digest = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `DELETE FROM external_image_sbom WHERE digest = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(`
+        CREATE FUNCTION reject_x86_sbom_platform_status() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.arch = 'x86_64' THEN
+            RAISE EXCEPTION 'test x86_64 status failure';
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+      `);
+      await env.dbPool.query(`
+        CREATE TRIGGER reject_x86_sbom_platform_status
+        BEFORE INSERT OR UPDATE ON external_image_sbom_platform_status
+        FOR EACH ROW EXECUTE FUNCTION reject_x86_sbom_platform_status()
+      `);
+
+      try {
+        const response = await env.client.post('/api/v1/external-image', {
+          image_url: env.createImage,
+        });
+        expect(response.status).toBe(500);
+
+        const activeWork = await env.dbPool.query(
+          `SELECT dedupe_key, payload->>'arch' AS arch
+           FROM work_queue
+           WHERE channel = 'external_image_sbom'
+             AND completed_at IS NULL
+             AND payload->>'digest' = $1
+           ORDER BY payload->>'arch'`,
+          [createdDigest],
+        );
+        expect(activeWork.rows).toEqual([
+          { dedupe_key: `${createdDigest}:aarch64`, arch: 'aarch64' },
+        ]);
+      } finally {
+        await env.dbPool.query(
+          `DROP TRIGGER reject_x86_sbom_platform_status ON external_image_sbom_platform_status`,
+        );
+        await env.dbPool.query(`DROP FUNCTION reject_x86_sbom_platform_status()`);
+      }
     });
   });
 

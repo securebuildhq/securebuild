@@ -123,6 +123,7 @@ func processBuilderSbomDownloads(ctx context.Context, cache *sbom.SbomDownloadCa
 			activeDownloads = append(activeDownloads, sbom.SbomDownloadDirInfo{
 				TeamID:    dd.Metadata.TeamID,
 				Digest:    dd.Metadata.Digest,
+				Arch:      dd.Metadata.Arch,
 				WorkDir:   dd.WorkDir,
 				CreatedAt: dd.Metadata.CreatedAt,
 			})
@@ -236,9 +237,8 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 
 	// Process results locally from the extracted tar.
 	var dirsToCleanup []string
-	successByDigest := make(map[string]bool)
-
 	for _, r := range results {
+		arch := extractArchFromPlatform(r.platform)
 		spdxJSON := ""
 		spdxLocalPath := filepath.Join(localDir, r.spdxRel)
 		if data, err := os.ReadFile(spdxLocalPath); err == nil {
@@ -253,7 +253,7 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 
 		if r.exitCode == 0 {
 			if strings.TrimSpace(spdxJSON) == "" {
-				recordSBOMFailure(ctx, r.digest,
+				recordSBOMFailure(ctx, r.digest, arch,
 					externalimage.NewScanFailureError(externalimage.ErrNoSBOMDataAvailable, "syft produced empty SBOM output"),
 					false, 1, MaxRetryAttempts)
 				logger.Warn("syft SBOM output is empty",
@@ -264,9 +264,14 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 					zap.String("digest", r.digest),
 					zap.String("platform", r.platform),
 					zap.Error(err))
-				recordSBOMFailure(ctx, r.digest, err, false, 1, MaxRetryAttempts)
+				recordSBOMFailure(ctx, r.digest, arch, err, false, 1, MaxRetryAttempts)
 			} else {
-				successByDigest[r.digest] = true
+				if err := externalimage.SetSBOMStatusSucceeded(ctx, r.digest, arch); err != nil {
+					logger.Warn("failed to set SBOM platform status to succeeded", zap.String("digest", r.digest), zap.String("arch", arch), zap.Error(err))
+				}
+				if err := externalimage.InitializeScanStatusQueued(ctx, r.digest, arch); err != nil {
+					logger.Warn("failed to initialize scan status", zap.String("digest", r.digest), zap.String("arch", arch), zap.Error(err))
+				}
 			}
 		} else {
 			stderr := ""
@@ -278,7 +283,7 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 			if stderr != "" {
 				msg = fmt.Sprintf("syft exited with code %d: %s", r.exitCode, stderr)
 			}
-			recordSBOMFailure(ctx, r.digest,
+			recordSBOMFailure(ctx, r.digest, arch,
 				externalimage.NewScanFailureError(externalimage.ErrFetchSBOM, msg),
 				false, 1, MaxRetryAttempts)
 			logger.Warn("SBOM download failed",
@@ -288,37 +293,12 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 		}
 	}
 
-	// Mark SBOM status as succeeded and enqueue scan for digests that had at
-	// least one successful architecture. Collect dirs for batch cleanup.
+	// Per-platform status and scan initialization happen while processing each result.
 	for _, dd := range completedDirs {
 		if dd.Metadata.Digest == "" {
 			continue
 		}
-		if successByDigest[dd.Metadata.Digest] {
-			if err := externalimage.SetSBOMStatusSucceeded(ctx, dd.Metadata.Digest); err != nil {
-				logger.Warn("failed to set SBOM status to succeeded",
-					zap.String("digest", dd.Metadata.Digest),
-					zap.Error(err))
-			}
-
-			storedSBOMs, sbomErr := externalimage.GetExternalImageSBOMs(ctx, dd.Metadata.Digest)
-			if sbomErr != nil {
-				logger.Warn("failed to get stored SBOMs for scan initialization",
-					zap.String("digest", dd.Metadata.Digest),
-					zap.Error(sbomErr))
-			} else {
-				for _, s := range storedSBOMs {
-					if err := externalimage.InitializeScanStatusQueued(ctx, dd.Metadata.Digest, s.Arch); err != nil {
-						logger.Warn("failed to initialize scan status to queued",
-							zap.String("digest", dd.Metadata.Digest),
-							zap.String("arch", s.Arch),
-							zap.Error(err))
-					}
-				}
-			}
-		}
-
-		cache.RemoveDownload(vm.ID, dd.Metadata.Digest)
+		cache.RemoveDownload(vm.ID, dd.Metadata.Digest, dd.Metadata.Arch)
 		dirsToCleanup = append(dirsToCleanup, dd.WorkDir)
 
 		logger.Info("completed SBOM download collection for digest",
@@ -431,10 +411,17 @@ func processSbomDownloadDir(ctx context.Context, cache *sbom.SbomDownloadCapacit
 							zap.String("digest", digest),
 							zap.String("platform", platform),
 							zap.Error(err))
-						recordSBOMFailure(ctx, digest, err, false, 1, MaxRetryAttempts)
+						recordSBOMFailure(ctx, digest, extractArchFromPlatform(platform), err, false, 1, MaxRetryAttempts)
 					}
 				} else {
 					successCount++
+					arch := extractArchFromPlatform(platform)
+					if err := externalimage.SetSBOMStatusSucceeded(ctx, digest, arch); err != nil {
+						logger.Warn("failed to set SBOM platform status to succeeded", zap.String("digest", digest), zap.String("arch", arch), zap.Error(err))
+					}
+					if err := externalimage.InitializeScanStatusQueued(ctx, digest, arch); err != nil {
+						logger.Warn("failed to initialize scan status", zap.String("digest", digest), zap.String("arch", arch), zap.Error(err))
+					}
 				}
 			} else {
 				handleFailedSbomDownload(ctx, runner, dd.WorkDir, digest, platform, exitCode)
@@ -459,33 +446,8 @@ func processSbomDownloadDir(ctx context.Context, cache *sbom.SbomDownloadCapacit
 	}
 
 	if allDone && len(dd.ArchStatuses) > 0 {
-		if successCount > 0 {
-			if err := externalimage.SetSBOMStatusSucceeded(ctx, digest); err != nil {
-				logger.Warn("failed to set SBOM status to succeeded",
-					zap.String("digest", digest),
-					zap.Error(err))
-			}
-
-			// Initialize scan status to 'queued' for architectures with SBOMs.
-			storedSBOMs, sbomErr := externalimage.GetExternalImageSBOMs(ctx, digest)
-			if sbomErr != nil {
-				logger.Warn("failed to get stored SBOMs for scan initialization",
-					zap.String("digest", digest),
-					zap.Error(sbomErr))
-			} else {
-				for _, s := range storedSBOMs {
-					if err := externalimage.InitializeScanStatusQueued(ctx, digest, s.Arch); err != nil {
-						logger.Warn("failed to initialize scan status to queued",
-							zap.String("digest", digest),
-							zap.String("arch", s.Arch),
-							zap.Error(err))
-					}
-				}
-			}
-		}
-
 		cleanupSbomDownloadDir(ctx, runner, dd.WorkDir)
-		cache.RemoveDownload(vm.ID, digest)
+		cache.RemoveDownload(vm.ID, digest, dd.Metadata.Arch)
 
 		logger.Info("completed SBOM download collection for digest",
 			zap.String("digest", digest),
@@ -536,7 +498,7 @@ func handleFailedSbomDownload(ctx context.Context, runner buildbackend.Runner, w
 		msg = fmt.Sprintf("syft exited with code %d: %s", exitCode, stderr)
 	}
 
-	recordSBOMFailure(ctx, digest,
+	recordSBOMFailure(ctx, digest, extractArchFromPlatform(platform),
 		externalimage.NewScanFailureError(externalimage.ErrFetchSBOM, msg),
 		false, 1, MaxRetryAttempts)
 
@@ -621,12 +583,17 @@ func handleMissingBuilderForSbomDownload(ctx context.Context, cache *sbom.SbomDo
 		zap.Int("downloadCount", len(downloads)))
 
 	for _, d := range downloads {
-		if err := externalimage.SetSBOMStatusFailed(ctx, d.Digest, "builder VM no longer exists"); err != nil {
-			logger.Warn("failed to set SBOM status to failed for missing builder",
-				zap.String("digest", d.Digest),
-				zap.Error(err))
+		arches := []string{d.Arch}
+		if d.Arch == "" {
+			arches = []string{"x86_64", "aarch64"}
 		}
-		if err := reenqueueSbomDownload(ctx, d.TeamID, d.Digest); err != nil {
+		for _, arch := range arches {
+			if err := externalimage.SetSBOMStatusFailed(ctx, d.Digest, arch, "builder VM no longer exists"); err != nil {
+				logger.Warn("failed to set SBOM status to failed for missing builder",
+					zap.String("digest", d.Digest), zap.String("arch", arch), zap.Error(err))
+			}
+		}
+		if err := reenqueueSbomDownload(ctx, d.TeamID, d.Digest, d.Arch); err != nil {
 			logger.Error(fmt.Errorf("failed to re-enqueue external image SBOM download: %w", err),
 				zap.String("digest", d.Digest),
 				zap.String("machineID", machineID))
@@ -636,7 +603,7 @@ func handleMissingBuilderForSbomDownload(ctx context.Context, cache *sbom.SbomDo
 		// The cache entry is the recovery record for a lost builder. Release it
 		// only after replacement work is durably queued so a transient database
 		// failure is retried on the next poll cycle.
-		cache.RemoveDownload(machineID, d.Digest)
+		cache.RemoveDownload(machineID, d.Digest, d.Arch)
 	}
 }
 
@@ -644,8 +611,8 @@ func handleMissingBuilderForSbomDownload(ctx context.Context, cache *sbom.SbomDo
 // Builder-loss recovery intentionally bypasses normal digest deduplication:
 // the original dispatch row may still be completing even though the builder
 // and its asynchronous Syft process are already known to be gone.
-func reenqueueSbomDownload(ctx context.Context, teamID, digest string) error {
-	payloadBytes, err := json.Marshal(listenertypes.ExternalImageSbomPayload{Digest: digest, TeamID: teamID})
+func reenqueueSbomDownload(ctx context.Context, teamID, digest, arch string) error {
+	payloadBytes, err := json.Marshal(listenertypes.ExternalImageSbomPayload{Digest: digest, Arch: arch, TeamID: teamID})
 	if err != nil {
 		return fmt.Errorf("failed to marshal re-enqueue SBOM payload: %w", err)
 	}

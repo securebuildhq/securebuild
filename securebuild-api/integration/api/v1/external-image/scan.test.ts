@@ -115,6 +115,34 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(res.headers.get('X-SecureBuild-Result_Count')).toBe('1');
     });
 
+    it('preserves access to an owned legacy-only digest with no arm64 status', async () => {
+      const legacyOnlyDigest = 'sha256:pending123456789012345678901234567890123456789012345678901234';
+      const unownedDigest = 'sha256:unowned123456789012345678901234567890123456789012345678901234';
+      const res = await env.client.post('/api/v1/external-image/scan', {
+        digests: [legacyOnlyDigest, unownedDigest],
+        arch: 'arm64',
+        format: 'parsed',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.data).toEqual([
+        expect.objectContaining({
+          input: legacyOnlyDigest,
+          digest: legacyOnlyDigest,
+          not_found: false,
+          result: null,
+          scan_status: null,
+          sbom_status: null,
+        }),
+        expect.objectContaining({
+          input: unownedDigest,
+          digest: null,
+          not_found: true,
+          result: null,
+        }),
+      ]);
+    });
+
     it('POST /scan {images, format:raw} returns array with matches', async () => {
       const res = await env.client.post('/api/v1/external-image/scan', {
         images: [image()],
@@ -241,7 +269,12 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       }
     });
 
-    it('GET /sbom?digest returns SPDX SBOM', async () => {
+    it('GET /sbom?digest lazily adopts legacy stored SBOMs by architecture', async () => {
+      await env.dbPool.query(
+        `DELETE FROM external_image_sbom_platform_status WHERE digest = $1`,
+        [digest()],
+      );
+
       const res = await env.client.get(`/api/v1/external-image/sbom?digest=${encodeURIComponent(digest())}`);
       expect(res.status).toBe(200);
 
@@ -251,6 +284,18 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(Array.isArray(data.relationships)).toBe(true);
 
       expect(res.headers.get('X-SecureBuild-Image_Digest')).toBe(digest());
+
+      const adopted = await env.dbPool.query(
+        `SELECT arch, status
+         FROM external_image_sbom_platform_status
+         WHERE digest = $1
+         ORDER BY arch`,
+        [digest()],
+      );
+      expect(adopted.rows).toEqual([
+        expect.objectContaining({ arch: 'aarch64', status: 'succeeded' }),
+        expect.objectContaining({ arch: 'x86_64', status: 'succeeded' }),
+      ]);
     });
 
     it('keeps SBOMs at deterministic keys when scan results use generations', async () => {

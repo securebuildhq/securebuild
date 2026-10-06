@@ -6,6 +6,7 @@ type ExternalImageScanPayload struct {
 
 type ExternalImageSbomPayload struct {
 	Digest             string `json:"digest"`
+	Arch               string `json:"arch,omitempty"`
 	TeamID             string `json:"team_id,omitempty"`
 	EnqueueRescanAfter bool   `json:"enqueue_rescan_after,omitempty"`
 }

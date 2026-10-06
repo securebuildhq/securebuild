@@ -31,6 +31,7 @@ export interface SerializedExternalScanItem {
 
 export interface SerializedExternalSBOMStatusItem {
   digest: string;
+  arch: string;
   status: string;
   statusMessage: string | null;
   createdAt: string;

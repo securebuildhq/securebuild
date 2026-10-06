@@ -75,6 +75,20 @@ func getScanExternalImageFunc(ctx context.Context) func(context.Context, string)
 func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPayload) error {
 	attempt, maxAttempts := GetAttemptInfo(ctx)
 	logger.Info("HandleExternalImageSbom", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
+	if p.Arch == "" {
+		for _, arch := range []string{"x86_64", "aarch64"} {
+			platformPayload := p
+			platformPayload.Arch = arch
+			payloadJSON, err := json.Marshal(platformPayload)
+			if err != nil {
+				return fmt.Errorf("failed to marshal platform SBOM work: %w", err)
+			}
+			if _, err := externalimage.EnqueueExpandedLegacySBOMWork(ctx, string(payloadJSON), p.Digest, arch); err != nil {
+				return fmt.Errorf("failed to expand legacy SBOM work for arch %s: %w", arch, err)
+			}
+		}
+		return nil
+	}
 
 	externalImage, err := externalimage.GetExternalImageForDigest(ctx, p.Digest)
 	if err != nil {
@@ -85,10 +99,14 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		return fmt.Errorf("failed to get external image: %w", err)
 	}
 
-	var currentSBOM *string
-	currentSBOM, err = externalimage.GetExternalImageSBOM(ctx, p.Digest)
+	currentExists, err := externalimage.HasExternalImageSBOMForArch(ctx, p.Digest, p.Arch)
 	if err != nil {
 		return fmt.Errorf("failed to get external image sbom: %w", err)
+	}
+	var currentSBOM *string
+	if currentExists {
+		marker := "stored"
+		currentSBOM = &marker
 	}
 
 	// If a mock SBOM fetch function is injected, use the in-process path.
@@ -104,7 +122,7 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		return nil
 	}
 
-	if err := externalimage.InitializeSBOMStatusPending(ctx, p.Digest); err != nil {
+	if err := externalimage.InitializeSBOMStatusPending(ctx, p.Digest, p.Arch); err != nil {
 		logger.Warnf("failed to initialize SBOM status for digest %s: %s", p.Digest, err.Error())
 	}
 
@@ -133,7 +151,7 @@ func handleExternalImageSbomInProcess(ctx context.Context, p types.ExternalImage
 		if !needsRegeneration {
 			logger.Info("SBOM already exists with image_digest, running scan only",
 				zap.String("digest", p.Digest), zap.Bool("rescan_request", p.EnqueueRescanAfter), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
-			if err := externalimage.SetSBOMStatusSucceeded(ctx, p.Digest); err != nil {
+			if err := externalimage.SetSBOMStatusSucceeded(ctx, p.Digest, p.Arch); err != nil {
 				logger.Warn("failed to set SBOM status to succeeded for digest", zap.String("digest", p.Digest), zap.Error(err), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", true))
 			} else {
 				logger.Info("SBOM succeeded", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
@@ -150,22 +168,22 @@ func handleExternalImageSbomInProcess(ctx context.Context, p types.ExternalImage
 		return nil
 	}
 
-	if err := externalimage.InitializeSBOMStatusPending(ctx, p.Digest); err != nil {
+	if err := externalimage.InitializeSBOMStatusPending(ctx, p.Digest, p.Arch); err != nil {
 		logger.Warnf("failed to initialize SBOM status for digest %s: %s", p.Digest, err.Error())
 	}
 
-	if err := externalimage.SetSBOMStatusGenerating(ctx, p.Digest); err != nil {
+	if err := externalimage.SetSBOMStatusGenerating(ctx, p.Digest, p.Arch); err != nil {
 		logger.Warnf("failed to set SBOM status to generating for digest %s: %s", p.Digest, err.Error())
 	}
 
 	sbomResults, err := getFetchSBOMFunc(ctx, p.TeamID)(ctx, externalImage.Registry, externalImage.ImageName, p.Digest)
 	if err != nil {
-		recordSBOMFailure(ctx, p.Digest, externalimage.NewScanFailureError(externalimage.ErrFetchSBOM, fmt.Sprintf("failed to fetch SBOM: %s", err.Error())), true, attempt, maxAttempts)
+		recordSBOMFailure(ctx, p.Digest, p.Arch, externalimage.NewScanFailureError(externalimage.ErrFetchSBOM, fmt.Sprintf("failed to fetch SBOM: %s", err.Error())), true, attempt, maxAttempts)
 		return fmt.Errorf("failed to fetch sbom: %w", err)
 	}
 
 	if len(sbomResults) == 0 {
-		recordSBOMFailure(ctx, p.Digest, externalimage.NewScanFailureError(externalimage.ErrNoSBOMDataAvailable, "empty SBOM results"), false, attempt, maxAttempts)
+		recordSBOMFailure(ctx, p.Digest, p.Arch, externalimage.NewScanFailureError(externalimage.ErrNoSBOMDataAvailable, "empty SBOM results"), false, attempt, maxAttempts)
 
 		if p.EnqueueRescanAfter {
 			logger.Warn("no SBOM data available for rescan request", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", false))
@@ -192,13 +210,21 @@ func handleExternalImageSbomInProcess(ctx context.Context, p types.ExternalImage
 	var foundArchs []string
 	for _, result := range sbomResults {
 		arch := extractArchFromPlatform(result.Architecture)
+		if arch != p.Arch {
+			continue
+		}
 		foundArchs = append(foundArchs, arch)
 		if err := externalimage.SetExternalImageSBOM(ctx, p.Digest, result.SBOM, result.Source, arch, result.ImageSizeBytes, result.ImageDigest); err != nil {
 			return fmt.Errorf("failed to set external image sbom for arch %s: %w", arch, err)
 		}
 	}
+	if len(foundArchs) == 0 {
+		reason := externalimage.NewScanFailureError(externalimage.ErrNoSBOMDataAvailable, fmt.Sprintf("no SBOM returned for architecture %s", p.Arch))
+		recordSBOMFailure(ctx, p.Digest, p.Arch, reason, false, attempt, maxAttempts)
+		return NewNonRetryableError(reason)
+	}
 
-	if err := externalimage.SetSBOMStatusSucceeded(ctx, p.Digest); err != nil {
+	if err := externalimage.SetSBOMStatusSucceeded(ctx, p.Digest, p.Arch); err != nil {
 		logger.Warn("failed to set SBOM status to succeeded for digest", zap.String("digest", p.Digest), zap.Error(err), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", true))
 	} else {
 		logger.Info("SBOM succeeded", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
@@ -431,8 +457,8 @@ func runScanForDigestInProcess(ctx context.Context, digest string, attempt, maxA
 }
 
 // recordSBOMFailure records SBOM failure in the DB and increments the failed metric only for non-retryable failures.
-func recordSBOMFailure(ctx context.Context, digest string, reason error, retryable bool, attempt, maxAttempts int) {
-	if recordErr := externalimage.SetSBOMStatusFailed(ctx, digest, reason.Error()); recordErr != nil {
+func recordSBOMFailure(ctx context.Context, digest, arch string, reason error, retryable bool, attempt, maxAttempts int) {
+	if recordErr := externalimage.SetSBOMStatusFailed(ctx, digest, arch, reason.Error()); recordErr != nil {
 		logger.Warn("failed to record SBOM failure for digest", zap.String("digest", digest), zap.Error(recordErr), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts), zap.Bool("retryable", retryable))
 	}
 	if !retryable {

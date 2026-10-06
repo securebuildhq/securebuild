@@ -37,8 +37,6 @@ func getSbomDownloadCapacityCache(ctx context.Context) *sbom.SbomDownloadCapacit
 }
 
 // sbomDownloadPlatforms is the list of platforms that SBOM generation checks.
-var sbomDownloadPlatforms = []string{"linux/amd64", "linux/arm64"}
-
 const (
 	sbomDispatchRetryDelay          = 15 * time.Second
 	sbomWaitingForBuilderStatusText = "waiting for builder capacity"
@@ -58,10 +56,10 @@ func handleExternalImageSbomOnBuilder(ctx context.Context, p types.ExternalImage
 		return fmt.Errorf("SBOM download capacity cache is not ready")
 	}
 
-	dispatchErr := dispatchSbomDownloadToBuilder(ctx, cache, p.TeamID, p.Digest, externalImage.Registry, externalImage.ImageName)
+	dispatchErr := dispatchSbomDownloadToBuilder(ctx, cache, p.TeamID, p.Digest, p.Arch, externalImage.Registry, externalImage.ImageName)
 	if dispatchErr != nil {
 		if errors.Is(dispatchErr, sbom.ErrNoBuilderAvailableForSbomDownload) {
-			if statusErr := externalimage.SetSBOMStatusPending(ctx, p.Digest, sbomWaitingForBuilderStatusText); statusErr != nil {
+			if statusErr := externalimage.SetSBOMStatusPending(ctx, p.Digest, p.Arch, sbomWaitingForBuilderStatusText); statusErr != nil {
 				return fmt.Errorf("no builder available and failed to preserve pending SBOM status: %w", statusErr)
 			}
 			logger.Info("no builder available for SBOM download, scheduled retry",
@@ -69,7 +67,7 @@ func handleExternalImageSbomOnBuilder(ctx context.Context, p types.ExternalImage
 				zap.Duration("retryDelay", sbomDispatchRetryDelay))
 			return NewRetryAfterError(dispatchErr, sbomDispatchRetryDelay, 0)
 		}
-		recordSBOMFailure(ctx, p.Digest,
+		recordSBOMFailure(ctx, p.Digest, p.Arch,
 			externalimage.NewScanFailureError(externalimage.ErrFetchSBOM,
 				fmt.Sprintf("failed to dispatch SBOM download: %s", dispatchErr.Error())),
 			false, 1, MaxRetryAttempts)
@@ -82,7 +80,7 @@ func handleExternalImageSbomOnBuilder(ctx context.Context, p types.ExternalImage
 // dispatchSbomDownloadToBuilder handles builder selection, file copy, and syft
 // launch. It reserves a capacity slot atomically and releases it if any step
 // fails before the download is fully launched.
-func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownloadCapacityCache, teamID, digest, registry, imageName string) error {
+func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownloadCapacityCache, teamID, digest, arch, registry, imageName string) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.dispatch_sbom_download_to_builder")
 	defer span.Finish()
 
@@ -98,7 +96,7 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 		}
 	}()
 
-	workDir, err := sbom.ResolveSbomDownloadWorkDir(ctx, builderVM, digest)
+	workDir, err := sbom.ResolveSbomPlatformDownloadWorkDir(ctx, builderVM, digest, arch)
 	if err != nil {
 		return fmt.Errorf("failed to resolve SBOM download work dir: %w", err)
 	}
@@ -117,28 +115,30 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 	metadata := sbom.SbomDownloadMetadata{
 		TeamID:    teamID,
 		Digest:    digest,
+		Arch:      arch,
 		Registry:  registry,
 		ImageName: imageName,
 		CreatedAt: time.Now().UTC(),
 	}
+	platforms := platformsForArch(arch)
 
 	// Phase 1: Prepare all files (dirs, download.json, per-arch dirs).
-	if err := prepareSbomDownloadFiles(ctx, runner, workDir, metadata, dockerConfig); err != nil {
+	if err := prepareSbomDownloadFiles(ctx, runner, workDir, metadata, dockerConfig, platforms); err != nil {
 		cleanupSbomDownloadDir(ctx, runner, workDir)
 		return fmt.Errorf("failed to prepare SBOM download files on builder %s: %w", builderVM.ID, err)
 	}
 
 	// A builder slot is reserved and the download is ready to launch. Do not
 	// report "generating" while the request is merely waiting for capacity.
-	if err := externalimage.SetSBOMStatusGenerating(ctx, digest); err != nil {
+	if err := externalimage.SetSBOMStatusGenerating(ctx, digest, arch); err != nil {
 		cleanupSbomDownloadDir(ctx, runner, workDir)
 		return fmt.Errorf("failed to set SBOM status to generating: %w", err)
 	}
 
 	// Phase 2: Launch syft for all archs. If a launch fails after some archs
 	// have already been launched, kill those processes and clean up.
-	launchedPlatforms := make([]string, 0, len(sbomDownloadPlatforms))
-	for _, platform := range sbomDownloadPlatforms {
+	launchedPlatforms := make([]string, 0, len(platforms))
+	for _, platform := range platforms {
 		syftCmd := buildSyftLaunchCommand(workDir, platform, registry, imageName, digest, dockerConfig != "")
 		if _, err := runner.RunCommand(ctx, syftCmd); err != nil {
 			logger.Warn("failed to launch syft, cleaning up already-launched processes",
@@ -166,6 +166,7 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 	cache.AddDownload(builderVM.ID, sbom.SbomDownloadDirInfo{
 		TeamID:    teamID,
 		Digest:    digest,
+		Arch:      arch,
 		WorkDir:   workDir,
 		CreatedAt: metadata.CreatedAt,
 	})
@@ -178,10 +179,28 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 	return nil
 }
 
+func archToPlatform(arch string) string {
+	switch arch {
+	case "x86_64":
+		return "linux/amd64"
+	case "aarch64":
+		return "linux/arm64"
+	default:
+		return "linux/" + arch
+	}
+}
+
+func platformsForArch(arch string) []string {
+	if arch == "" {
+		return []string{"linux/amd64", "linux/arm64"}
+	}
+	return []string{archToPlatform(arch)}
+}
+
 // prepareSbomDownloadFiles creates the download work directory, writes
 // download.json, and creates per-arch output directories. If this function
 // returns an error, no syft processes have been started.
-func prepareSbomDownloadFiles(ctx context.Context, runner buildbackend.Runner, workDir string, metadata sbom.SbomDownloadMetadata, dockerConfig string) error {
+func prepareSbomDownloadFiles(ctx context.Context, runner buildbackend.Runner, workDir string, metadata sbom.SbomDownloadMetadata, dockerConfig string, platforms []string) error {
 	if err := runner.MkdirAll(workDir); err != nil {
 		return fmt.Errorf("failed to create SBOM download work dir %s: %w", workDir, err)
 	}
@@ -213,7 +232,7 @@ func prepareSbomDownloadFiles(ctx context.Context, runner buildbackend.Runner, w
 		}
 	}
 
-	for _, platform := range sbomDownloadPlatforms {
+	for _, platform := range platforms {
 		archDir := filepath.Join(workDir, platformToArchDir(platform))
 		outputDir := filepath.Join(archDir, "output")
 		if err := runner.MkdirAll(outputDir); err != nil {

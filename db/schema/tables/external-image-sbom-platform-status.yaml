@@ -1,0 +1,44 @@
+database: securebuild
+name: external_image_sbom_platform_status
+schema:
+  postgres:
+    primaryKey:
+    - digest
+    - arch
+    indexes:
+    - name: external_image_sbom_platform_status_created_at_idx
+      columns:
+      - created_at
+    - name: external_image_sbom_platform_status_status_updated_at_idx
+      columns:
+      - status_updated_at
+    - name: external_image_sbom_platform_status_status_updated_idx
+      columns:
+      - status
+      - updated_at
+      - digest
+      - arch
+    columns:
+    - name: digest
+      type: text
+      constraints:
+        notNull: true
+    - name: arch
+      type: text
+      constraints:
+        notNull: true
+    - name: status
+      type: text
+      default: "pending"
+      constraints:
+        notNull: true
+    - name: status_message
+      type: text
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: updated_at
+      type: timestamp with time zone
+    - name: status_updated_at
+      type: timestamp with time zone

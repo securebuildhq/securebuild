@@ -2,6 +2,7 @@ package externalimage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -23,7 +24,29 @@ const (
 // already queued, actively generating, or stored. The advisory lock coordinates
 // all enqueue paths, while the queue's unique dedupe key is a final
 // database-level guard against duplicate unfinished work.
-func EnqueueSBOMWork(ctx context.Context, payload, digest string) (bool, error) {
+func EnqueueSBOMWork(ctx context.Context, payload, digest, arch string) (bool, error) {
+	return enqueueSBOMWork(ctx, payload, digest, arch, false)
+}
+
+// EnqueueExpandedLegacySBOMWork creates platform work while a new worker is
+// processing the parent digest-keyed item. Only this compatibility expansion
+// may ignore unfinished legacy queue rows; platform work remains deduplicated.
+func EnqueueExpandedLegacySBOMWork(ctx context.Context, payload, digest, arch string) (bool, error) {
+	return enqueueSBOMWork(ctx, payload, digest, arch, true)
+}
+
+func enqueueSBOMWork(ctx context.Context, payload, digest, arch string, expandingLegacyWork bool) (bool, error) {
+	var payloadFields map[string]any
+	if err := json.Unmarshal([]byte(payload), &payloadFields); err != nil {
+		return false, fmt.Errorf("failed to decode SBOM work payload: %w", err)
+	}
+	payloadFields["arch"] = arch
+	normalizedPayload, err := json.Marshal(payloadFields)
+	if err != nil {
+		return false, fmt.Errorf("failed to encode SBOM work payload: %w", err)
+	}
+	payload = string(normalizedPayload)
+
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -33,9 +56,20 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest string) (bool, error) 
 	}
 	defer tx.Rollback(ctx)
 
-	lockKey := externalImageSBOMChannel + ":" + digest
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+	// Take the old digest lock first so mixed-version API instances cannot race
+	// a legacy digest-keyed insert against the new platform-keyed insert.
+	legacyLockKey := externalImageSBOMChannel + ":" + digest
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, legacyLockKey); err != nil {
+		return false, fmt.Errorf("failed to lock legacy SBOM enqueue for digest %s: %w", digest, err)
+	}
+
+	dedupeKey := digest + ":" + arch
+	platformLockKey := externalImageSBOMChannel + ":" + dedupeKey
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, platformLockKey); err != nil {
 		return false, fmt.Errorf("failed to lock SBOM enqueue for digest %s: %w", digest, err)
+	}
+	if err := adoptStoredSBOMPlatformStatuses(ctx, tx, digest); err != nil {
+		return false, err
 	}
 
 	generatingCutoff := time.Now().UTC().Add(-externalImageSBOMGeneratingStaleAfter)
@@ -47,21 +81,46 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest string) (bool, error) 
 				FROM work_queue
 				WHERE channel = $1
 				  AND completed_at IS NULL
-				  AND (dedupe_key = $2 OR payload->>'digest' = $2)
+				  AND (
+					dedupe_key = $2
+					OR (payload->>'digest' = $3 AND payload->>'arch' = $4)
+					OR (
+						NOT $7
+						AND (
+							dedupe_key = $3
+							OR (payload->>'digest' = $3 AND COALESCE(payload->>'arch', '') = '')
+						)
+					)
+				  )
 			)
 			OR EXISTS (
 				SELECT 1
-				FROM external_image_sbom_status
-				WHERE digest = $2
-				  AND status = $3
-				  AND COALESCE(status_updated_at, updated_at, created_at) > $4
+				FROM external_image_sbom_platform_status
+				WHERE digest = $3 AND arch = $4
+				  AND status = $5
+				  AND COALESCE(status_updated_at, updated_at, created_at) > $6
+			)
+			OR EXISTS (
+				SELECT 1
+				FROM external_image_sbom_status legacy
+				WHERE legacy.digest = $3
+				  AND legacy.status = $5
+				  AND COALESCE(legacy.status_updated_at, legacy.updated_at, legacy.created_at) > $6
+				  AND NOT EXISTS (
+					SELECT 1
+					FROM external_image_sbom_platform_status platform
+					WHERE platform.digest = legacy.digest
+					  AND platform.arch = 'x86_64'
+					  AND platform.status = $5
+					  AND COALESCE(platform.status_updated_at, platform.updated_at, platform.created_at) > $6
+				  )
 			)
 			OR EXISTS (
 				SELECT 1
 				FROM external_image_sbom
-				WHERE digest = $2
+				WHERE digest = $3 AND arch = $4
 			)
-	`, externalImageSBOMChannel, digest, string(SBOMStatusGenerating), generatingCutoff).Scan(&blocked); err != nil {
+	`, externalImageSBOMChannel, dedupeKey, digest, arch, string(SBOMStatusGenerating), generatingCutoff, expandingLegacyWork).Scan(&blocked); err != nil {
 		return false, fmt.Errorf("failed to check existing SBOM work for digest %s: %w", digest, err)
 	}
 	if blocked {
@@ -81,7 +140,7 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest string) (bool, error) 
 		WHERE channel = $1
 		  AND dedupe_key = $2
 		  AND completed_at IS NOT NULL
-	`, externalImageSBOMChannel, digest); err != nil {
+	`, externalImageSBOMChannel, dedupeKey); err != nil {
 		return false, fmt.Errorf("failed to release completed SBOM dedupe key for digest %s: %w", digest, err)
 	}
 
@@ -95,7 +154,7 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest string) (bool, error) 
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (channel, dedupe_key) DO NOTHING
 		RETURNING id
-	`, id, externalImageSBOMChannel, payload, digest, now, persistence.PriorityNormal).Scan(&id)
+	`, id, externalImageSBOMChannel, payload, dedupeKey, now, persistence.PriorityNormal).Scan(&id)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			if err := tx.Commit(ctx); err != nil {
@@ -107,15 +166,15 @@ func EnqueueSBOMWork(ctx context.Context, payload, digest string) (bool, error) 
 	}
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO external_image_sbom_status
-			(digest, created_at, status, status_message, updated_at, status_updated_at)
-		VALUES ($1, $2, $3, NULL, $2, $2)
-		ON CONFLICT (digest) DO UPDATE
+		INSERT INTO external_image_sbom_platform_status
+			(digest, arch, created_at, status, status_message, updated_at, status_updated_at)
+		VALUES ($1, $2, $3, $4, NULL, $3, $3)
+		ON CONFLICT (digest, arch) DO UPDATE
 		SET status = EXCLUDED.status,
 		    status_message = NULL,
 		    updated_at = EXCLUDED.updated_at,
 		    status_updated_at = EXCLUDED.status_updated_at
-	`, digest, now, string(SBOMStatusPending)); err != nil {
+	`, digest, arch, now, string(SBOMStatusPending)); err != nil {
 		return false, fmt.Errorf("failed to set pending SBOM status for digest %s: %w", digest, err)
 	}
 

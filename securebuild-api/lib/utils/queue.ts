@@ -2,6 +2,7 @@ import { getDB, withTransaction } from "../data/db";
 import { getParam } from "../data/param";
 import * as srs from "secure-random-string";
 import { PoolClient } from "pg";
+import { adoptStoredSBOMPlatformStatuses } from "../externalimage/sbom-status";
 
 interface QueuePayload {
   [key: string]: string | number | boolean | null | undefined | any;
@@ -87,13 +88,44 @@ export async function enqueueExternalImageSBOMWork(
   payload: QueuePayload,
   digest: string,
 ): Promise<string | null> {
+  let firstID: string | null = null;
+  const errors: Error[] = [];
+  for (const arch of ['x86_64', 'aarch64']) {
+    try {
+      const id = await enqueueExternalImageSBOMPlatformWork({ ...payload, arch }, digest, arch);
+      if (firstID === null && id !== null) firstID = id;
+    } catch (error) {
+      console.error(`Failed to enqueue SBOM work for ${digest}/${arch}`, error);
+      errors.push(new Error(`Failed to enqueue SBOM work for ${digest}/${arch}`, { cause: error }));
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, `Failed to enqueue one or more SBOM platforms for ${digest}`);
+  }
+  return firstID;
+}
+
+async function enqueueExternalImageSBOMPlatformWork(
+  payload: QueuePayload,
+  digest: string,
+  arch: string,
+): Promise<string | null> {
   const db = getDB(await getParam("DB_URI"));
+  const dedupeKey = `${digest}:${arch}`;
 
   return withTransaction(db, async (client) => {
+    // Serialize with old SecureBuild instances, which use the digest-only
+    // advisory lock and digest-keyed queue identity.
     await client.query(
       `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
       [`external_image_sbom:${digest}`],
     );
+    await client.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+      [`external_image_sbom:${dedupeKey}`],
+    );
+
+    await adoptStoredSBOMPlatformStatuses(client, digest);
 
     const generatingCutoff = new Date(
       Date.now() - EXTERNAL_IMAGE_SBOM_GENERATING_STALE_AFTER_MS,
@@ -105,42 +137,62 @@ export async function enqueueExternalImageSBOMWork(
            FROM work_queue
            WHERE channel = 'external_image_sbom'
              AND completed_at IS NULL
-             AND (dedupe_key = $1 OR payload->>'digest' = $1)
+             AND (
+               dedupe_key = $1
+               OR (payload->>'digest' = $2 AND payload->>'arch' = $3)
+               OR dedupe_key = $2
+               OR (payload->>'digest' = $2 AND COALESCE(payload->>'arch', '') = '')
+             )
          )
          OR EXISTS (
            SELECT 1
-           FROM external_image_sbom_status
-           WHERE digest = $1
+           FROM external_image_sbom_platform_status
+           WHERE digest = $2 AND arch = $3
              AND status = 'generating'
-             AND COALESCE(status_updated_at, updated_at, created_at) > $2
+             AND COALESCE(status_updated_at, updated_at, created_at) > $4
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM external_image_sbom_status legacy
+           WHERE legacy.digest = $2
+             AND legacy.status = 'generating'
+             AND COALESCE(legacy.status_updated_at, legacy.updated_at, legacy.created_at) > $4
+             AND NOT EXISTS (
+               SELECT 1
+               FROM external_image_sbom_platform_status platform
+               WHERE platform.digest = legacy.digest
+                 AND platform.arch = 'x86_64'
+                 AND platform.status = 'generating'
+                 AND COALESCE(platform.status_updated_at, platform.updated_at, platform.created_at) > $4
+             )
          )
          OR EXISTS (
            SELECT 1
            FROM external_image_sbom
-           WHERE digest = $1
+           WHERE digest = $2 AND arch = $3
          ) AS blocked`,
-      [digest, generatingCutoff],
+      [dedupeKey, digest, arch, generatingCutoff],
     );
     if (existing.rows[0]?.blocked === true) {
       return null;
     }
 
-    const id = await enqueueUniqueWork('external_image_sbom', payload, digest, client);
+    const id = await enqueueUniqueWork('external_image_sbom', payload, dedupeKey, client);
     if (id === null) {
       return null;
     }
 
     const now = new Date();
     await client.query(
-      `INSERT INTO external_image_sbom_status
-         (digest, created_at, status, status_message, updated_at, status_updated_at)
-       VALUES ($1, $2, 'pending', NULL, $2, $2)
-       ON CONFLICT (digest) DO UPDATE
+      `INSERT INTO external_image_sbom_platform_status
+         (digest, arch, created_at, status, status_message, updated_at, status_updated_at)
+       VALUES ($1, $2, $3, 'pending', NULL, $3, $3)
+       ON CONFLICT (digest, arch) DO UPDATE
        SET status = EXCLUDED.status,
            status_message = NULL,
            updated_at = EXCLUDED.updated_at,
            status_updated_at = EXCLUDED.status_updated_at`,
-      [digest, now],
+      [digest, arch, now],
     );
 
     return id;
