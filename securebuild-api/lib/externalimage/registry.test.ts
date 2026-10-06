@@ -261,4 +261,24 @@ describe('getImageDigest OCI support', () => {
     });
     expect(mockedGetImageConfig).not.toHaveBeenCalled();
   });
+
+  test('preserves a schema1 digest without guessing an architecture', async () => {
+    mockedRegistryCall.mockResolvedValue(registryResponse({
+      schemaVersion: 1,
+      name: 'legacy/image',
+      tag: 'latest',
+      fsLayers: [],
+      history: [],
+    }, 'application/vnd.docker.distribution.manifest.v1+prettyjws', 'sha256:schema1'));
+
+    await expect(getImageDescriptor({
+      registry: 'legacy.example.com',
+      repository: 'legacy/image',
+      tag: 'latest',
+    })).resolves.toEqual({
+      digest: 'sha256:schema1',
+      architectures: [],
+    });
+    expect(mockedGetImageConfig).not.toHaveBeenCalled();
+  });
 });

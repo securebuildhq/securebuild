@@ -333,10 +333,7 @@ export async function getImageDescriptor(
         );
         if (architecture) discoveredArchitectures.add(architecture);
       }
-    } else {
-      if (!manifest.config?.digest) {
-        throw new Error('Image manifest does not contain a config digest');
-      }
+    } else if (manifest.config?.digest) {
       const config = await getImageConfig(
         parsed.registry,
         parsed.repository,
@@ -347,6 +344,10 @@ export async function getImageDescriptor(
       );
       const architecture = toExternalImageArchitecture(config.os, config.architecture);
       if (architecture) discoveredArchitectures.add(architecture);
+    } else {
+      // Schema 1 and other config-less manifests can still provide a stable
+      // digest, but not reliable platform metadata. Preserve the digest and
+      // leave architectures empty so callers do not enqueue guessed work.
     }
 
     const architectures = architectureOrder
