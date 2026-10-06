@@ -57,7 +57,12 @@ func getImageDescriptor(ctx context.Context, refStr, registryHost, username, pas
 	}
 
 	var architectures []string
-	if desc.MediaType.IsIndex() {
+	if desc.MediaType.IsSchema1() {
+		// Schema 1 manifests do not expose a config from which we can reliably
+		// discover the platform. Preserve the resolved digest for compatibility,
+		// but do not guess an architecture and enqueue incorrect SBOM work.
+		architectures = nil
+	} else if desc.MediaType.IsIndex() {
 		index, err := desc.ImageIndex()
 		if err != nil {
 			return nil, fmt.Errorf("failed to read image index: %w", err)
