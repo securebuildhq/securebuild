@@ -7,11 +7,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSupportedIndexArchitectures(t *testing.T) {
+func TestSupportedIndexArchitecturesUsesSecureBuildArchitectureFamilies(t *testing.T) {
 	manifest := &v1.IndexManifest{Manifests: []v1.Descriptor{
+		// SecureBuild tracks architecture, not OCI variants. Both arm64
+		// descriptors map to the single aarch64 status and queue identity.
 		{Platform: &v1.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}},
 		{Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}},
 		{Platform: &v1.Platform{OS: "linux", Architecture: "arm64", Variant: "v9"}},
+		// 32-bit ARM variants and unsupported architectures are not aarch64.
+		{Platform: &v1.Platform{OS: "linux", Architecture: "arm", Variant: "v6"}},
+		{Platform: &v1.Platform{OS: "linux", Architecture: "arm", Variant: "v7"}},
 		{Platform: &v1.Platform{OS: "linux", Architecture: "s390x"}},
 		{Platform: &v1.Platform{OS: "windows", Architecture: "amd64"}},
 		{Platform: nil},

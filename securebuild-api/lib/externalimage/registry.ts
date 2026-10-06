@@ -1,5 +1,6 @@
 
-import { getImageConfig, getManifest } from '@snyk/docker-registry-v2-client';
+import { createHash } from 'crypto';
+import { contentTypes, getImageConfig, registryCall, validation } from '@snyk/docker-registry-v2-client';
 import type { types } from '@snyk/docker-registry-v2-client';
 import { ECRClient, GetAuthorizationTokenCommand } from '@aws-sdk/client-ecr';
 import { ECRPUBLICClient, GetAuthorizationTokenCommand as GetAuthorizationTokenCommandPublic } from '@aws-sdk/client-ecr-public';
@@ -23,13 +24,13 @@ export interface ExternalImageDescriptor {
   architectures: ExternalImageArchitecture[];
 }
 
-const supportedPlatforms: Array<{
-  platform: types.Platform;
-  architecture: ExternalImageArchitecture;
-}> = [
-  { platform: { os: 'linux', architecture: 'amd64' }, architecture: 'x86_64' },
-  { platform: { os: 'linux', architecture: 'arm64' }, architecture: 'aarch64' },
-];
+const architectureOrder: ExternalImageArchitecture[] = ['x86_64', 'aarch64'];
+
+interface RegistryManifest {
+  config?: { digest?: string };
+  manifests?: Array<{ platform?: types.Platform }>;
+  mediaType?: string;
+}
 
 function isDockerHub(registry: string): boolean {
   return registry === 'docker.io' || registry === 'index.docker.io';
@@ -234,14 +235,42 @@ function isLocalRegistry(registry: string): boolean {
 }
 
 function toExternalImageArchitecture(os: unknown, architecture: unknown): ExternalImageArchitecture | null {
+  // SecureBuild status and queue identity are architecture-scoped. OCI
+  // variants (for example arm64/v8) remain registry selection metadata and
+  // intentionally collapse into the existing aarch64 architecture.
   if (os !== 'linux') return null;
   if (architecture === 'amd64') return 'x86_64';
   if (architecture === 'arm64') return 'aarch64';
   return null;
 }
 
-function isMissingPlatformError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('no supported manifest found for platform');
+function parseRegistryManifest(body: unknown): RegistryManifest {
+  let parsed = body;
+  if (Buffer.isBuffer(parsed)) parsed = parsed.toString('utf8');
+  if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Registry returned an invalid manifest response');
+  }
+  return parsed as RegistryManifest;
+}
+
+function responseDigest(response: { headers: Record<string, unknown>; raw?: Buffer }, body: unknown): string {
+  const header = response.headers['docker-content-digest'];
+  if (typeof header === 'string' && header !== '') return header;
+
+  const raw = response.raw ?? (Buffer.isBuffer(body)
+    ? body
+    : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body)));
+  return `sha256:${createHash('sha256').update(raw).digest('hex')}`;
+}
+
+function isImageIndex(manifest: RegistryManifest, contentType: unknown): boolean {
+  const normalizedContentType = typeof contentType === 'string' ? contentType.split(';', 1)[0] : '';
+  return normalizedContentType === contentTypes.MANIFEST_LIST_V2 ||
+    normalizedContentType === contentTypes.OCI_INDEX_V1 ||
+    manifest.mediaType === contentTypes.MANIFEST_LIST_V2 ||
+    manifest.mediaType === contentTypes.OCI_INDEX_V1 ||
+    Array.isArray(manifest.manifests);
 }
 
 export async function getImageDescriptor(
@@ -254,6 +283,8 @@ export async function getImageDescriptor(
   try {
     // Get the manifest reference (SHA or tag)
     const manifestRef = parsed.contentSha || parsed.tag;
+    validation.validateRepoOrImageRef(parsed.repository);
+    validation.validateRepoOrImageRef(manifestRef);
     console.log(`Fetching manifest for ${parsed.repository}:${manifestRef} from ${parsed.registry}`);
 
     // Get appropriate credentials (exchange AWS creds for ECR token if needed)
@@ -270,47 +301,42 @@ export async function getImageDescriptor(
     }
 
     // Local registries run without TLS; instruct the registry client to use HTTP.
-    const requestOptions: Record<string, unknown> = {
-      acceptManifest: [
-        'application/vnd.docker.distribution.manifest.v2+json',
-        'application/vnd.docker.distribution.manifest.list.v2+json',
-        'application/vnd.oci.image.manifest.v1+json',
-        'application/vnd.oci.image.index.v1+json'
-      ].join(', ')
-    };
+    const acceptedManifestTypes = [
+      contentTypes.MANIFEST_V2,
+      contentTypes.MANIFEST_LIST_V2,
+      contentTypes.OCI_MANIFEST_V1,
+      contentTypes.OCI_INDEX_V1,
+    ].join(', ');
+    const requestOptions: Record<string, unknown> = {};
     if (isLocalRegistry(parsed.registry)) {
       requestOptions.protocol = 'http:';
     }
 
-    let digest: string | undefined;
+    const response = await registryCall(
+      `${parsed.registry}/v2/${parsed.repository}/manifests/${manifestRef}`,
+      username,
+      password,
+      {
+        ...requestOptions,
+        headers: { Accept: acceptedManifestTypes },
+      },
+    );
+    const manifest = parseRegistryManifest(response.body);
+    const digest = parsed.contentSha || responseDigest(response, response.body);
     const discoveredArchitectures = new Set<ExternalImageArchitecture>();
 
-    for (const candidate of supportedPlatforms) {
-      let manifest;
-      try {
-        manifest = await getManifest(
-          parsed.registry,
-          parsed.repository,
-          manifestRef,
-          username,
-          password,
-          requestOptions,
-          candidate.platform,
+    if (isImageIndex(manifest, response.headers['content-type'])) {
+      for (const descriptor of manifest.manifests ?? []) {
+        const architecture = toExternalImageArchitecture(
+          descriptor.platform?.os,
+          descriptor.platform?.architecture,
         );
-      } catch (error) {
-        if (isMissingPlatformError(error)) continue;
-        throw error;
+        if (architecture) discoveredArchitectures.add(architecture);
       }
-
-      const resolvedDigest = manifest.indexDigest || manifest.manifestDigest;
-      if (!resolvedDigest) {
-        throw new Error('Unable to determine manifest digest');
+    } else {
+      if (!manifest.config?.digest) {
+        throw new Error('Image manifest does not contain a config digest');
       }
-      if (digest && digest !== resolvedDigest) {
-        throw new Error(`Registry returned inconsistent image digests: ${digest} and ${resolvedDigest}`);
-      }
-      digest = resolvedDigest;
-
       const config = await getImageConfig(
         parsed.registry,
         parsed.repository,
@@ -321,16 +347,9 @@ export async function getImageDescriptor(
       );
       const architecture = toExternalImageArchitecture(config.os, config.architecture);
       if (architecture) discoveredArchitectures.add(architecture);
-
-      // A single manifest identifies exactly one platform. Asking the registry
-      // for another platform would return the same manifest again.
-      if (!manifest.indexDigest) break;
     }
 
-    if (!digest) throw new Error('Unable to determine manifest digest');
-
-    const architectures = supportedPlatforms
-      .map(candidate => candidate.architecture)
+    const architectures = architectureOrder
       .filter(architecture => discoveredArchitectures.has(architecture));
     if (architectures.length === 0) {
       throw new Error('Image has no supported linux/amd64 or linux/arm64 platform');

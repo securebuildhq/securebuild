@@ -1,5 +1,5 @@
 import { parseImageRef, getImageDescriptor, getImageDigest } from './registry';
-import { getImageConfig, getManifest } from '@snyk/docker-registry-v2-client';
+import { getImageConfig, registryCall } from '@snyk/docker-registry-v2-client';
 
 // Mock the Snyk client
 jest.mock('@snyk/docker-registry-v2-client');
@@ -85,8 +85,29 @@ describe('parseImageRef', () => {
 });
 
 describe('getImageDigest OCI support', () => {
-  const mockedGetManifest = getManifest as jest.MockedFunction<typeof getManifest>;
+  const mockedRegistryCall = registryCall as jest.MockedFunction<typeof registryCall>;
   const mockedGetImageConfig = getImageConfig as jest.MockedFunction<typeof getImageConfig>;
+
+  function registryResponse(body: object, contentType: string, digest: string) {
+    const raw = Buffer.from(JSON.stringify(body));
+    return {
+      body,
+      raw,
+      headers: {
+        'content-type': contentType,
+        'docker-content-digest': digest,
+      },
+    } as Awaited<ReturnType<typeof registryCall>>;
+  }
+
+  function imageManifest(configDigest = 'sha256:config') {
+    return {
+      schemaVersion: 2,
+      mediaType: 'application/vnd.oci.image.manifest.v1+json',
+      config: { mediaType: 'any', size: 1, digest: configDigest },
+      layers: [],
+    };
+  }
   
   beforeEach(() => {
     jest.clearAllMocks();
@@ -99,15 +120,12 @@ describe('getImageDigest OCI support', () => {
     jest.restoreAllMocks();
   });
 
-  test('should pass OCI Accept headers to getManifest', async () => {
-    // Setup: Mock a successful response
-    mockedGetManifest.mockResolvedValue({
-      schemaVersion: 2,
-      mediaType: 'application/vnd.oci.image.manifest.v1+json',
-      config: { mediaType: 'any', size: 1, digest: 'any' },
-      layers: [],
-      manifestDigest: 'sha256:test123'
-    });
+  test('should pass OCI Accept headers to the top-level manifest request', async () => {
+    mockedRegistryCall.mockResolvedValue(registryResponse(
+      imageManifest(),
+      'application/vnd.oci.image.manifest.v1+json',
+      'sha256:test123',
+    ));
 
     // Act: Call getImageDigest
     await getImageDigest({
@@ -117,32 +135,29 @@ describe('getImageDigest OCI support', () => {
     });
 
     // Assert: Verify OCI headers were included
-    expect(mockedGetManifest).toHaveBeenCalledWith(
-      'ghcr.io',
-      'test/image',
-      'v1',
+    expect(mockedRegistryCall).toHaveBeenCalledWith(
+      'ghcr.io/v2/test/image/manifests/v1',
       undefined,
       undefined,
-      {
-        acceptManifest: expect.stringMatching(/application\/vnd\.oci\.image\.manifest\.v1\+json.*application\/vnd\.oci\.image\.index\.v1\+json/)
-      },
-      { os: 'linux', architecture: 'amd64' }
+      expect.objectContaining({
+        headers: {
+          Accept: expect.stringMatching(/application\/vnd\.oci\.image\.manifest\.v1\+json.*application\/vnd\.oci\.image\.index\.v1\+json/),
+        },
+      }),
     );
   });
 
   test('should fail without OCI headers when registry requires them', async () => {
     // Setup: Mock that simulates OCI-only registry behavior
-    mockedGetManifest.mockImplementation(async (reg, repo, ref, u, p, options) => {
-      if (!options?.acceptManifest?.includes('application/vnd.oci.image.manifest.v1+json')) {
+    mockedRegistryCall.mockImplementation(async (_uri, _username, _password, options) => {
+      if (!options?.headers?.Accept?.includes('application/vnd.oci.image.manifest.v1+json')) {
         throw new Error('OCI index found, but Accept header does not support OCI indexes');
       }
-      return {
-        schemaVersion: 2,
-        mediaType: 'application/vnd.oci.image.manifest.v1+json',
-        config: { mediaType: 'any', size: 1, digest: 'any' },
-        layers: [],
-        manifestDigest: 'sha256:success'
-      };
+      return registryResponse(
+        imageManifest(),
+        'application/vnd.oci.image.manifest.v1+json',
+        'sha256:success',
+      );
     });
 
     // Act & Assert: Should succeed with our OCI headers
@@ -156,13 +171,11 @@ describe('getImageDigest OCI support', () => {
   });
 
   test('should use http protocol for local registries', async () => {
-    mockedGetManifest.mockResolvedValue({
-      schemaVersion: 2,
-      mediaType: 'application/vnd.docker.distribution.manifest.v2+json',
-      config: { mediaType: 'any', size: 1, digest: 'any' },
-      layers: [],
-      manifestDigest: 'sha256:local123'
-    });
+    mockedRegistryCall.mockResolvedValue(registryResponse(
+      imageManifest(),
+      'application/vnd.docker.distribution.manifest.v2+json',
+      'sha256:local123',
+    ));
 
     await getImageDigest({
       registry: 'localhost:5555',
@@ -170,25 +183,20 @@ describe('getImageDigest OCI support', () => {
       tag: 'v1'
     });
 
-    expect(mockedGetManifest).toHaveBeenCalledWith(
-      'localhost:5555',
-      'test/image',
-      'v1',
+    expect(mockedRegistryCall).toHaveBeenCalledWith(
+      'localhost:5555/v2/test/image/manifests/v1',
       undefined,
       undefined,
       expect.objectContaining({ protocol: 'http:' }),
-      { os: 'linux', architecture: 'amd64' }
     );
   });
 
   test('discovers only arm64 for a single-platform arm image', async () => {
-    mockedGetManifest.mockResolvedValue({
-      schemaVersion: 2,
-      mediaType: 'application/vnd.oci.image.manifest.v1+json',
-      config: { mediaType: 'any', size: 1, digest: 'sha256:arm-config' },
-      layers: [],
-      manifestDigest: 'sha256:arm-manifest',
-    });
+    mockedRegistryCall.mockResolvedValue(registryResponse(
+      imageManifest('sha256:arm-config'),
+      'application/vnd.oci.image.manifest.v1+json',
+      'sha256:arm-manifest',
+    ));
     mockedGetImageConfig.mockResolvedValue({ os: 'linux', architecture: 'arm64' });
 
     await expect(getImageDescriptor({
@@ -199,26 +207,26 @@ describe('getImageDigest OCI support', () => {
       digest: 'sha256:arm-manifest',
       architectures: ['aarch64'],
     });
-    expect(mockedGetManifest).toHaveBeenCalledTimes(1);
+    expect(mockedRegistryCall).toHaveBeenCalledTimes(1);
   });
 
-  test('discovers both supported platforms from a multi-architecture index', async () => {
-    mockedGetManifest.mockImplementation(async (_registry, _repository, _reference, _username, _password, _options, platform) => ({
+  test('discovers supported architectures directly from a multi-architecture index', async () => {
+    mockedRegistryCall.mockResolvedValue(registryResponse({
       schemaVersion: 2,
-      mediaType: 'application/vnd.oci.image.manifest.v1+json',
-      config: {
-        mediaType: 'any',
-        size: 1,
-        digest: platform?.architecture === 'arm64' ? 'sha256:arm-config' : 'sha256:amd-config',
-      },
-      layers: [],
-      indexDigest: 'sha256:index',
-      manifestDigest: platform?.architecture === 'arm64' ? 'sha256:arm-manifest' : 'sha256:amd-manifest',
-    }));
-    mockedGetImageConfig.mockImplementation(async (_registry, _repository, digest) => ({
-      os: 'linux',
-      architecture: digest === 'sha256:arm-config' ? 'arm64' : 'amd64',
-    }));
+      mediaType: 'application/vnd.oci.image.index.v1+json',
+      manifests: [
+        { platform: { os: 'linux', architecture: 'amd64' } },
+        { platform: { os: 'linux', architecture: 'arm', variant: 'v6' } },
+        { platform: { os: 'linux', architecture: 'arm', variant: 'v7' } },
+        { platform: { os: 'linux', architecture: 'arm64', variant: 'v8' } },
+        { platform: { os: 'linux', architecture: 'arm64', variant: 'v9' } },
+        { platform: { os: 'linux', architecture: 'ppc64le' } },
+        { platform: { os: 'linux', architecture: 'riscv64' } },
+        { platform: { os: 'linux', architecture: 's390x' } },
+        { platform: { os: 'windows', architecture: 'amd64' } },
+        { platform: { os: 'unknown', architecture: 'unknown' } },
+      ],
+    }, 'application/vnd.oci.image.index.v1+json', 'sha256:index'));
 
     await expect(getImageDescriptor({
       registry: 'ghcr.io',
@@ -228,6 +236,7 @@ describe('getImageDigest OCI support', () => {
       digest: 'sha256:index',
       architectures: ['x86_64', 'aarch64'],
     });
-    expect(mockedGetManifest).toHaveBeenCalledTimes(2);
+    expect(mockedRegistryCall).toHaveBeenCalledTimes(1);
+    expect(mockedGetImageConfig).not.toHaveBeenCalled();
   });
 });
