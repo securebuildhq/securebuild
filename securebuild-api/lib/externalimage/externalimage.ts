@@ -1100,8 +1100,8 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
       }
     }
 
-    // For image tags not found in the result (no access or doesn't exist),
-    // add them with hasAccess: false
+    // Preserve ownership independently from result availability. An owned
+    // digest may not have data for the requested architecture yet.
     for (const digest of digests) {
       if (!resultMap.has(digest)) {
         resultMap.set(digest, {
@@ -1111,7 +1111,7 @@ export const getBatchExternalImageScans = traceFunction('lib.externalimage.getBa
           scanCompletedAt: null,
           digestFirstSeenAt: null,
           imageSizeBytes: 0,
-          hasAccess: false,
+          hasAccess: ownedDigests.has(digest),
           scanStatus: null,
           scanStatusMessage: null,
           scanStatusUpdatedAt: null,

@@ -41,6 +41,24 @@ export interface ExternalScanItem {
   imageTag: string | null;
 }
 
+// During the compatibility window, expose a digest-level legacy status as the
+// documented default x86_64 platform only when no real x86_64 platform row
+// exists. This keeps legacy operational state visible without persisting an
+// invented per-platform result or overriding new status.
+const effectiveExternalSBOMStatuses = `
+  SELECT digest, arch, status, status_message, created_at, updated_at, status_updated_at
+  FROM external_image_sbom_platform_status
+  UNION ALL
+  SELECT legacy.digest, 'x86_64' AS arch, legacy.status, legacy.status_message,
+         legacy.created_at, legacy.updated_at, legacy.status_updated_at
+  FROM external_image_sbom_status legacy
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM external_image_sbom_platform_status platform
+    WHERE platform.digest = legacy.digest AND platform.arch = 'x86_64'
+  )
+`;
+
 function timePeriodToInterval(timePeriod: TimePeriod): string {
   switch (timePeriod) {
     case "1hr":
@@ -85,13 +103,14 @@ export async function getExternalSBOMCounts(
   const db = getDB(await getParam("DB_URI"));
   const result = await db.query(
     `
+    WITH effective_sbom_status AS (${effectiveExternalSBOMStatuses})
     SELECT
       COUNT(*) FILTER (WHERE status = 'pending') AS pending,
       COUNT(*) FILTER (WHERE status = 'generating') AS generating,
       COUNT(*) FILTER (WHERE status = 'succeeded') AS succeeded,
       COUNT(*) FILTER (WHERE status = 'failed') AS failed,
       COUNT(*) AS total
-    FROM external_image_sbom_platform_status
+    FROM effective_sbom_status
     WHERE created_at > now() - $1::interval OR status_updated_at > now() - $1::interval
   `,
     [timePeriodToInterval(timePeriod)]
@@ -240,7 +259,8 @@ export async function listExternalSBOMStatuses(
   const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";
 
   const countResult = await db.query(
-    `SELECT COUNT(*) AS total FROM external_image_sbom_platform_status s ${whereClause}`,
+    `WITH effective_sbom_status AS (${effectiveExternalSBOMStatuses})
+     SELECT COUNT(*) AS total FROM effective_sbom_status s ${whereClause}`,
     queryParams
   );
   const totalCount = parseInt(countResult.rows[0].total);
@@ -251,6 +271,7 @@ export async function listExternalSBOMStatuses(
 
   const result = await db.query(
     `
+    WITH effective_sbom_status AS (${effectiveExternalSBOMStatuses})
     SELECT
       s.digest,
       s.arch,
@@ -262,7 +283,7 @@ export async function listExternalSBOMStatuses(
       t.registry,
       t.image_name,
       t.image_tag
-    FROM external_image_sbom_platform_status s
+    FROM effective_sbom_status s
     LEFT JOIN LATERAL (
       SELECT registry, image_name, image_tag
       FROM external_image_tag
