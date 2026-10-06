@@ -3,6 +3,7 @@ import { getParam } from "../data/param";
 import * as srs from "secure-random-string";
 import { PoolClient } from "pg";
 import { adoptStoredSBOMPlatformStatuses } from "../externalimage/sbom-status";
+import type { ExternalImageArchitecture } from "../externalimage/registry";
 
 interface QueuePayload {
   [key: string]: string | number | boolean | null | undefined | any;
@@ -87,10 +88,11 @@ export async function enqueueUniqueWork(
 export async function enqueueExternalImageSBOMWork(
   payload: QueuePayload,
   digest: string,
+  architectures: ExternalImageArchitecture[],
 ): Promise<string | null> {
   let firstID: string | null = null;
   const errors: Error[] = [];
-  for (const arch of ['x86_64', 'aarch64']) {
+  for (const arch of architectures) {
     try {
       const id = await enqueueExternalImageSBOMPlatformWork({ ...payload, arch }, digest, arch);
       if (firstID === null && id !== null) firstID = id;

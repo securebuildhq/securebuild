@@ -1,5 +1,5 @@
 import { upsertExternalImage } from '@/lib/externalimage/externalimage'
-import { getImageDigest, parseImageRef } from '@/lib/externalimage/registry'
+import { getImageDescriptor, parseImageRef } from '@/lib/externalimage/registry'
 import { enqueueExternalImageSBOMWork } from '@/lib/utils/queue'
 import { NextRequest, NextResponse } from 'next/server'
 import { findServiceAccountWithValue } from '@/lib/team/service-account'
@@ -45,7 +45,8 @@ export async function POST(request: NextRequest) {
     const parsed = parseImageRef(image_url)
     console.log("parsed", parsed)
 
-    const digest = await getImageDigest(parsed, credentials)
+    const descriptor = await getImageDescriptor(parsed, credentials)
+    const { digest } = descriptor
 
     await upsertExternalImage(parsed.registry, parsed.repository, parsed.tag, digest, credentials?.username, credentials?.password, teamId)
 
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
     await enqueueExternalImageSBOMWork({
       digest: digest,
       team_id: teamId,
-    }, digest)
+    }, digest, descriptor.architectures)
 
     return NextResponse.json(
       {

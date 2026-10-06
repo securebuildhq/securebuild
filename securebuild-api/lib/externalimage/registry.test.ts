@@ -1,5 +1,5 @@
-import { parseImageRef, getImageDigest } from './registry';
-import { getManifest } from '@snyk/docker-registry-v2-client';
+import { parseImageRef, getImageDescriptor, getImageDigest } from './registry';
+import { getImageConfig, getManifest } from '@snyk/docker-registry-v2-client';
 
 // Mock the Snyk client
 jest.mock('@snyk/docker-registry-v2-client');
@@ -86,9 +86,11 @@ describe('parseImageRef', () => {
 
 describe('getImageDigest OCI support', () => {
   const mockedGetManifest = getManifest as jest.MockedFunction<typeof getManifest>;
+  const mockedGetImageConfig = getImageConfig as jest.MockedFunction<typeof getImageConfig>;
   
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedGetImageConfig.mockResolvedValue({ os: 'linux', architecture: 'amd64' });
     jest.spyOn(console, 'log').mockImplementation();
     jest.spyOn(console, 'error').mockImplementation();
   });
@@ -124,7 +126,7 @@ describe('getImageDigest OCI support', () => {
       {
         acceptManifest: expect.stringMatching(/application\/vnd\.oci\.image\.manifest\.v1\+json.*application\/vnd\.oci\.image\.index\.v1\+json/)
       },
-      undefined
+      { os: 'linux', architecture: 'amd64' }
     );
   });
 
@@ -175,7 +177,57 @@ describe('getImageDigest OCI support', () => {
       undefined,
       undefined,
       expect.objectContaining({ protocol: 'http:' }),
-      undefined
+      { os: 'linux', architecture: 'amd64' }
     );
+  });
+
+  test('discovers only arm64 for a single-platform arm image', async () => {
+    mockedGetManifest.mockResolvedValue({
+      schemaVersion: 2,
+      mediaType: 'application/vnd.oci.image.manifest.v1+json',
+      config: { mediaType: 'any', size: 1, digest: 'sha256:arm-config' },
+      layers: [],
+      manifestDigest: 'sha256:arm-manifest',
+    });
+    mockedGetImageConfig.mockResolvedValue({ os: 'linux', architecture: 'arm64' });
+
+    await expect(getImageDescriptor({
+      registry: 'ghcr.io',
+      repository: 'test/image',
+      tag: 'arm',
+    })).resolves.toEqual({
+      digest: 'sha256:arm-manifest',
+      architectures: ['aarch64'],
+    });
+    expect(mockedGetManifest).toHaveBeenCalledTimes(1);
+  });
+
+  test('discovers both supported platforms from a multi-architecture index', async () => {
+    mockedGetManifest.mockImplementation(async (_registry, _repository, _reference, _username, _password, _options, platform) => ({
+      schemaVersion: 2,
+      mediaType: 'application/vnd.oci.image.manifest.v1+json',
+      config: {
+        mediaType: 'any',
+        size: 1,
+        digest: platform?.architecture === 'arm64' ? 'sha256:arm-config' : 'sha256:amd-config',
+      },
+      layers: [],
+      indexDigest: 'sha256:index',
+      manifestDigest: platform?.architecture === 'arm64' ? 'sha256:arm-manifest' : 'sha256:amd-manifest',
+    }));
+    mockedGetImageConfig.mockImplementation(async (_registry, _repository, digest) => ({
+      os: 'linux',
+      architecture: digest === 'sha256:arm-config' ? 'arm64' : 'amd64',
+    }));
+
+    await expect(getImageDescriptor({
+      registry: 'ghcr.io',
+      repository: 'test/image',
+      tag: 'multi',
+    })).resolves.toEqual({
+      digest: 'sha256:index',
+      architectures: ['x86_64', 'aarch64'],
+    });
+    expect(mockedGetManifest).toHaveBeenCalledTimes(2);
   });
 });

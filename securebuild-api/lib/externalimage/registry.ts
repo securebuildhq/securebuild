@@ -1,5 +1,6 @@
 
-import { getManifest } from '@snyk/docker-registry-v2-client';
+import { getImageConfig, getManifest } from '@snyk/docker-registry-v2-client';
+import type { types } from '@snyk/docker-registry-v2-client';
 import { ECRClient, GetAuthorizationTokenCommand } from '@aws-sdk/client-ecr';
 import { ECRPUBLICClient, GetAuthorizationTokenCommand as GetAuthorizationTokenCommandPublic } from '@aws-sdk/client-ecr-public';
 
@@ -14,6 +15,21 @@ interface Credentials {
   username?: string;
   password?: string;
 }
+
+export type ExternalImageArchitecture = 'x86_64' | 'aarch64';
+
+export interface ExternalImageDescriptor {
+  digest: string;
+  architectures: ExternalImageArchitecture[];
+}
+
+const supportedPlatforms: Array<{
+  platform: types.Platform;
+  architecture: ExternalImageArchitecture;
+}> = [
+  { platform: { os: 'linux', architecture: 'amd64' }, architecture: 'x86_64' },
+  { platform: { os: 'linux', architecture: 'arm64' }, architecture: 'aarch64' },
+];
 
 function isDockerHub(registry: string): boolean {
   return registry === 'docker.io' || registry === 'index.docker.io';
@@ -217,7 +233,22 @@ function isLocalRegistry(registry: string): boolean {
   return host === 'localhost' || host === '127.0.0.1' || host === '::1';
 }
 
-export async function getImageDigest(parsed: ImageRef, credentials?: Credentials, hideLogs?: boolean): Promise<string> {
+function toExternalImageArchitecture(os: unknown, architecture: unknown): ExternalImageArchitecture | null {
+  if (os !== 'linux') return null;
+  if (architecture === 'amd64') return 'x86_64';
+  if (architecture === 'arm64') return 'aarch64';
+  return null;
+}
+
+function isMissingPlatformError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('no supported manifest found for platform');
+}
+
+export async function getImageDescriptor(
+  parsed: ImageRef,
+  credentials?: Credentials,
+  hideLogs?: boolean,
+): Promise<ExternalImageDescriptor> {
   console.log(`Getting digest(s) for ${parsed.registry}/${parsed.repository}:${parsed.tag}`);
 
   try {
@@ -251,37 +282,70 @@ export async function getImageDigest(parsed: ImageRef, credentials?: Credentials
       requestOptions.protocol = 'http:';
     }
 
-    // Get the manifest using Snyk client
-    const manifest = await getManifest(
-      parsed.registry,
-      parsed.repository,
-      manifestRef,
-      username,
-      password,
-      requestOptions,
-      undefined
-    );
-    
-    // the index digest is the most inclusive digest that contains all the platform digests
-    if (manifest.indexDigest) {
-      if (!hideLogs) {
-        console.log(`Retrieved index digest: ${manifest.indexDigest}`);
+    let digest: string | undefined;
+    const discoveredArchitectures = new Set<ExternalImageArchitecture>();
+
+    for (const candidate of supportedPlatforms) {
+      let manifest;
+      try {
+        manifest = await getManifest(
+          parsed.registry,
+          parsed.repository,
+          manifestRef,
+          username,
+          password,
+          requestOptions,
+          candidate.platform,
+        );
+      } catch (error) {
+        if (isMissingPlatformError(error)) continue;
+        throw error;
       }
-      return manifest.indexDigest;
-    }
-    
-    // fallback to the manifest digest if the index digest is not available
-    if (manifest.manifestDigest) {
-      if (!hideLogs) {
-        console.log(`Retrieved digest: ${manifest.manifestDigest}`);
+
+      const resolvedDigest = manifest.indexDigest || manifest.manifestDigest;
+      if (!resolvedDigest) {
+        throw new Error('Unable to determine manifest digest');
       }
-      return manifest.manifestDigest;
+      if (digest && digest !== resolvedDigest) {
+        throw new Error(`Registry returned inconsistent image digests: ${digest} and ${resolvedDigest}`);
+      }
+      digest = resolvedDigest;
+
+      const config = await getImageConfig(
+        parsed.registry,
+        parsed.repository,
+        manifest.config.digest,
+        username,
+        password,
+        requestOptions,
+      );
+      const architecture = toExternalImageArchitecture(config.os, config.architecture);
+      if (architecture) discoveredArchitectures.add(architecture);
+
+      // A single manifest identifies exactly one platform. Asking the registry
+      // for another platform would return the same manifest again.
+      if (!manifest.indexDigest) break;
     }
 
-    throw new Error('Unable to determine manifest digest');
+    if (!digest) throw new Error('Unable to determine manifest digest');
+
+    const architectures = supportedPlatforms
+      .map(candidate => candidate.architecture)
+      .filter(architecture => discoveredArchitectures.has(architecture));
+    if (architectures.length === 0) {
+      throw new Error('Image has no supported linux/amd64 or linux/arm64 platform');
+    }
+
+    if (!hideLogs) {
+      console.log(`Retrieved digest ${digest} for architectures: ${architectures.join(', ')}`);
+    }
+    return { digest, architectures };
   } catch (error) {
-    console.error(`getImageDigest error:`, error);
-    throw new Error(`Failed to get image digest for ${parsed.registry}/${parsed.repository}:${parsed.tag}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error(`getImageDescriptor error:`, error);
+    throw new Error(`Failed to get image descriptor for ${parsed.registry}/${parsed.repository}:${parsed.tag}: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
+export async function getImageDigest(parsed: ImageRef, credentials?: Credentials, hideLogs?: boolean): Promise<string> {
+  return (await getImageDescriptor(parsed, credentials, hideLogs)).digest;
+}
