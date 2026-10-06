@@ -1,0 +1,22 @@
+pkg/externalimage/digest.go
+  s_9d46a6fc3edeb8::t_ef99bb169e2abb 60-65
+pkg/externalimage/digest_test.go
+  s_9d46a6fc3edeb8::t_ef99bb169e2abb 4-7,11,13,16-44
+  s_9d46a6fc3edeb8::t_1b429076cbc91c 45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "892cc09e9803cee62ca1c56399ff1163a2cc714d",
+  "prompts": {},
+  "sessions": {
+    "s_9d46a6fc3edeb8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cf6-6594-7602-85d1-c2da21371049",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
