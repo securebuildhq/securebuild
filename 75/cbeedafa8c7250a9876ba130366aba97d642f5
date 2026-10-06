@@ -1,0 +1,26 @@
+securebuild-api/lib/externalimage/externalimage.ts
+  s_9d46a6fc3edeb8::t_7c8e1946807195 1103-1104,1114
+securebuild-api/integration/api/v1/external-image/scan.test.ts
+  s_9d46a6fc3edeb8::t_bc90d0f3a8b840 120,122,136-141
+  s_9d46a6fc3edeb8::t_7c8e1946807195 118-119,121,123-135,142-145
+securebuild-app/integration/lib/vulnscan/sbom-statuses.test.ts
+  s_9d46a6fc3edeb8::t_7c8e1946807195 1-75
+securebuild-app/lib/vulnscan/vulnscan.ts
+  s_9d46a6fc3edeb8::t_7c8e1946807195 44-61,106,113,262-263,274,286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "75cbeedafa8c7250a9876ba130366aba97d642f5",
+  "prompts": {},
+  "sessions": {
+    "s_9d46a6fc3edeb8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a10cf6-6594-7602-85d1-c2da21371049",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
