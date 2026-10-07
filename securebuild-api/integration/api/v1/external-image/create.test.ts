@@ -55,7 +55,9 @@ describe('POST/GET /api/v1/external-image', () => {
       }
 
       const result = await env.dbPool.query(
-        `SELECT COUNT(*)::int AS count, ARRAY_AGG(dedupe_key ORDER BY dedupe_key) AS dedupe_keys
+        `SELECT COUNT(*)::int AS count,
+                ARRAY_AGG(dedupe_key ORDER BY dedupe_key) AS dedupe_keys,
+                BOOL_AND((payload->>'architecture_verified')::boolean) AS architectures_verified
          FROM work_queue
          WHERE channel = 'external_image_sbom'
            AND completed_at IS NULL
@@ -64,6 +66,7 @@ describe('POST/GET /api/v1/external-image', () => {
       );
       expect(result.rows[0].count).toBe(1);
       expect(result.rows[0].dedupe_keys).toEqual([`${createdDigest}:x86_64`]);
+      expect(result.rows[0].architectures_verified).toBe(true);
 
       // Dispatch completion releases the queue key before asynchronous Syft
       // generation completes. The generating status must still suppress a

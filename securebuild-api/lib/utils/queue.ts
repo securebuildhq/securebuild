@@ -94,7 +94,11 @@ export async function enqueueExternalImageSBOMWork(
   const errors: Error[] = [];
   for (const arch of architectures) {
     try {
-      const id = await enqueueExternalImageSBOMPlatformWork({ ...payload, arch }, digest, arch);
+      const id = await enqueueExternalImageSBOMPlatformWork({
+        ...payload,
+        arch,
+        architecture_verified: true,
+      }, digest, arch);
       if (firstID === null && id !== null) firstID = id;
     } catch (error) {
       console.error(`Failed to enqueue SBOM work for ${digest}/${arch}`, error);

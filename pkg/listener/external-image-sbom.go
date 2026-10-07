@@ -137,6 +137,7 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		for _, arch := range architectures {
 			platformPayload := p
 			platformPayload.Arch = arch
+			platformPayload.ArchitectureVerified = true
 			payloadJSON, err := json.Marshal(platformPayload)
 			if err != nil {
 				return fmt.Errorf("failed to marshal platform SBOM work: %w", err)
@@ -158,17 +159,36 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 		currentSBOM = &marker
 	}
 
+	_, hasMock := ctx.Value(fetchSBOMFuncKey).(func(context.Context, string, string, string) ([]sbom.SBOMResult, error))
+
+	// Production: SBOMs don't go stale. If we already have one, skip without
+	// requiring registry access to revalidate old work.
+	if currentSBOM != nil && !hasMock {
+		logger.Debug("SBOM already exists for digest and architecture, skipping",
+			zap.String("digest", p.Digest), zap.String("arch", p.Arch))
+		return nil
+	}
+
+	// Platform-specific work created before architecture discovery was added is
+	// untrusted. Revalidate it at pickup so stale queue rows cannot consume a
+	// builder by asking Syft for a platform the immutable digest does not have.
+	architectures, validArchitecture, err := validateSBOMWorkArchitecture(ctx, p, externalImage)
+	if err != nil {
+		return err
+	}
+	if !validArchitecture {
+		logger.Info("discarding stale SBOM work: requested architecture is not present",
+			zap.String("digest", p.Digest),
+			zap.String("arch", p.Arch),
+			zap.Strings("discovered_architectures", architectures))
+		return nil
+	}
+
 	// If a mock SBOM fetch function is injected, use the in-process path.
 	// This is used by integration tests that don't have builder VMs. The
 	// in-process path preserves the rescan logic for test coverage.
-	if _, hasMock := ctx.Value(fetchSBOMFuncKey).(func(context.Context, string, string, string) ([]sbom.SBOMResult, error)); hasMock {
+	if hasMock {
 		return handleExternalImageSbomInProcess(ctx, p, externalImage, currentSBOM, attempt, maxAttempts)
-	}
-
-	// Production: SBOMs don't go stale. If we already have one, skip.
-	if currentSBOM != nil {
-		logger.Debug("SBOM already exists for digest, skipping", zap.String("digest", p.Digest))
-		return nil
 	}
 
 	if err := externalimage.InitializeSBOMStatusPending(ctx, p.Digest, p.Arch); err != nil {
@@ -177,6 +197,26 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 
 	// Dispatch SBOM generation to a builder VM.
 	return handleExternalImageSbomOnBuilder(ctx, p, externalImage)
+}
+
+func validateSBOMWorkArchitecture(ctx context.Context, p types.ExternalImageSbomPayload, externalImage *extimgtypes.ExternalImage) ([]string, bool, error) {
+	if p.ArchitectureVerified {
+		return nil, true, nil
+	}
+	architectures, err := resolveExternalImageArchitectures(ctx, p, externalImage)
+	if err != nil {
+		return nil, false, err
+	}
+	return architectures, containsArchitecture(architectures, p.Arch), nil
+}
+
+func containsArchitecture(architectures []string, target string) bool {
+	for _, architecture := range architectures {
+		if architecture == target {
+			return true
+		}
+	}
+	return false
 }
 
 // handleExternalImageSbomInProcess is the in-process SBOM generation path used
