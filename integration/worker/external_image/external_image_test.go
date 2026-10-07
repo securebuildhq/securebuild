@@ -247,7 +247,11 @@ func TestExternalImageSbomWaitsForBuilderCapacity(t *testing.T) {
 	require.NoError(t, err)
 	ctx = listener.WithSbomDownloadCapacityCache(ctx, cache)
 
-	err = listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{Digest: digest, Arch: "x86_64"})
+	err = listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{
+		Digest:               digest,
+		Arch:                 "x86_64",
+		ArchitectureVerified: true,
+	})
 	require.Error(t, err)
 	var retryAfter *listener.RetryAfterError
 	require.True(t, errors.As(err, &retryAfter))
@@ -408,6 +412,35 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 	assert.Equal(t, []string{
 		legacyQueuedDigest + ":x86_64",
 	}, expandedKeys, "a new worker must expand the legacy parent into only the discovered platform jobs")
+
+	staleDigest := "sha256:test-stale-platform-work-123456789012345678901234567890"
+	require.NoError(t, externalimage.AddExternalImage(ctx, "docker.io", "library/amd64-only", "latest", staleDigest, "", ""))
+	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, staleDigest, "aarch64"))
+	staleWorkCtx := listener.WithMockResolveExternalImageArchitectures(ctx,
+		func(context.Context, listenertypes.ExternalImageSbomPayload, *externalimagetypes.ExternalImage) ([]string, error) {
+			return []string{"x86_64"}, nil
+		})
+	require.NoError(t, listener.HandleExternalImageSbom(staleWorkCtx, listenertypes.ExternalImageSbomPayload{
+		Digest: staleDigest,
+		Arch:   "aarch64",
+	}))
+
+	var staleStatus string
+	require.NoError(t, testDB.Pool.QueryRow(ctx, `
+		SELECT status
+		FROM external_image_sbom_platform_status
+		WHERE digest = $1 AND arch = 'aarch64'
+	`, staleDigest).Scan(&staleStatus))
+	assert.Equal(t, "pending", staleStatus, "discarding stale work must not report a false SBOM success")
+
+	var staleSBOMExists bool
+	require.NoError(t, testDB.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM external_image_sbom
+			WHERE digest = $1 AND arch = 'aarch64'
+		)
+	`, staleDigest).Scan(&staleSBOMExists))
+	assert.False(t, staleSBOMExists, "discarding stale work must not create an SBOM")
 }
 
 func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {
@@ -2112,5 +2145,9 @@ func setupMocks(ctx context.Context,
 ) context.Context {
 	ctx = listener.WithMockFetchSBOM(ctx, mockFetch)
 	ctx = listener.WithMockScanExternalImage(ctx, mockScan)
+	ctx = listener.WithMockResolveExternalImageArchitectures(ctx,
+		func(context.Context, listenertypes.ExternalImageSbomPayload, *externalimagetypes.ExternalImage) ([]string, error) {
+			return []string{"x86_64", "aarch64"}, nil
+		})
 	return ctx
 }

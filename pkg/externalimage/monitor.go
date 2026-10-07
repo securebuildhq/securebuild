@@ -107,7 +107,12 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 				// queue the initial work for SBOM
 				var enqueueErrors []error
 				for _, arch := range descriptor.Architectures {
-					p := listenertypes.ExternalImageSbomPayload{Digest: currentDigest, Arch: arch, TeamID: externalImage.TeamID}
+					p := listenertypes.ExternalImageSbomPayload{
+						Digest:               currentDigest,
+						Arch:                 arch,
+						TeamID:               externalImage.TeamID,
+						ArchitectureVerified: true,
+					}
 					payload, err := json.Marshal(p)
 					if err != nil {
 						enqueueErrors = append(enqueueErrors, fmt.Errorf("failed to marshal SBOM payload for digest %s arch %s: %w", currentDigest, arch, err))

@@ -48,3 +48,45 @@ func TestResolveExternalImageArchitecturesReturnsContextCancellation(t *testing.
 		})
 	}
 }
+
+func TestValidateSBOMWorkArchitecture(t *testing.T) {
+	externalImage := &externalimagetypes.ExternalImage{}
+
+	t.Run("verified work does not resolve the registry again", func(t *testing.T) {
+		resolverCalled := false
+		ctx := WithMockResolveExternalImageArchitectures(context.Background(),
+			func(context.Context, listenertypes.ExternalImageSbomPayload, *externalimagetypes.ExternalImage) ([]string, error) {
+				resolverCalled = true
+				return nil, nil
+			})
+
+		architectures, valid, err := validateSBOMWorkArchitecture(ctx, listenertypes.ExternalImageSbomPayload{
+			Arch:                 "aarch64",
+			ArchitectureVerified: true,
+		}, externalImage)
+		require.NoError(t, err)
+		require.True(t, valid)
+		require.Nil(t, architectures)
+		require.False(t, resolverCalled)
+	})
+
+	t.Run("legacy work is accepted only for a discovered architecture", func(t *testing.T) {
+		ctx := WithMockResolveExternalImageArchitectures(context.Background(),
+			func(context.Context, listenertypes.ExternalImageSbomPayload, *externalimagetypes.ExternalImage) ([]string, error) {
+				return []string{"x86_64"}, nil
+			})
+
+		architectures, valid, err := validateSBOMWorkArchitecture(ctx, listenertypes.ExternalImageSbomPayload{
+			Arch: "aarch64",
+		}, externalImage)
+		require.NoError(t, err)
+		require.False(t, valid)
+		require.Equal(t, []string{"x86_64"}, architectures)
+
+		_, valid, err = validateSBOMWorkArchitecture(ctx, listenertypes.ExternalImageSbomPayload{
+			Arch: "x86_64",
+		}, externalImage)
+		require.NoError(t, err)
+		require.True(t, valid)
+	})
+}
