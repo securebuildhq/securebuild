@@ -35,6 +35,86 @@ func EnqueueExpandedLegacySBOMWork(ctx context.Context, payload, digest, arch st
 	return enqueueSBOMWork(ctx, payload, digest, arch, true)
 }
 
+// EnqueueRecoveredSBOMWork creates replacement work for a download lost with
+// its builder. Job-scoped credentials are cloned so cleanup of the abandoned
+// download cannot revoke the replacement download's credential.
+func EnqueueRecoveredSBOMWork(ctx context.Context, payload, credentialID, teamID string) (string, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to begin recovered SBOM enqueue transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	replacementCredentialID := ""
+	if credentialID != "" {
+		replacementCredentialID, err = securerandom.Hex(12)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate replacement pull credential id: %w", err)
+		}
+
+		err = tx.QueryRow(ctx, `
+			INSERT INTO external_image_pull_credential
+				(id, team_id, registry, image_name, credential_type, username, password,
+				 provider_expires_at, delete_after, created_at)
+			SELECT $1, team_id, registry, image_name, credential_type, username, password,
+			       provider_expires_at, delete_after, NOW()
+			FROM external_image_pull_credential
+			WHERE id = $2
+			  AND team_id = $3
+			  AND delete_after > NOW()
+			  AND (provider_expires_at IS NULL OR provider_expires_at > NOW())
+			RETURNING id
+		`, replacementCredentialID, credentialID, teamID).Scan(&replacementCredentialID)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				return "", fmt.Errorf("pull credential is unavailable for builder recovery")
+			}
+			return "", fmt.Errorf("failed to clone pull credential for builder recovery: %w", err)
+		}
+
+		var payloadFields map[string]any
+		if err := json.Unmarshal([]byte(payload), &payloadFields); err != nil {
+			return "", fmt.Errorf("failed to decode recovered SBOM work payload: %w", err)
+		}
+		payloadFields["credential_id"] = replacementCredentialID
+		normalizedPayload, err := json.Marshal(payloadFields)
+		if err != nil {
+			return "", fmt.Errorf("failed to encode recovered SBOM work payload: %w", err)
+		}
+		payload = string(normalizedPayload)
+	}
+
+	workID, err := securerandom.Hex(6)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate recovered SBOM work id: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO work_queue (id, channel, payload, created_at, priority)
+		VALUES ($1, $2, $3, $4, $5)
+	`, workID, externalImageSBOMChannel, payload, time.Now().UTC(), persistence.PriorityNormal); err != nil {
+		return "", fmt.Errorf("failed to insert recovered SBOM work: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, externalImageSBOMChannel, workID); err != nil {
+		return "", fmt.Errorf("failed to notify recovered SBOM work queue: %w", err)
+	}
+	if credentialID != "" {
+		// The abandoned download has already launched and no longer needs its
+		// database copy. Transfer ownership to the replacement in the same
+		// transaction so failed enqueue attempts retain the original record.
+		if _, err := tx.Exec(ctx, `DELETE FROM external_image_pull_credential WHERE id = $1`, credentialID); err != nil {
+			return "", fmt.Errorf("failed to retire abandoned pull credential: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("failed to commit recovered SBOM work: %w", err)
+	}
+
+	return replacementCredentialID, nil
+}
+
 func enqueueSBOMWork(ctx context.Context, payload, digest, arch string, expandingLegacyWork bool) (bool, error) {
 	var payloadFields map[string]any
 	if err := json.Unmarshal([]byte(payload), &payloadFields); err != nil {

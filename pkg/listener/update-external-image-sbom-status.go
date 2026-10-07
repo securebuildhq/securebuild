@@ -20,7 +20,6 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	listenertypes "github.com/securebuildhq/securebuild/pkg/listener/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
-	"github.com/securebuildhq/securebuild/pkg/persistence"
 	"github.com/securebuildhq/securebuild/pkg/sbom"
 	"github.com/securebuildhq/securebuild/pkg/scan"
 	"github.com/securebuildhq/securebuild/pkg/telemetry"
@@ -626,11 +625,13 @@ func reenqueueSbomDownload(ctx context.Context, teamID, credentialID, digest, ar
 		return fmt.Errorf("failed to marshal re-enqueue SBOM payload: %w", err)
 	}
 
-	if err := persistence.EnqueueWork(ctx, "external_image_sbom", string(payloadBytes)); err != nil {
+	replacementCredentialID, err := externalimage.EnqueueRecoveredSBOMWork(ctx, string(payloadBytes), credentialID, teamID)
+	if err != nil {
 		return fmt.Errorf("failed to enqueue replacement work: %w", err)
 	}
 
 	logger.Info("re-enqueued external image SBOM download",
-		zap.String("digest", digest))
+		zap.String("digest", digest),
+		zap.Bool("credential_cloned", replacementCredentialID != ""))
 	return nil
 }
