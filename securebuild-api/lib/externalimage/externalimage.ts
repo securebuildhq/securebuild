@@ -10,6 +10,9 @@ import {
   adoptStoredSBOMPlatformStatuses,
   adoptTrackedSBOMPlatformStatuses,
 } from './sbom-status';
+import { decryptPassword, encryptPassword } from './credential-crypto';
+
+export { decryptPassword, encryptPassword } from './credential-crypto';
 
 
 export async function upsertExternalImage(registry: string, imageName: string, imageTag: string, digest: string, username: string | null, password: string | null, teamId: string): Promise<TrackedExternalImage> {
@@ -164,85 +167,6 @@ export async function listExternalImages(teamId: string): Promise<TrackedExterna
   }
 }
 
-
-export async function encryptPassword(password: string): Promise<string> {
-  const secretEncoded = process.env.EXTERNAL_REGISTRY_ENCRYPTION_SECRET;
-  if (!secretEncoded) {
-    throw new Error("EXTERNAL_REGISTRY_ENCRYPTION_SECRET environment variable is required");
-  }
-  const secret = Buffer.from(secretEncoded, 'base64').toString('utf-8');
-
-  // Generate a random IV for each encryption
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-
-  // Create a 32-byte key from the secret using SHA-256
-  const keyBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
-
-  // Import the key for AES-GCM
-  const key = await crypto.subtle.importKey(
-    "raw",
-    keyBuffer,
-    { name: "AES-GCM" },
-    false,
-    ["encrypt"]
-  );
-
-  // Encrypt the password
-  const encrypted = await crypto.subtle.encrypt(
-    {
-      name: "AES-GCM",
-      iv: iv,
-    },
-    key,
-    new TextEncoder().encode(password)
-  );
-
-  // Combine IV and encrypted data, then base64 encode
-  const combined = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv);
-  combined.set(new Uint8Array(encrypted), iv.length);
-
-  return Buffer.from(combined).toString('base64');
-}
-
-export async function decryptPassword(encryptedPassword: string): Promise<string> {
-  const secretEncoded = process.env.EXTERNAL_REGISTRY_ENCRYPTION_SECRET;
-  if (!secretEncoded) {
-    throw new Error("EXTERNAL_REGISTRY_ENCRYPTION_SECRET environment variable is required");
-  }
-  const secret = Buffer.from(secretEncoded, 'base64').toString('utf-8');
-
-  // Decode the base64 combined data
-  const combined = Buffer.from(encryptedPassword, 'base64');
-
-  // Extract IV (first 12 bytes) and encrypted data
-  const iv = combined.slice(0, 12);
-  const encrypted = combined.slice(12);
-
-  // Create a 32-byte key from the secret using SHA-256
-  const keyBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
-
-  // Import the key for AES-GCM
-  const key = await crypto.subtle.importKey(
-    "raw",
-    keyBuffer,
-    { name: "AES-GCM" },
-    false,
-    ["decrypt"]
-  );
-
-  // Decrypt the password
-  const decrypted = await crypto.subtle.decrypt(
-    {
-      name: "AES-GCM",
-      iv: iv,
-    },
-    key,
-    encrypted
-  );
-
-  return new TextDecoder().decode(decrypted);
-}
 
 type PublishedScanResultRow = {
   is_in_object_store: boolean;

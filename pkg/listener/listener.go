@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/securebuildhq/securebuild/pkg/externalimage"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
@@ -361,6 +362,21 @@ type queueMessage struct {
 	createdAt    time.Time
 }
 
+func deleteTerminalQueuePullCredential(ctx context.Context, channel string, payload []byte) {
+	if channel != "external_image_sbom" {
+		return
+	}
+	var fields struct {
+		CredentialID string `json:"credential_id"`
+	}
+	if err := json.Unmarshal(payload, &fields); err != nil || fields.CredentialID == "" {
+		return
+	}
+	if err := externalimage.DeleteExternalImagePullCredential(ctx, fields.CredentialID); err != nil {
+		logger.Warn("failed to delete credential for terminal queue item", zap.Error(err))
+	}
+}
+
 // fetchAndLockMessages acquires a pooled connection, runs queue stats and locks
 // the next batch of messages, then releases the connection before returning.
 // Holding the pool connection only for the duration of the queries (instead of
@@ -511,13 +527,16 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 
 			updateConn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
 			if err == nil {
-				updateConn.Exec(ctx, fmt.Sprintf(`
+				_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
 				UPDATE %s
 				SET completed_at = NOW(),
 				    dedupe_key = NULL,
 				    last_error = $2
 				WHERE id = $1`, WorkQueueTable), msg.id, "max retry attempts exceeded")
 				updateConn.Release()
+				if updateErr == nil {
+					deleteTerminalQueuePullCredential(ctx, processor.channel, msg.payload)
+				}
 			}
 			continue
 		}
@@ -587,6 +606,8 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 							messageID, fmt.Sprintf("scheduled retry timed out after %s: %s", retryAfter.MaxAge, retryAfter.Err))
 						if updateErr != nil {
 							logger.Error(fmt.Errorf("failed to mark expired scheduled retry %s as completed: %w", messageID, updateErr))
+						} else {
+							deleteTerminalQueuePullCredential(ctx, processor.channel, messagePayload)
 						}
 						return
 					}
@@ -622,6 +643,8 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 						messageID, handlerErr.Error())
 					if updateErr != nil {
 						logger.Error(fmt.Errorf("failed to mark non-retryable message %s as completed: %w", messageID, updateErr))
+					} else {
+						deleteTerminalQueuePullCredential(ctx, processor.channel, messagePayload)
 					}
 					return
 				}

@@ -12,9 +12,80 @@ interface ImageRef {
   contentSha?: string;
 }
 
-interface Credentials {
+export interface LegacyRegistryCredentials {
+  type?: never;
   username?: string;
   password?: string;
+}
+
+export interface BasicRegistryCredentials {
+  type: 'basic';
+  username: string;
+  password: string;
+}
+
+export interface ECRAuthorizationTokenCredentials {
+  type: 'ecr_authorization_token';
+  username: string;
+  password: string;
+  expires_at: string;
+}
+
+export type TypedRegistryCredentials = BasicRegistryCredentials | ECRAuthorizationTokenCredentials;
+export type RegistryCredentials = LegacyRegistryCredentials | TypedRegistryCredentials;
+type Credentials = { username?: string; password?: string };
+
+export class InvalidRegistryCredentialsError extends Error {}
+
+export function isTypedRegistryCredentials(credentials: RegistryCredentials | undefined): credentials is TypedRegistryCredentials {
+  return credentials?.type === 'basic' || credentials?.type === 'ecr_authorization_token';
+}
+
+export function parseRegistryCredentials(value: unknown): RegistryCredentials | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new InvalidRegistryCredentialsError('credentials must be an object');
+  }
+
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type === undefined) {
+    return {
+      username: typeof candidate.username === 'string' ? candidate.username : undefined,
+      password: typeof candidate.password === 'string' ? candidate.password : undefined,
+    };
+  }
+
+  if (candidate.type !== 'basic' && candidate.type !== 'ecr_authorization_token') {
+    throw new InvalidRegistryCredentialsError('unsupported credential type');
+  }
+  if (typeof candidate.username !== 'string' || candidate.username === '' ||
+      typeof candidate.password !== 'string' || candidate.password === '') {
+    throw new InvalidRegistryCredentialsError('typed credentials require username and password');
+  }
+  if (candidate.type === 'ecr_authorization_token') {
+    if (candidate.username !== 'AWS') {
+      throw new InvalidRegistryCredentialsError('ECR authorization credentials require username AWS');
+    }
+    if (typeof candidate.expires_at !== 'string') {
+      throw new InvalidRegistryCredentialsError('ECR authorization credentials require expires_at');
+    }
+    const expiresAt = new Date(candidate.expires_at);
+    if (Number.isNaN(expiresAt.getTime()) || expiresAt <= new Date()) {
+      throw new InvalidRegistryCredentialsError('ECR authorization credentials are expired or invalid');
+    }
+    return {
+      type: candidate.type,
+      username: candidate.username,
+      password: candidate.password,
+      expires_at: expiresAt.toISOString(),
+    };
+  }
+
+  return {
+    type: candidate.type,
+    username: candidate.username,
+    password: candidate.password,
+  };
 }
 
 export type ExternalImageArchitecture = 'x86_64' | 'aarch64';
@@ -138,9 +209,14 @@ async function getECRCredentials(registry: string, accessKeyId: string, secretAc
 }
 
 // Get credentials for a registry, exchanging AWS creds for ECR token if needed
-async function getCredentialsForRegistry(registry: string, credentials?: Credentials): Promise<Credentials | undefined> {
+async function getCredentialsForRegistry(registry: string, credentials?: RegistryCredentials): Promise<Credentials | undefined> {
   // If image-specific credentials are provided, use them (even if partial - let auth fail naturally)
   if (credentials?.username || credentials?.password) {
+    // Typed credentials are always pull-ready. In particular, typed ECR
+    // credentials must never be interpreted as AWS access keys.
+    if (isTypedRegistryCredentials(credentials)) {
+      return { username: credentials.username, password: credentials.password };
+    }
     // For ECR registries with complete credentials, exchange AWS credentials for ECR token
     // Skip if username is "AWS" (already an ECR token)
     if (isECRRegistry(registry) && credentials.username && credentials.password && credentials.username !== 'AWS') {
@@ -275,7 +351,7 @@ function isImageIndex(manifest: RegistryManifest, contentType: unknown): boolean
 
 export async function getImageDescriptor(
   parsed: ImageRef,
-  credentials?: Credentials,
+  credentials?: RegistryCredentials,
   hideLogs?: boolean,
 ): Promise<ExternalImageDescriptor> {
   console.log(`Getting digest(s) for ${parsed.registry}/${parsed.repository}:${parsed.tag}`);
@@ -363,6 +439,6 @@ export async function getImageDescriptor(
   }
 }
 
-export async function getImageDigest(parsed: ImageRef, credentials?: Credentials, hideLogs?: boolean): Promise<string> {
+export async function getImageDigest(parsed: ImageRef, credentials?: RegistryCredentials, hideLogs?: boolean): Promise<string> {
   return (await getImageDescriptor(parsed, credentials, hideLogs)).digest;
 }
