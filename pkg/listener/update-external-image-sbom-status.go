@@ -121,11 +121,12 @@ func processBuilderSbomDownloads(ctx context.Context, cache *sbom.SbomDownloadCa
 	for _, dd := range downloadDirs {
 		if dd.Metadata.Digest != "" && !dd.AllArchsDone {
 			activeDownloads = append(activeDownloads, sbom.SbomDownloadDirInfo{
-				TeamID:    dd.Metadata.TeamID,
-				Digest:    dd.Metadata.Digest,
-				Arch:      dd.Metadata.Arch,
-				WorkDir:   dd.WorkDir,
-				CreatedAt: dd.Metadata.CreatedAt,
+				TeamID:       dd.Metadata.TeamID,
+				CredentialID: dd.Metadata.CredentialID,
+				Digest:       dd.Metadata.Digest,
+				Arch:         dd.Metadata.Arch,
+				WorkDir:      dd.WorkDir,
+				CreatedAt:    dd.Metadata.CreatedAt,
 			})
 		}
 	}
@@ -300,6 +301,7 @@ func processCompletedSbomDownloadsBatch(ctx context.Context, cache *sbom.SbomDow
 		}
 		cache.RemoveDownload(vm.ID, dd.Metadata.Digest, dd.Metadata.Arch)
 		dirsToCleanup = append(dirsToCleanup, dd.WorkDir)
+		deleteJobScopedPullCredential(ctx, dd.Metadata.CredentialID)
 
 		logger.Info("completed SBOM download collection for digest",
 			zap.String("digest", dd.Metadata.Digest),
@@ -448,6 +450,7 @@ func processSbomDownloadDir(ctx context.Context, cache *sbom.SbomDownloadCapacit
 	if allDone && len(dd.ArchStatuses) > 0 {
 		cleanupSbomDownloadDir(ctx, runner, dd.WorkDir)
 		cache.RemoveDownload(vm.ID, digest, dd.Metadata.Arch)
+		deleteJobScopedPullCredential(ctx, dd.Metadata.CredentialID)
 
 		logger.Info("completed SBOM download collection for digest",
 			zap.String("digest", digest),
@@ -593,7 +596,7 @@ func handleMissingBuilderForSbomDownload(ctx context.Context, cache *sbom.SbomDo
 					zap.String("digest", d.Digest), zap.String("arch", arch), zap.Error(err))
 			}
 		}
-		if err := reenqueueSbomDownload(ctx, d.TeamID, d.Digest, d.Arch); err != nil {
+		if err := reenqueueSbomDownload(ctx, d.TeamID, d.CredentialID, d.Digest, d.Arch); err != nil {
 			logger.Error(fmt.Errorf("failed to re-enqueue external image SBOM download: %w", err),
 				zap.String("digest", d.Digest),
 				zap.String("machineID", machineID))
@@ -611,8 +614,14 @@ func handleMissingBuilderForSbomDownload(ctx context.Context, cache *sbom.SbomDo
 // Builder-loss recovery intentionally bypasses normal digest deduplication:
 // the original dispatch row may still be completing even though the builder
 // and its asynchronous Syft process are already known to be gone.
-func reenqueueSbomDownload(ctx context.Context, teamID, digest, arch string) error {
-	payloadBytes, err := json.Marshal(listenertypes.ExternalImageSbomPayload{Digest: digest, Arch: arch, TeamID: teamID})
+func reenqueueSbomDownload(ctx context.Context, teamID, credentialID, digest, arch string) error {
+	payloadBytes, err := json.Marshal(listenertypes.ExternalImageSbomPayload{
+		Digest:               digest,
+		Arch:                 arch,
+		TeamID:               teamID,
+		CredentialID:         credentialID,
+		ArchitectureVerified: true,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal re-enqueue SBOM payload: %w", err)
 	}

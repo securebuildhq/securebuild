@@ -63,6 +63,14 @@ func startCompletedWorkCleanup(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			deletedCredentials, credentialErr := externalimage.DeleteExpiredExternalImagePullCredentials(ctx)
+			if credentialErr != nil {
+				logger.Warn("failed to clean up expired external image pull credentials", zap.Error(credentialErr))
+			} else if deletedCredentials > 0 {
+				logger.Info("cleaned up expired external image pull credentials",
+					zap.Int64("rows_deleted", deletedCredentials))
+			}
+
 			conn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
 			if err != nil {
 				logger.Warn("failed to get connection for completed work cleanup", zap.Error(err))

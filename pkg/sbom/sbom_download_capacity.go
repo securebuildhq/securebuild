@@ -44,22 +44,24 @@ var ErrNoBuilderAvailableForSbomDownload = fmt.Errorf("no builder available for 
 // directory on the builder. It allows the poller to discover downloads and know
 // which DB rows to update.
 type SbomDownloadMetadata struct {
-	TeamID     string    `json:"team_id,omitempty"`
-	Digest     string    `json:"digest"`
-	Arch       string    `json:"arch,omitempty"`
-	Registry   string    `json:"registry"`
-	ImageName  string    `json:"image_name"`
-	CreatedAt  time.Time `json:"created_at"`
-	RetryCount int       `json:"retry_count"`
+	TeamID       string    `json:"team_id,omitempty"`
+	CredentialID string    `json:"credential_id,omitempty"`
+	Digest       string    `json:"digest"`
+	Arch         string    `json:"arch,omitempty"`
+	Registry     string    `json:"registry"`
+	ImageName    string    `json:"image_name"`
+	CreatedAt    time.Time `json:"created_at"`
+	RetryCount   int       `json:"retry_count"`
 }
 
 // SbomDownloadDirInfo tracks a single active SBOM download directory on a builder.
 type SbomDownloadDirInfo struct {
-	TeamID    string
-	Digest    string
-	Arch      string
-	WorkDir   string
-	CreatedAt time.Time
+	TeamID       string
+	CredentialID string
+	Digest       string
+	Arch         string
+	WorkDir      string
+	CreatedAt    time.Time
 }
 
 // SbomDownloadCapacityCache tracks active SBOM downloads per builder, maintained
@@ -332,11 +334,12 @@ func InitSbomDownloadCapacityCache(ctx context.Context) (*SbomDownloadCapacityCa
 					continue
 				}
 				activeDownloads = append(activeDownloads, SbomDownloadDirInfo{
-					TeamID:    d.Metadata.TeamID,
-					Digest:    d.Metadata.Digest,
-					Arch:      d.Metadata.Arch,
-					WorkDir:   d.WorkDir,
-					CreatedAt: d.Metadata.CreatedAt,
+					TeamID:       d.Metadata.TeamID,
+					CredentialID: d.Metadata.CredentialID,
+					Digest:       d.Metadata.Digest,
+					Arch:         d.Metadata.Arch,
+					WorkDir:      d.WorkDir,
+					CreatedAt:    d.Metadata.CreatedAt,
 				})
 			}
 			cache.SetBuilderDownloads(b.BuilderVM.ID, activeDownloads)

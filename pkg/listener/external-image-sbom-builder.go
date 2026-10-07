@@ -56,7 +56,7 @@ func handleExternalImageSbomOnBuilder(ctx context.Context, p types.ExternalImage
 		return fmt.Errorf("SBOM download capacity cache is not ready")
 	}
 
-	dispatchErr := dispatchSbomDownloadToBuilder(ctx, cache, p.TeamID, p.Digest, p.Arch, externalImage.Registry, externalImage.ImageName)
+	dispatchErr := dispatchSbomDownloadToBuilder(ctx, cache, p.TeamID, p.CredentialID, p.Digest, p.Arch, externalImage.Registry, externalImage.ImageName)
 	if dispatchErr != nil {
 		if errors.Is(dispatchErr, sbom.ErrNoBuilderAvailableForSbomDownload) {
 			if statusErr := externalimage.SetSBOMStatusPending(ctx, p.Digest, p.Arch, sbomWaitingForBuilderStatusText); statusErr != nil {
@@ -80,7 +80,7 @@ func handleExternalImageSbomOnBuilder(ctx context.Context, p types.ExternalImage
 // dispatchSbomDownloadToBuilder handles builder selection, file copy, and syft
 // launch. It reserves a capacity slot atomically and releases it if any step
 // fails before the download is fully launched.
-func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownloadCapacityCache, teamID, digest, arch, registry, imageName string) error {
+func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownloadCapacityCache, teamID, credentialID, digest, arch, registry, imageName string) error {
 	span, ctx := telemetry.StartSpan(ctx, "listener.dispatch_sbom_download_to_builder")
 	defer span.Finish()
 
@@ -107,18 +107,19 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 	}
 	defer runner.Close()
 
-	dockerConfig, err := buildSbomDockerConfig(ctx, teamID, registry, imageName)
+	dockerConfig, err := buildSbomDockerConfig(ctx, teamID, credentialID, registry, imageName)
 	if err != nil {
 		return fmt.Errorf("failed to configure registry authentication: %w", err)
 	}
 
 	metadata := sbom.SbomDownloadMetadata{
-		TeamID:    teamID,
-		Digest:    digest,
-		Arch:      arch,
-		Registry:  registry,
-		ImageName: imageName,
-		CreatedAt: time.Now().UTC(),
+		TeamID:       teamID,
+		CredentialID: credentialID,
+		Digest:       digest,
+		Arch:         arch,
+		Registry:     registry,
+		ImageName:    imageName,
+		CreatedAt:    time.Now().UTC(),
 	}
 	platforms := platformsForArch(arch)
 
@@ -164,11 +165,12 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 	// reflects it immediately.
 	slotReserved = false
 	cache.AddDownload(builderVM.ID, sbom.SbomDownloadDirInfo{
-		TeamID:    teamID,
-		Digest:    digest,
-		Arch:      arch,
-		WorkDir:   workDir,
-		CreatedAt: metadata.CreatedAt,
+		TeamID:       teamID,
+		CredentialID: credentialID,
+		Digest:       digest,
+		Arch:         arch,
+		WorkDir:      workDir,
+		CreatedAt:    metadata.CreatedAt,
 	})
 
 	logger.Info("dispatched external image SBOM download to builder",
@@ -270,7 +272,18 @@ func buildSyftLaunchCommand(workDir, platform, registry, imageName, digest strin
 
 // buildSbomDockerConfig resolves stored registry credentials and returns a
 // Docker config suitable for Syft. An empty string means anonymous access.
-func buildSbomDockerConfig(ctx context.Context, teamID, registry, imageName string) (string, error) {
+func buildSbomDockerConfig(ctx context.Context, teamID, credentialID, registry, imageName string) (string, error) {
+	if credentialID != "" {
+		credential, err := externalimage.GetExternalImagePullCredential(ctx, credentialID, teamID, registry, imageName)
+		if err != nil {
+			return "", fmt.Errorf("failed to get job-scoped pull credential: %w", err)
+		}
+		if credential.Type != "basic" && credential.Type != "ecr_authorization_token" {
+			return "", fmt.Errorf("unsupported job-scoped pull credential type")
+		}
+		return marshalSbomDockerConfig(registry, credential.Username, credential.Password, "")
+	}
+
 	username, password, err := externalimage.GetExternalImageCredentials(ctx, teamID, registry, imageName)
 	if err != nil {
 		return "", fmt.Errorf("failed to get external image credentials: %w", err)

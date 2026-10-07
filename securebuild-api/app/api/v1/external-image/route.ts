@@ -1,5 +1,5 @@
 import { upsertExternalImage } from '@/lib/externalimage/externalimage'
-import { getImageDescriptor, parseImageRef } from '@/lib/externalimage/registry'
+import { getImageDescriptor, InvalidRegistryCredentialsError, isTypedRegistryCredentials, parseImageRef, parseRegistryCredentials } from '@/lib/externalimage/registry'
 import { enqueueExternalImageSBOMWork } from '@/lib/utils/queue'
 import { NextRequest, NextResponse } from 'next/server'
 import { findServiceAccountWithValue } from '@/lib/team/service-account'
@@ -40,7 +40,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
 
-    const { image_url, credentials } = body
+    const { image_url } = body
+    const credentials = parseRegistryCredentials(body.credentials)
 
     const parsed = parseImageRef(image_url)
     console.log("parsed", parsed)
@@ -48,13 +49,18 @@ export async function POST(request: NextRequest) {
     const descriptor = await getImageDescriptor(parsed, credentials)
     const { digest } = descriptor
 
+    const typedCredentials = isTypedRegistryCredentials(credentials) ? credentials : undefined
+    console.info('External image credential contract', {
+      contract: typedCredentials ? 'typed' : credentials ? 'legacy' : 'anonymous',
+      credential_type: typedCredentials?.type,
+    })
     await upsertExternalImage(
       parsed.registry,
       parsed.repository,
       parsed.tag,
       digest,
-      credentials?.username,
-      credentials?.password,
+      typedCredentials ? null : credentials?.username ?? null,
+      typedCredentials ? null : credentials?.password ?? null,
       teamId,
       descriptor.architectures,
       descriptor.platformsResolved,
@@ -72,7 +78,12 @@ export async function POST(request: NextRequest) {
     await enqueueExternalImageSBOMWork({
       digest: digest,
       team_id: teamId,
-    }, digest, descriptor.architectures)
+    }, digest, descriptor.architectures, typedCredentials ? {
+      teamId,
+      registry: parsed.registry,
+      imageName: parsed.repository,
+      credentials: typedCredentials,
+    } : undefined)
 
     return NextResponse.json(
       {
@@ -85,6 +96,12 @@ export async function POST(request: NextRequest) {
       }
     )
   } catch (error) {
+    if (error instanceof InvalidRegistryCredentialsError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 400 },
+      )
+    }
     console.error('Error creating image:', error)
     return NextResponse.json(
       { error: 'Failed to create image' },
