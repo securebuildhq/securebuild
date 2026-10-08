@@ -1,11 +1,13 @@
 import { NextRequest } from 'next/server';
-import { getBatchExternalSboms, type BatchSbomResult } from '@/lib/externalimage/externalimage';
+import { getBatchExternalSboms, getExternalImageSBOM, teamOwnsDigest, type BatchSbomResult } from '@/lib/externalimage/externalimage';
 import { findServiceAccountWithValue } from '@/lib/team/service-account';
 import * as merger from '@/lib/sbom/merger';
 import { GET } from './route';
 
 jest.mock('@/lib/externalimage/externalimage', () => ({
   getBatchExternalSboms: jest.fn(),
+  getExternalImageSBOM: jest.fn(),
+  teamOwnsDigest: jest.fn(),
 }));
 jest.mock('@/lib/externalimage/registry', () => ({ parseImageRef: jest.fn() }));
 jest.mock('@/lib/team/service-account', () => ({ findServiceAccountWithValue: jest.fn() }));
@@ -45,8 +47,16 @@ function result(digest: string, body: string | null): BatchSbomResult {
   };
 }
 
-function request(): NextRequest {
-  return new NextRequest('http://localhost/api/v1/external-image/sbom?digest=sha256:first&digest=sha256:second', {
+function request(arch?: string): NextRequest {
+  const architectureQuery = arch ? `&arch=${encodeURIComponent(arch)}` : '';
+  return new NextRequest(`http://localhost/api/v1/external-image/sbom?digest=sha256:first&digest=sha256:second${architectureQuery}`, {
+    headers: { Authorization: 'Bearer test-token' },
+  });
+}
+
+function singleRequest(arch?: string): NextRequest {
+  const architectureQuery = arch ? `&arch=${encodeURIComponent(arch)}` : '';
+  return new NextRequest(`http://localhost/api/v1/external-image/sbom?digest=sha256:first${architectureQuery}`, {
     headers: { Authorization: 'Bearer test-token' },
   });
 }
@@ -91,6 +101,77 @@ describe('batch SBOM response', () => {
     expect(response.headers.get('X-SecureBuild-Image_Count')).toBe('2');
     expect(response.headers.get('X-SecureBuild-Image_Digest')).toBe('sha256:first,sha256:second');
     expect(response.headers.get('X-SecureBuild-SBOM_Source')).toBe('syft,syft');
+    expect(getBatchExternalSboms).toHaveBeenCalledWith(
+      'test-team',
+      ['sha256:first', 'sha256:second'],
+      'x86_64',
+    );
+  });
+
+  it('returns merged SBOMs for the requested architecture', async () => {
+    jest.mocked(getBatchExternalSboms).mockResolvedValue(new Map([
+      ['sha256:first', result('sha256:first', sbom('first-arm64'))],
+      ['sha256:second', result('sha256:second', sbom('second-arm64'))],
+    ]));
+
+    const response = await GET(request('arm64'));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-SecureBuild-Architecture')).toBe('arm64');
+    expect(getBatchExternalSboms).toHaveBeenCalledWith(
+      'test-team',
+      ['sha256:first', 'sha256:second'],
+      'aarch64',
+    );
+  });
+
+  it('returns a single SBOM for the requested architecture without falling back', async () => {
+    jest.mocked(teamOwnsDigest).mockResolvedValue(true);
+    jest.mocked(getExternalImageSBOM).mockResolvedValue({
+      sbom: sbom('single-arm64'),
+      source: 'syft',
+    });
+
+    const response = await GET(singleRequest('arm64'));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-SecureBuild-Architecture')).toBe('arm64');
+    expect(getExternalImageSBOM).toHaveBeenCalledWith('sha256:first', 'aarch64');
+  });
+
+  it('returns 404 instead of falling back when the requested architecture is unavailable', async () => {
+    jest.mocked(teamOwnsDigest).mockResolvedValue(true);
+    jest.mocked(getExternalImageSBOM).mockResolvedValue(null);
+
+    const response = await GET(singleRequest('arm64'));
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'SBOM not found' });
+    expect(getExternalImageSBOM).toHaveBeenCalledWith('sha256:first', 'aarch64');
+  });
+
+  it('preserves the legacy single-image fallback when architecture is omitted', async () => {
+    jest.mocked(teamOwnsDigest).mockResolvedValue(true);
+    jest.mocked(getExternalImageSBOM).mockResolvedValue({
+      sbom: sbom('legacy-default'),
+      source: 'syft',
+    });
+
+    const response = await GET(singleRequest());
+
+    expect(response.status).toBe(200);
+    expect(response.headers.has('X-SecureBuild-Architecture')).toBe(false);
+    expect(getExternalImageSBOM).toHaveBeenCalledWith('sha256:first', undefined);
+  });
+
+  it('rejects an unsupported architecture', async () => {
+    const response = await GET(request('s390x'));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Invalid architecture. Supported: amd64, arm64',
+    });
+    expect(getBatchExternalSboms).not.toHaveBeenCalled();
   });
 
   it('returns the available SBOM verbatim when another requested SBOM is missing', async () => {

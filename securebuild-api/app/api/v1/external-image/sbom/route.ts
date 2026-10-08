@@ -47,9 +47,22 @@ export async function GET(request: NextRequest) {
       // Support single and multiple images using same parameter names
       const digests = searchParams.getAll('digest') // Single or multiple digests
       const imageURLs = searchParams.getAll('image_url') // Single or multiple image URLs
+      const arch = searchParams.get('arch')
+
+      let dbArch: string | undefined
+      if (arch === 'amd64') {
+        dbArch = 'x86_64'
+      } else if (arch === 'arm64') {
+        dbArch = 'aarch64'
+      } else if (arch !== null) {
+        return NextResponse.json({ error: 'Invalid architecture. Supported: amd64, arm64' }, { status: 400 })
+      }
 
       span?.setAttribute('context.digests.length', digests.length)
       span?.setAttribute('context.image_urls.length', imageURLs.length)
+      if (arch) {
+        span?.setAttribute('context.arch', arch)
+      }
 
       // Validate parameters
       const hasInputs = digests.length > 0 || imageURLs.length > 0
@@ -62,11 +75,11 @@ export async function GET(request: NextRequest) {
 
       // Handle single image (backwards compatibility)
       if (digests.length + imageURLs.length === 1) {
-        return await handleSingleImage(teamId, digests[0] || null, imageURLs[0] || null)
+        return await handleSingleImage(teamId, digests[0] || null, imageURLs[0] || null, dbArch, arch)
       }
 
       // Handle multiple images
-      return await handleMultipleImages(teamId, digests, imageURLs)
+      return await handleMultipleImages(teamId, digests, imageURLs, dbArch, arch)
     } catch (error) {
       console.error('Error retrieving SBOM:', error)
       span?.setAttribute('error.message', error instanceof Error ? error.message : String(error))
@@ -78,7 +91,7 @@ export async function GET(request: NextRequest) {
   })
 }
 
-const handleSingleImage = traceFunction('api.external_image.sbom.handleSingleImage', async (teamId: string, digestParam: string | null, imageURL: string | null): Promise<NextResponse> => {
+const handleSingleImage = traceFunction('api.external_image.sbom.handleSingleImage', async (teamId: string, digestParam: string | null, imageURL: string | null, dbArch?: string, responseArch?: string | null): Promise<NextResponse> => {
   let digest = digestParam
   // If we have an image URL, validate access and get digest
   if (imageURL) {
@@ -110,7 +123,7 @@ const handleSingleImage = traceFunction('api.external_image.sbom.handleSingleIma
     return NextResponse.json({ error: 'SBOM not found' }, { status: 404 })
   }
 
-  const { sbom, source } = (await getExternalImageSBOM(digest)) || { sbom: null, source: null }
+  const { sbom, source } = (await getExternalImageSBOM(digest, dbArch)) || { sbom: null, source: null }
 
   if (!sbom) {
     return NextResponse.json({ error: 'SBOM not found' }, { status: 404 })
@@ -123,19 +136,23 @@ const handleSingleImage = traceFunction('api.external_image.sbom.handleSingleIma
   }
 
   response.headers.set('X-SecureBuild-Image_Digest', digest)
+  if (responseArch) {
+    response.headers.set('X-SecureBuild-Architecture', responseArch)
+  }
 
   return response
 },
   {
-    getTags: (teamId: string, digestParam: string | null, imageURL: string | null) => ({
+    getTags: (teamId: string, digestParam: string | null, imageURL: string | null, dbArch?: string) => ({
       'args.team_id': teamId,
       'args.digest': digestParam,
       'args.image_url': imageURL,
+      'args.arch': dbArch,
     })
   })
 
-const handleMultipleImages = traceFunction('api.external_image.sbom.handleMultipleImages', async (teamId: string, inputDigests: string[], inputImages: string[]): Promise<NextResponse> => {
-  const results = await batchListSboms(teamId, inputDigests, inputImages);
+const handleMultipleImages = traceFunction('api.external_image.sbom.handleMultipleImages', async (teamId: string, inputDigests: string[], inputImages: string[], dbArch?: string, responseArch?: string | null): Promise<NextResponse> => {
+  const results = await batchListSboms(teamId, inputDigests, inputImages, dbArch);
 
   const sbomStrings: string[] = []
   const sbomSources: string[] = []
@@ -178,14 +195,18 @@ const handleMultipleImages = traceFunction('api.external_image.sbom.handleMultip
   }
   response.headers.set('X-SecureBuild-Image_Count', allDigests.size.toString())
   response.headers.set('X-SecureBuild-Image_Digest', Array.from(allDigests).join(','))
+  if (responseArch) {
+    response.headers.set('X-SecureBuild-Architecture', responseArch)
+  }
 
   return response
 },
   {
-    getTags: (teamId: string, inputDigests: string[], inputImages: string[]) => ({
+    getTags: (teamId: string, inputDigests: string[], inputImages: string[], dbArch?: string) => ({
       'args.team_id': teamId,
       'args.digests.length': inputDigests.length,
       'args.images.length': inputImages.length,
+      'args.arch': dbArch,
     })
   })
 
