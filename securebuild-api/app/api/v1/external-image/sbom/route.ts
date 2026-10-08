@@ -1,5 +1,5 @@
 import { getExternalImageDigestForTag, getExternalImageSBOM, getBatchExternalSboms, getBatchDigestsForTags, teamOwnsDigest, type ImageRefTag, BatchSbomResult } from "@/lib/externalimage/externalimage"
-import { parseImageRef } from "@/lib/externalimage/registry"
+import { parseImageRef, type ExternalImageArchitecture } from "@/lib/externalimage/registry"
 import { NextRequest, NextResponse } from "next/server"
 import { findServiceAccountWithValue } from "@/lib/team/service-account"
 import { mergeSBOMs } from "@/lib/sbom/merger"
@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
       const imageURLs = searchParams.getAll('image_url') // Single or multiple image URLs
       const arch = searchParams.get('arch')
 
-      let dbArch: string | undefined
+      let dbArch: ExternalImageArchitecture | undefined
       if (arch === 'amd64') {
         dbArch = 'x86_64'
       } else if (arch === 'arm64') {
@@ -91,7 +91,7 @@ export async function GET(request: NextRequest) {
   })
 }
 
-const handleSingleImage = traceFunction('api.external_image.sbom.handleSingleImage', async (teamId: string, digestParam: string | null, imageURL: string | null, dbArch?: string, responseArch?: string | null): Promise<NextResponse> => {
+const handleSingleImage = traceFunction('api.external_image.sbom.handleSingleImage', async (teamId: string, digestParam: string | null, imageURL: string | null, dbArch?: ExternalImageArchitecture, responseArch?: string | null): Promise<NextResponse> => {
   let digest = digestParam
   // If we have an image URL, validate access and get digest
   if (imageURL) {
@@ -143,7 +143,7 @@ const handleSingleImage = traceFunction('api.external_image.sbom.handleSingleIma
   return response
 },
   {
-    getTags: (teamId: string, digestParam: string | null, imageURL: string | null, dbArch?: string) => ({
+    getTags: (teamId: string, digestParam: string | null, imageURL: string | null, dbArch?: ExternalImageArchitecture) => ({
       'args.team_id': teamId,
       'args.digest': digestParam,
       'args.image_url': imageURL,
@@ -151,7 +151,7 @@ const handleSingleImage = traceFunction('api.external_image.sbom.handleSingleIma
     })
   })
 
-const handleMultipleImages = traceFunction('api.external_image.sbom.handleMultipleImages', async (teamId: string, inputDigests: string[], inputImages: string[], dbArch?: string, responseArch?: string | null): Promise<NextResponse> => {
+const handleMultipleImages = traceFunction('api.external_image.sbom.handleMultipleImages', async (teamId: string, inputDigests: string[], inputImages: string[], dbArch?: ExternalImageArchitecture, responseArch?: string | null): Promise<NextResponse> => {
   const results = await batchListSboms(teamId, inputDigests, inputImages, dbArch);
 
   const sbomStrings: string[] = []
@@ -202,7 +202,7 @@ const handleMultipleImages = traceFunction('api.external_image.sbom.handleMultip
   return response
 },
   {
-    getTags: (teamId: string, inputDigests: string[], inputImages: string[], dbArch?: string) => ({
+    getTags: (teamId: string, inputDigests: string[], inputImages: string[], dbArch?: ExternalImageArchitecture) => ({
       'args.team_id': teamId,
       'args.digests.length': inputDigests.length,
       'args.images.length': inputImages.length,
@@ -217,7 +217,7 @@ type ResultEntry = {
   not_found: boolean
 }
 
-const batchListSboms = traceFunction('api.external_image.sbom.batchListSboms', async (teamId: string, inputDigests: string[], inputImages: string[], arch: string = 'x86_64'): Promise<ResultEntry[]> => {
+const batchListSboms = traceFunction('api.external_image.sbom.batchListSboms', async (teamId: string, inputDigests: string[], inputImages: string[], arch: ExternalImageArchitecture = 'x86_64'): Promise<ResultEntry[]> => {
   const results: ResultEntry[] = []
 
   if (inputDigests.length === 0 && inputImages.length === 0) {
@@ -287,7 +287,7 @@ const batchListSboms = traceFunction('api.external_image.sbom.batchListSboms', a
   return results
 },
   {
-    getTags: (teamId: string, inputDigests: string[], inputImages: string[], arch: string = 'x86_64') => ({
+    getTags: (teamId: string, inputDigests: string[], inputImages: string[], arch: ExternalImageArchitecture = 'x86_64') => ({
       'args.team_id': teamId,
       'args.digests.length': inputDigests.length,
       'args.images.length': inputImages.length,
