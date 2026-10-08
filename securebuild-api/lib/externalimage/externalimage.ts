@@ -6,6 +6,7 @@ import { traceFunction } from '../observability/tracing';
 import { parseUTCTimestamp } from '../utils/timestamp';
 import { enqueueWork } from '../utils/queue';
 import { getRawResult, getParsedResultsDetails, getScanResultObject, getSBOM } from './blobstore';
+import type { ExternalImageArchitecture } from './registry';
 import {
   adoptStoredSBOMPlatformStatuses,
   adoptTrackedSBOMPlatformStatuses,
@@ -305,15 +306,17 @@ export async function getExternalImageCredentials(teamId: string, registry: stri
   }
 }
 
-export const getExternalImageSBOM = traceFunction('lib.externalimage.getExternalImageSBOM', async (digest: string): Promise<{ sbom: string, source: string } | null> => {
+export const getExternalImageSBOM = traceFunction('lib.externalimage.getExternalImageSBOM', async (digest: string, arch?: ExternalImageArchitecture): Promise<{ sbom: string, source: string } | null> => {
   try {
     const db = getDB(await getParam("DB_URI"))
 
     await adoptStoredSBOMPlatformStatuses(db, digest)
 
-    // This compatibility endpoint has no architecture parameter. Prefer the
-    // existing x86_64 default, then fall back to another usable platform so a
-    // missing x86_64 result does not hide a successful sibling SBOM.
+    // Preserve the legacy x86_64-first fallback when no architecture is
+    // requested. An explicit architecture must never fall back to a sibling
+    // platform because callers use it to keep scans and SBOMs in the same scope.
+    const architectureFilter = arch ? 'and esbom.arch = $2' : ''
+    const architectureOrder = arch ? '' : "order by case when esbom.arch = 'x86_64' then 0 else 1 end, esbom.arch"
     const query = `
       select esbom.arch, esbom.source, esbom.is_in_object_store,
              status.status as sbom_status
@@ -322,10 +325,11 @@ export const getExternalImageSBOM = traceFunction('lib.externalimage.getExternal
       where esbom.digest = $1
         and esbom.is_in_object_store = true
         and status.status = 'succeeded'
-      order by case when esbom.arch = 'x86_64' then 0 else 1 end, esbom.arch
+        ${architectureFilter}
+      ${architectureOrder}
       limit 1
     `
-    const result = await db.query(query, [digest])
+    const result = await db.query(query, arch ? [digest, arch] : [digest])
 
     if (result.rows.length === 0) {
       return null
@@ -351,8 +355,9 @@ export const getExternalImageSBOM = traceFunction('lib.externalimage.getExternal
   }
 },
   {
-    getTags: (digest: string) => ({
+    getTags: (digest: string, arch?: ExternalImageArchitecture) => ({
       'args.digest': digest,
+      'args.arch': arch,
     })
   })
 
@@ -936,7 +941,7 @@ export interface BatchScanSummaryResult {
 
 export interface BatchSbomResult {
   digest: string;
-  arch: string | null;
+  arch: ExternalImageArchitecture | null;
   sbom: string | null;
   source: string | null;
   sbomCreatedAt: string | null;
@@ -1225,7 +1230,7 @@ export const getBatchExternalImageScanSummaries = traceFunction('lib.externalima
 export const getBatchExternalSboms = traceFunction('lib.externalimage.getBatchExternalSboms', async (
   teamId: string,
   digests: string[],
-  arch: string
+  arch: ExternalImageArchitecture
 ): Promise<Map<string, BatchSbomResult>> => {
   try {
     const db = getDB(await getParam("DB_URI"))
@@ -1314,7 +1319,7 @@ export const getBatchExternalSboms = traceFunction('lib.externalimage.getBatchEx
   }
 },
   {
-    getTags: (teamId: string, digests: string[], arch: string) => ({
+    getTags: (teamId: string, digests: string[], arch: ExternalImageArchitecture) => ({
       'args.team_id': teamId,
       'args.digests.length': digests.length,
       'args.arch': arch,
