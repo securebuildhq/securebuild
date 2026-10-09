@@ -32,6 +32,10 @@ an inconsistent enrollment timestamp, or a changed key permanently quarantines
 the identity. An original key is still rejected after quarantine. Database
 errors fail the connection without erasing trust or creating a new enrollment.
 The runner does not retry identity failures as transient connection failures.
+Caller cancellation or an expired caller deadline aborts the connection without
+recording an identity/storage failure or replacing the VM's failure diagnostics.
+An internal verification timeout while the caller is still active remains a
+reported storage failure.
 
 Pool assignment and scan/SBOM builder selection exclude unavailable identities.
 Existing running builders with a pending legacy enrollment remain selectable;

@@ -53,3 +53,11 @@ func TestSSHHostKeyCallbackRejectsUnsupportedBackend(t *testing.T) {
 	require.ErrorIs(t, err, ErrSSHHostKeyVerification)
 	require.ErrorContains(t, err, "unsupported_backend")
 }
+
+func TestSSHHostKeyCallbackReturnsCallerCancellationBeforeVerification(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := SSHHostKeyCallback(ctx, types.BuilderVM{ID: "canceled-vm", Type: "cmx"})("unused", nil, nil)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, ErrSSHHostKeyVerification)
+}

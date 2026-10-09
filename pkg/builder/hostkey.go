@@ -43,12 +43,21 @@ func SSHHostKeyCallback(ctx context.Context, vm types.BuilderVM) ssh.HostKeyCall
 		return ssh.InsecureIgnoreHostKey()
 	}
 	return func(addr string, _ net.Addr, key ssh.PublicKey) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if vm.Type != "cmx" && vm.Type != "" {
 			return &SSHHostKeyError{VMID: vm.ID, Reason: "unsupported_backend"}
 		}
 		verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		enrolled, err := verifyCMXHostKey(verifyCtx, vm.ID, key)
+		// Caller cancellation ends this operation; it is not evidence of a bad
+		// VM identity or storage failure. Keep it out of failure diagnostics.
+		// A verifier timeout while the caller is still live remains a failure.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			reason := "storage_error"
 			var identityErr *SSHHostKeyError

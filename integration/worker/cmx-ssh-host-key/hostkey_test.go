@@ -334,6 +334,66 @@ func TestCMXSSHHostKeyTOFU(t *testing.T) {
 		assertRejected(t, vm, "missing_enrollment")
 	})
 
+	for _, deadline := range []bool{false, true} {
+		name := "caller cancellation"
+		if deadline {
+			name = "caller deadline"
+		}
+		t.Run(name+" during verification preserves VM diagnostics", func(t *testing.T) {
+			vm := provision(t)
+			connect(t, vm)
+			builder.GetVMContext(vm.ID).SetFailureDetails("existing failure details")
+			tx, err := db.Pool.Begin(ctx)
+			require.NoError(t, err)
+			defer tx.Rollback(ctx)
+			_, err = tx.Exec(ctx, `SELECT vm_id FROM machine_ssh_host_key WHERE vm_id=$1 FOR UPDATE`, vm.ID)
+			require.NoError(t, err)
+
+			requestCtx, cancel := context.WithCancel(ctx)
+			want := error(context.Canceled)
+			if deadline {
+				cancel()
+				requestCtx, cancel = context.WithTimeout(ctx, 2*time.Second)
+				want = context.DeadlineExceeded
+			}
+			defer cancel()
+			beforeAuth := authentications.Load()
+			results := make(chan error, 1)
+			go func() {
+				client, err := builder.GetSSHClient(requestCtx, vm)
+				if client != nil {
+					_ = client.Close()
+				}
+				results <- err
+			}()
+			require.Eventually(t, func() bool {
+				var waiting bool
+				err := db.Pool.QueryRow(ctx, `SELECT EXISTS (
+					SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'
+					AND query LIKE '%FROM machine_ssh_host_key identity JOIN machine_pool machine%'
+					AND pid <> pg_backend_pid())`).Scan(&waiting)
+				return err == nil && waiting
+			}, time.Second, 10*time.Millisecond, "verification must be waiting on the locked enrollment")
+			if !deadline {
+				cancel()
+			}
+			select {
+			case err := <-results:
+				require.ErrorIs(t, err, want)
+				require.NotErrorIs(t, err, builder.ErrSSHHostKeyVerification)
+			case <-time.After(5 * time.Second):
+				t.Fatal("canceled verification did not return")
+			}
+			require.Equal(t, beforeAuth, authentications.Load(), "cancellation must precede client authentication")
+			_, _, _, details := builder.GetVMContext(vm.ID).GetDebugInfo()
+			require.Equal(t, "existing failure details", details)
+			require.NoError(t, tx.Rollback(ctx))
+			var pinned string
+			require.NoError(t, db.Pool.QueryRow(ctx, `SELECT host_key FROM machine_ssh_host_key WHERE vm_id=$1 AND failed_at IS NULL`, vm.ID).Scan(&pinned))
+			require.Equal(t, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(keyA.PublicKey()))), pinned)
+		})
+	}
+
 	t.Run("database failure cannot bypass verification", func(t *testing.T) {
 		vm := provision(t)
 		beforeAuth := authentications.Load()
