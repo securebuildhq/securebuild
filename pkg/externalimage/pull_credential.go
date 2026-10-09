@@ -2,6 +2,7 @@ package externalimage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -40,10 +41,7 @@ func GetExternalImagePullCredential(ctx context.Context, id, teamID, registry, i
 	var credential PullCredential
 	var encryptedPassword string
 	if err := row.Scan(&credential.Type, &credential.Username, &encryptedPassword); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, fmt.Errorf("pull credential is unavailable")
-		}
-		return nil, fmt.Errorf("read pull credential: %w", err)
+		return nil, pullCredentialReadError(ctx, err)
 	}
 
 	password, err := image.DecryptExternalRegistryPassword(ctx, encryptedPassword)
@@ -52,6 +50,19 @@ func GetExternalImagePullCredential(ctx context.Context, id, teamID, registry, i
 	}
 	credential.Password = password
 	return &credential, nil
+}
+
+func pullCredentialReadError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errors.New("pull credential is unavailable")
+	}
+	return fmt.Errorf("read pull credential: %w", err)
 }
 
 func DeleteExternalImagePullCredential(ctx context.Context, id string) error {
