@@ -676,7 +676,11 @@ func checkAndUpdateVMStatus(ctx context.Context, vmID string) error {
 					logger.Error(fmt.Errorf("build environment setup failed for VM %s, deleting for reprovisioning: %w", vmID, err))
 
 					// Delete the VM so it gets reprovisioned automatically
-					if deleteErr := DeleteVMWithReason(ctx, vmID, TerminationReasonBuildEnvFailed); deleteErr != nil {
+					terminationReason := TerminationReasonBuildEnvFailed
+					if errors.Is(err, ErrSSHHostKeyVerification) {
+						terminationReason = TerminationReasonSSHHostKey
+					}
+					if deleteErr := DeleteVMWithReason(ctx, vmID, terminationReason); deleteErr != nil {
 						logger.Error(fmt.Errorf("failed to delete VM %s after build env setup failure: %w", vmID, deleteErr))
 					}
 				}

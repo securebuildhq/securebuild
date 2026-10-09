@@ -46,6 +46,9 @@ Pool reconciliation retires VMs with unavailable identities through the
 authenticated CMX deletion API and provisions replacements under new VM IDs.
 A concurrent status update or completed setup cannot make a quarantined
 identity eligible again.
+SSH identity failures during environment setup are archived with termination
+reason `ssh_host_key_verification_failed`; ordinary setup failures retain
+`build_env_failed`.
 
 ## Rotation, retirement, and rollout
 

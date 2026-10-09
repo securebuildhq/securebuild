@@ -46,6 +46,7 @@ func TestCMXSSHHostKeyTOFU(t *testing.T) {
 
 	var sequence atomic.Int32
 	var deleted sync.Map
+	var poolVMResponses sync.Map
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "test-token" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -60,8 +61,21 @@ func TestCMXSSHHostKeyTOFU(t *testing.T) {
 			_, _ = io.WriteString(w, `{}`)
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/ttl"):
 			_, _ = io.WriteString(w, `{"vm":{"expires_at":"2030-01-01T00:00:00Z"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/vms":
+			_, _ = io.WriteString(w, `{"vms":[`)
+			for id := int32(1); id <= sequence.Load(); id++ {
+				if id > 1 {
+					_, _ = io.WriteString(w, ",")
+				}
+				_, _ = fmt.Fprintf(w, `{"id":"vm-tofu-%d"}`, id)
+			}
+			_, _ = io.WriteString(w, `]}`)
 		case r.Method == http.MethodGet:
-			_, _ = io.WriteString(w, `{"vm":{"status":"running"}}`)
+			if response, ok := poolVMResponses.Load(strings.TrimPrefix(r.URL.Path, "/v3/vm/")); ok {
+				_, _ = io.WriteString(w, response.(string))
+			} else {
+				_, _ = io.WriteString(w, `{"vm":{"status":"running"}}`)
+			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -134,6 +148,56 @@ func TestCMXSSHHostKeyTOFU(t *testing.T) {
 		require.Equal(t, beforeCommands, commands.Load(), "rejection must precede remote commands and transfers")
 		require.Equal(t, beforeConnections+1, connections.Load(), "identity failures must not be retried")
 	}
+
+	t.Run("pool archives setup identity failures separately from ordinary setup failures", func(t *testing.T) {
+		identityVM := provision(t)
+		connect(t, identityVM)
+		ordinaryVM := provision(t)
+		machineID, err := builder.GetMachineID()
+		require.NoError(t, err)
+		for i, vm := range []buildertypes.BuilderVM{identityVM, ordinaryVM} {
+			architecture := []string{"x86_64", "aarch64"}[i]
+			_, err := db.Pool.Exec(ctx, `UPDATE machine_pool SET machine_id=$2, status='queued', architecture=$3 WHERE id=$1`, vm.ID, machineID, architecture)
+			require.NoError(t, err)
+			poolVMResponses.Store(vm.ID, fmt.Sprintf(`{"vm":{"id":%q,"status":"running","direct_ssh_endpoint":"127.0.0.1","direct_ssh_port":%d,"expires_at":"2030-01-01T00:00:00Z"}}`, vm.ID, port))
+			builder.GetVMContext(vm.ID)
+		}
+		_, err = db.Pool.Exec(ctx, `UPDATE machine_pool SET private_key='invalid' WHERE id=$1`, ordinaryVM.ID)
+		require.NoError(t, err)
+		server.AddHostKey(keyB)
+		defer server.AddHostKey(keyA)
+		beforeAuth, beforeCommands := authentications.Load(), commands.Load()
+		poolParams := *param.GetParam(ctx)
+		poolParams.PoolSize = 1
+		poolCtx, cancel := context.WithCancel(context.WithValue(ctx, param.ParamContextKey, &poolParams))
+		defer cancel()
+		require.NoError(t, builder.CreatePool(poolCtx))
+
+		// Wait for both history records and final pool deletion before stopping
+		// maintenance; setup runs asynchronously after the first five-second tick.
+		require.Eventually(t, func() bool {
+			var retired int
+			err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM machine_pool_history history
+				WHERE id IN ($1,$2) AND NOT EXISTS (SELECT 1 FROM machine_pool WHERE machine_pool.id=history.id)`, identityVM.ID, ordinaryVM.ID).Scan(&retired)
+			return err == nil && retired == 2
+		}, 10*time.Second, 20*time.Millisecond)
+		cancel()
+		var details string
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT failure_details FROM machine_pool_history WHERE id=$1`, identityVM.ID).Scan(&details))
+		require.Contains(t, details, "key_changed")
+		for _, tc := range []struct{ vmID, reason string }{
+			{identityVM.ID, builder.TerminationReasonSSHHostKey},
+			{ordinaryVM.ID, builder.TerminationReasonBuildEnvFailed},
+		} {
+			var reason string
+			require.NoError(t, db.Pool.QueryRow(ctx, `SELECT termination_reason FROM machine_pool_history WHERE id=$1`, tc.vmID).Scan(&reason))
+			require.Equal(t, tc.reason, reason)
+			_, wasDeleted := deleted.Load(tc.vmID)
+			require.True(t, wasDeleted, "setup failure must retire through the authenticated CMX API")
+		}
+		require.Equal(t, beforeAuth, authentications.Load(), "failed setup must not reach client authentication")
+		require.Equal(t, beforeCommands, commands.Load(), "failed setup must not send commands")
+	})
 
 	t.Run("first connection pins the key and reconnects survive storage restart", func(t *testing.T) {
 		vm := provision(t)
