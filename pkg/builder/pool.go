@@ -708,9 +708,12 @@ func checkAndUpdateVMStatus(ctx context.Context, vmID string) error {
 		}
 
 		query := `update machine_pool set status = $1 where id = $2 AND ` + cmxHostKeyEligibleSQL
-		_, err = conn.Exec(ctx, query, response.VM.Status, vmID)
+		result, err := conn.Exec(ctx, query, response.VM.Status, vmID)
 		if err != nil {
 			return fmt.Errorf("failed to update machine status: %w", err)
+		}
+		if result.RowsAffected() == 0 {
+			return machineStatusUpdateError(ctx, conn, vmID, cmxHostKeyEligibleSQL)
 		}
 
 		lastVMState.Status = response.VM.Status
