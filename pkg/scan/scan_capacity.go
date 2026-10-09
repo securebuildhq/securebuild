@@ -515,6 +515,9 @@ func GetRunningBuildersForScan(ctx context.Context) ([]BuilderForScan, error) {
 		       EXISTS (SELECT 1 FROM machine_assignment ma WHERE ma.machine_id = mp.id) AS has_build_assignment
 		FROM machine_pool mp
 		WHERE mp.status = 'running'
+		  AND (mp.type <> 'cmx' OR EXISTS (
+		    SELECT 1 FROM machine_ssh_host_key identity WHERE identity.vm_id = mp.id
+		    AND identity.failed_at IS NULL AND identity.host_key IS NOT NULL AND identity.enrolled_at IS NOT NULL))
 		  AND mp.cleanup_locked_at IS NULL
 		  AND mp.is_on_demand = false
 		ORDER BY
