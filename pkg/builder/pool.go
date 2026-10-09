@@ -668,7 +668,7 @@ func checkAndUpdateVMStatus(ctx context.Context, vmID string) error {
 				return fmt.Errorf("failed to update machine status: %w", err)
 			}
 			if result.RowsAffected() == 0 {
-				return &SSHHostKeyError{VMID: vmID, Reason: "unavailable_enrollment"}
+				return machineStatusUpdateError(ctx, conn, vmID, cmxHostKeyEligibleSQL)
 			}
 
 			go func() {
@@ -841,7 +841,7 @@ func InstallBuildEnv(ctx context.Context, vmID string) error {
 		return fmt.Errorf("failed to update machine %s status to running: %w", vmID, err)
 	}
 	if result.RowsAffected() == 0 {
-		return &SSHHostKeyError{VMID: vmID, Reason: "unavailable_enrollment"}
+		return machineStatusUpdateError(ctx, conn, vmID, cmxHostKeyReadySQL)
 	}
 
 	// Check if this is an on-demand VM with an assigned task

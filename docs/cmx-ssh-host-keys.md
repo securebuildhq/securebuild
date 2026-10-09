@@ -49,6 +49,10 @@ identity eligible again.
 SSH identity failures during environment setup are archived with termination
 reason `ssh_host_key_verification_failed`; ordinary setup failures retain
 `build_env_failed`.
+If concurrent cleanup removes a VM before setup can mark it ready, setup
+reports a missing machine rather than an SSH identity failure. Failed status
+updates re-check the current machine and its identity eligibility; a live CMX
+VM with an unavailable identity still fails closed.
 
 ## Rotation, retirement, and rollout
 

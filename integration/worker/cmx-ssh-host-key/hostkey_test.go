@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -90,6 +92,8 @@ func TestCMXSSHHostKeyTOFU(t *testing.T) {
 	keyA, keyB := newSigner(t), newSigner(t)
 	var authentications, commands, connections atomic.Int32
 	var artifacts sync.Map
+	var toolVersions sync.Map
+	var finalBuildFileCallbacks sync.Map
 	server := &sshd.Server{
 		HostSigners: []sshd.Signer{keyA},
 		ConnCallback: func(_ sshd.Context, conn net.Conn) net.Conn {
@@ -104,10 +108,29 @@ func TestCMXSSHHostKeyTOFU(t *testing.T) {
 			commands.Add(1)
 			command := strings.Join(session.Command(), " ")
 			if strings.HasPrefix(command, "cat > ") {
+				if command == "cat > /home/builder/builder" {
+					_, _ = io.Copy(io.Discard, session)
+					_ = session.Exit(0)
+					return
+				}
 				content, _ := io.ReadAll(session)
 				artifacts.Store(command, string(content))
+				if command == "cat > /home/builder/build-x86_64.env" {
+					if callback, ok := finalBuildFileCallbacks.Load(session.User()); ok {
+						if err := callback.(func() error)(); err != nil {
+							_, _ = fmt.Fprintln(session.Stderr(), err)
+							_ = session.Exit(1)
+							return
+						}
+					}
+				}
 			} else if command == "echo $HOME" {
 				_, _ = io.WriteString(session, "/home/builder\n")
+			} else if strings.HasPrefix(command, "if command -v ") {
+				tool := strings.Fields(command)[3]
+				if version, ok := toolVersions.Load(tool); ok {
+					_, _ = fmt.Fprintf(session, "Version: %s\n", version)
+				}
 			} else {
 				_, _ = io.WriteString(session, "test output\n")
 			}
@@ -197,6 +220,77 @@ func TestCMXSSHHostKeyTOFU(t *testing.T) {
 		}
 		require.Equal(t, beforeAuth, authentications.Load(), "failed setup must not reach client authentication")
 		require.Equal(t, beforeCommands, commands.Load(), "failed setup must not send commands")
+	})
+
+	t.Run("completed setup distinguishes retirement from unavailable identity", func(t *testing.T) {
+		// A normal executable retains the Go module metadata used to select
+		// Anchore tool versions. The SSH server models those tools as installed.
+		driver := filepath.Join(t.TempDir(), "setup-driver")
+		buildCtx, cancelBuild := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancelBuild()
+		output, err := exec.CommandContext(buildCtx, "go", "build", "-o", driver, "./testdata/setup-driver").CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		output, err = exec.CommandContext(buildCtx, driver, "versions").CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+			tool, version, ok := strings.Cut(line, ":")
+			require.True(t, ok)
+			toolVersions.Store(tool, version)
+		}
+		for _, tc := range []struct{ name, mutation, result string }{
+			{"valid identity becomes ready", "", "ready"},
+			{"concurrent retirement", "retire", "missing_machine"},
+			{"lost identity", `DELETE FROM machine_ssh_host_key WHERE vm_id=$1`, "ssh_identity_failure"},
+			{"quarantined identity", `UPDATE machine_ssh_host_key SET failed_at=NOW(), failure_reason='key_changed' WHERE vm_id=$1`, "ssh_identity_failure"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				vm := provision(t)
+				t.Cleanup(func() {
+					require.NoError(t, builder.DeleteVMWithReason(ctx, vm.ID, builder.TerminationReasonManualDeletion))
+				})
+				_, err := db.Pool.Exec(ctx, `UPDATE machine_pool SET username=$1 WHERE id=$1`, vm.ID)
+				require.NoError(t, err)
+				mutationResult := make(chan error, 1)
+				finalBuildFileCallbacks.Store(vm.ID, func() error {
+					var err error
+					if tc.mutation == "retire" {
+						err = builder.DeleteVMWithReason(ctx, vm.ID, builder.TerminationReasonExcess)
+					} else if tc.mutation != "" {
+						_, err = db.Pool.Exec(ctx, tc.mutation, vm.ID)
+					}
+					mutationResult <- err
+					return err
+				})
+				defer finalBuildFileCallbacks.Delete(vm.ID)
+				setupCtx, cancelSetup := context.WithTimeout(ctx, time.Minute)
+				output, err := exec.CommandContext(setupCtx, driver, db.ConnStr, vm.ID).CombinedOutput()
+				cancelSetup()
+				require.NoError(t, err, "%s", output)
+				select {
+				case err := <-mutationResult:
+					require.NoError(t, err)
+				default:
+					t.Fatalf("setup never reached its final transfer: %s", output)
+				}
+				require.Contains(t, string(output), "setup-result:"+tc.result, "%s", output)
+				if tc.mutation == "retire" {
+					var reason string
+					var pin string
+					require.NoError(t, db.Pool.QueryRow(ctx, `SELECT termination_reason FROM machine_pool_history WHERE id=$1`, vm.ID).Scan(&reason))
+					require.Equal(t, builder.TerminationReasonExcess, reason)
+					require.NoError(t, db.Pool.QueryRow(ctx, `SELECT host_key FROM machine_ssh_host_key WHERE vm_id=$1`, vm.ID).Scan(&pin))
+					require.Equal(t, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(keyA.PublicKey()))), pin)
+				} else {
+					var status string
+					require.NoError(t, db.Pool.QueryRow(ctx, `SELECT status FROM machine_pool WHERE id=$1`, vm.ID).Scan(&status))
+					if tc.result == "ready" {
+						require.Equal(t, "running", status)
+					} else {
+						require.Equal(t, "installing", status, "unavailable identities must never become ready")
+					}
+				}
+			})
+		}
 	})
 
 	t.Run("first connection pins the key and reconnects survive storage restart", func(t *testing.T) {

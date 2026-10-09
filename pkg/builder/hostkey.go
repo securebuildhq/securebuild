@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/securebuildhq/securebuild/pkg/builder/types"
 	"github.com/securebuildhq/securebuild/pkg/logger"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
@@ -175,6 +176,25 @@ const cmxHostKeyReadySQL = `(type <> 'cmx' OR EXISTS (
 	AND ((identity.host_key IS NOT NULL AND identity.enrolled_at IS NOT NULL)
 	OR (machine_pool.ssh_host_key_enrollment_source = 'legacy'
 	AND identity.host_key IS NULL AND identity.enrolled_at IS NULL))))`
+
+// A guarded status update can miss a VM removed by concurrent cleanup. Re-read
+// its current state before classifying the miss as an SSH identity failure.
+func machineStatusUpdateError(ctx context.Context, conn *pgxpool.Conn, vmID, eligibilitySQL string) error {
+	var machineType string
+	var eligible bool
+	err := conn.QueryRow(ctx, `SELECT COALESCE(type, ''), COALESCE(`+eligibilitySQL+`, false)
+		FROM machine_pool WHERE id = $1`, vmID).Scan(&machineType, &eligible)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("machine %s removed during status update: %w", vmID, ErrMachineNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("recheck machine %s after status update: %w", vmID, err)
+	}
+	if machineType == "cmx" && !eligible {
+		return &SSHHostKeyError{VMID: vmID, Reason: "unavailable_enrollment"}
+	}
+	return fmt.Errorf("machine %s eligibility changed during status update", vmID)
+}
 
 func cmxHostKeyUnavailable(ctx context.Context, vmID string) (bool, error) {
 	conn, err := persistence.GetPooledPostgresSession(ctx)
