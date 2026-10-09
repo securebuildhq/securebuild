@@ -56,3 +56,5 @@ schema:
       constraints:
         notNull: true
       default: "cmx"
+    - name: ssh_host_key_enrollment_source
+      type: text

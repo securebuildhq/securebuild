@@ -157,10 +157,15 @@ const cmxHostKeyEligibleSQL = `(type <> 'cmx' OR EXISTS (
 	SELECT 1 FROM machine_ssh_host_key identity
 	WHERE identity.vm_id = machine_pool.id AND identity.failed_at IS NULL))`
 
+// Already-running legacy builders remain selectable until their first verified
+// handshake enrolls the pin. Newly provisioned builders must finish setup and
+// enroll before becoming ready. Partial or lost enrollments never qualify.
 const cmxHostKeyReadySQL = `(type <> 'cmx' OR EXISTS (
 	SELECT 1 FROM machine_ssh_host_key identity
 	WHERE identity.vm_id = machine_pool.id AND identity.failed_at IS NULL
-	AND identity.host_key IS NOT NULL AND identity.enrolled_at IS NOT NULL))`
+	AND ((identity.host_key IS NOT NULL AND identity.enrolled_at IS NOT NULL)
+	OR (machine_pool.ssh_host_key_enrollment_source = 'legacy'
+	AND identity.host_key IS NULL AND identity.enrolled_at IS NULL))))`
 
 func cmxHostKeyUnavailable(ctx context.Context, vmID string) (bool, error) {
 	conn, err := persistence.GetPooledPostgresSession(ctx)

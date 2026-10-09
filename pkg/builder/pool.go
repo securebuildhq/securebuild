@@ -1598,13 +1598,13 @@ func provisionVM(ctx context.Context, machineID string, architecture string, dis
 		return types.BuilderVM{}, fmt.Errorf("begin machine enrollment: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	query := `insert into machine_pool (id, machine_id, created_at, expires_at, private_key, username, status, architecture, is_on_demand, type) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	query := `insert into machine_pool (id, machine_id, created_at, expires_at, private_key, username, status, architecture, is_on_demand, type, ssh_host_key_enrollment_source) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'provisioning')`
 	_, err = tx.Exec(ctx, query, vm.ID, machineID, time.Now().UTC(), expiresAt, privateKeyEncoded, "builder", vm.Status, architecture, isOnDemand, "cmx")
 	if err != nil {
 		return types.BuilderVM{}, fmt.Errorf("failed to insert machine into database: %w", err)
 	}
-	// Only provisioning can create an enrollment record. Missing records on an
-	// existing VM must fail closed rather than silently learning a new key.
+	// Provisioning and the one-time startup migration create enrollment records.
+	// Missing records after initialization must fail closed.
 	if _, err := tx.Exec(ctx, `INSERT INTO machine_ssh_host_key (vm_id, created_at) VALUES ($1, NOW())`, vm.ID); err != nil {
 		return types.BuilderVM{}, fmt.Errorf("create SSH host key enrollment: %w", err)
 	}

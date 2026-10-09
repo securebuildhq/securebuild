@@ -176,6 +176,11 @@ func TestCMXSSHHostKeyTOFU(t *testing.T) {
 		}
 		// Even the original key cannot undo quarantine.
 		server.AddHostKey(keyA)
+		// A pre-existing pin from a deployment before the source-marker column
+		// must also survive startup migration, including its quarantine state.
+		_, err = db.Pool.Exec(ctx, `UPDATE machine_pool SET ssh_host_key_enrollment_source=NULL WHERE id=$1`, vm.ID)
+		require.NoError(t, err)
+		require.NoError(t, builder.MigrateMachinePool(ctx))
 		assertRejected(t, vm, "quarantined")
 		require.NoError(t, builder.DeleteVMWithReason(ctx, vm.ID, builder.TerminationReasonSSHHostKey))
 		_, wasDeleted := deleted.Load(vm.ID)
@@ -205,6 +210,7 @@ func TestCMXSSHHostKeyTOFU(t *testing.T) {
 			connect(t, vm)
 			_, err := db.Pool.Exec(ctx, tc.mutation, vm.ID)
 			require.NoError(t, err)
+			require.NoError(t, builder.MigrateMachinePool(ctx))
 			assertRejected(t, vm, tc.reason)
 		})
 	}
@@ -271,6 +277,61 @@ func TestCMXSSHHostKeyTOFU(t *testing.T) {
 		assigned, err := builder.TakeVMWithAssignment(assignCtx, "x86_64", "build_package", "test-task")
 		require.NoError(t, err)
 		require.Equal(t, vm.ID, assigned.ID)
+	})
+
+	t.Run("startup enrolls existing builders without replacing them or losing assignments", func(t *testing.T) {
+		vm := provision(t)
+		// Simulate an existing builder from before the enrollment schema rollout.
+		_, err := db.Pool.Exec(ctx, `UPDATE machine_pool SET status='running', ssh_host_key_enrollment_source=NULL WHERE id=$1`, vm.ID)
+		require.NoError(t, err)
+		_, err = db.Pool.Exec(ctx, `DELETE FROM machine_ssh_host_key WHERE vm_id=$1`, vm.ID)
+		require.NoError(t, err)
+		require.NoError(t, builder.AssignVMToTask(ctx, vm.ID, "build_package", "existing-task", "/home/builder/existing-work"))
+		beforeConnections := connections.Load()
+		results := make(chan error, 4)
+		for range 4 {
+			go func() { results <- builder.MigrateMachinePool(ctx) }()
+		}
+		for range 4 {
+			require.NoError(t, <-results)
+		}
+		require.Equal(t, beforeConnections, connections.Load(), "migration must preserve builders without connecting over SSH")
+		_, wasDeleted := deleted.Load(vm.ID)
+		require.False(t, wasDeleted)
+		var status, source string
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT status,ssh_host_key_enrollment_source FROM machine_pool WHERE id=$1`, vm.ID).Scan(&status, &source))
+		require.Equal(t, "running", status)
+		require.Equal(t, "legacy", source)
+		assignment, err := builder.GetMachineAssignment(ctx, vm.ID)
+		require.NoError(t, err)
+		require.Equal(t, "existing-task", assignment.AssignedTaskID)
+		require.Equal(t, "/home/builder/existing-work", assignment.WorkDir)
+		fleet, err := scan.GetRunningBuildersForScan(ctx)
+		require.NoError(t, err)
+		available := false
+		for _, candidate := range fleet {
+			available = available || candidate.ID == vm.ID
+		}
+		require.True(t, available, "legacy builders must remain selectable before first enrollment")
+		_, err = db.Pool.Exec(ctx, `DELETE FROM machine_assignment WHERE machine_id=$1`, vm.ID)
+		require.NoError(t, err)
+		assignCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		assigned, err := builder.TakeVMWithAssignment(assignCtx, "x86_64", "build_package", "post-rollout-task")
+		require.NoError(t, err)
+		require.Equal(t, vm.ID, assigned.ID)
+		var pinned string
+		require.NoError(t, db.Pool.QueryRow(ctx, `SELECT host_key FROM machine_ssh_host_key WHERE vm_id=$1`, vm.ID).Scan(&pinned))
+		require.Equal(t, strings.TrimSpace(string(ssh.MarshalAuthorizedKey(keyA.PublicKey()))), pinned)
+		server.AddHostKey(keyB)
+		defer server.AddHostKey(keyA)
+		assertRejected(t, vm, "key_changed")
+		require.NoError(t, builder.MigrateMachinePool(ctx))
+		assertRejected(t, vm, "quarantined")
+		_, err = db.Pool.Exec(ctx, `DELETE FROM machine_ssh_host_key WHERE vm_id=$1`, vm.ID)
+		require.NoError(t, err)
+		require.NoError(t, builder.MigrateMachinePool(ctx))
+		assertRejected(t, vm, "missing_enrollment")
 	})
 
 	t.Run("database failure cannot bypass verification", func(t *testing.T) {

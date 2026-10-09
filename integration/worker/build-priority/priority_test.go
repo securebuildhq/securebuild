@@ -69,10 +69,15 @@ func startListener(t *testing.T, ctx context.Context, channel string, handler li
 
 func receive(t *testing.T, started <-chan string) string {
 	t.Helper()
+	return receiveWithin(t, started, 2*time.Second)
+}
+
+func receiveWithin(t *testing.T, started <-chan string, timeout time.Duration) string {
+	t.Helper()
 	select {
 	case id := <-started:
 		return id
-	case <-time.After(2 * time.Second):
+	case <-time.After(timeout):
 		t.Fatal("handler did not start promptly")
 	}
 	return ""
@@ -239,7 +244,10 @@ func TestLockedAndScheduledBuilds(t *testing.T) {
 				}
 				_, err = db.Pool.Exec(ctx, `SELECT pg_notify($1, '')`, channel)
 				require.NoError(t, err)
-				require.Equal(t, "new-waiting", receive(t, started))
+				// A notification can arrive while the prior queue iteration is
+				// finishing. Due work is also polled every five seconds, so allow
+				// that recovery path before declaring the scheduled job lost.
+				require.Equal(t, "new-waiting", receiveWithin(t, started, 10*time.Second))
 				expectedAttempt := 1
 				if state == "locked" {
 					expectedAttempt = 4
