@@ -1,0 +1,23 @@
+pkg/externalimage/pull_credential.go
+  s_23d39fc1a52f75::t_14d38736c8e6b6 63
+  s_23d39fc1a52f75::t_fb2ad1332c967c 5,44,55-62,64-65
+  s_23d39fc1a52f75::t_2187fd090b0670 66-67
+pkg/externalimage/pull_credential_test.go
+  s_23d39fc1a52f75::t_fb2ad1332c967c 1-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe9d72a1d46868b734c03959fab7f95ad598d61b",
+  "prompts": {},
+  "sessions": {
+    "s_23d39fc1a52f75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1133a-c555-79a2-9cfe-9e9dafc1e004",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
