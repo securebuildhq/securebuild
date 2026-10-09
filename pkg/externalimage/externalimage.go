@@ -852,7 +852,8 @@ func ListExternalImagesNeedDigestCheck(ctx context.Context) ([]*types.ExternalIm
 		  on eit.registry = et.registry
 		 and eit.image_name = et.image_name
 		 and eit.image_tag = et.image_tag
-		where et.next_check_digest_at < $1
+		where et.digest_monitoring_enabled = true
+		  and et.next_check_digest_at < $1
 		group by eit.team_id, et.digest, et.registry, et.image_name
 		order by max_created_at desc
 	`

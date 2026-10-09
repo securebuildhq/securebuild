@@ -64,6 +64,9 @@ export async function POST(request: NextRequest) {
       teamId,
       descriptor.architectures,
       descriptor.platformsResolved,
+      // Typed credentials are intentionally scoped to this pull. Do not
+      // schedule a future digest check that would require reusing them.
+      !typedCredentials,
     )
 
     if (!descriptor.platformsResolved) {
