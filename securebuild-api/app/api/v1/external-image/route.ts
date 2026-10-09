@@ -62,6 +62,9 @@ export async function POST(request: NextRequest) {
       typedCredentials ? null : credentials?.username ?? null,
       typedCredentials ? null : credentials?.password ?? null,
       teamId,
+      // Typed credentials are intentionally scoped to this pull. Do not
+      // schedule a future digest check that would require reusing them.
+      !typedCredentials,
     )
 
     if (descriptor.architectures.length === 0) {

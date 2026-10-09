@@ -15,7 +15,16 @@ import { decryptPassword, encryptPassword } from './credential-crypto';
 export { decryptPassword, encryptPassword } from './credential-crypto';
 
 
-export async function upsertExternalImage(registry: string, imageName: string, imageTag: string, digest: string, username: string | null, password: string | null, teamId: string): Promise<TrackedExternalImage> {
+export async function upsertExternalImage(
+  registry: string,
+  imageName: string,
+  imageTag: string,
+  digest: string,
+  username: string | null,
+  password: string | null,
+  teamId: string,
+  digestMonitoringEnabled = true,
+): Promise<TrackedExternalImage> {
   try {
     const db = getDB(await getParam("DB_URI"))
 
@@ -25,8 +34,8 @@ export async function upsertExternalImage(registry: string, imageName: string, i
 
       await client.query(query, [registry, imageName, new Date()])
 
-      const queryTag = `insert into external_image_tag (registry, image_name, image_tag, created_at, last_submitted_at, digest, next_check_digest_at, next_scan_at) values ($1, $2, $3, $4, $4, $5, $6, $7) on conflict (registry, image_name, image_tag) do update set digest = $5, next_check_digest_at = $6, next_scan_at = $7, last_submitted_at = $4`
-      await client.query(queryTag, [registry, imageName, imageTag, new Date(), digest, inFourHours, inFourHours])
+      const queryTag = `insert into external_image_tag (registry, image_name, image_tag, created_at, last_submitted_at, digest, next_check_digest_at, next_scan_at, digest_monitoring_enabled) values ($1, $2, $3, $4, $4, $5, $6, $7, $8) on conflict (registry, image_name, image_tag) do update set digest = $5, next_check_digest_at = $6, next_scan_at = $7, last_submitted_at = $4, digest_monitoring_enabled = $8`
+      await client.query(queryTag, [registry, imageName, imageTag, new Date(), digest, inFourHours, inFourHours, digestMonitoringEnabled])
 
       if (username && password) {
         let encryptedPassword: string | null = null;

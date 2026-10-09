@@ -316,6 +316,13 @@ describe('POST/GET /api/v1/external-image', () => {
       expect(legacyBefore.rows).toHaveLength(1);
       expect(legacyBefore.rows[0].username).toBe('legacy-user');
       expect(legacyBefore.rows[0].password).not.toBe('legacy-password');
+      const legacyMonitoring = await env.dbPool.query(
+        `SELECT digest_monitoring_enabled
+         FROM external_image_tag
+         WHERE registry = $1 AND image_name = 'test-image' AND image_tag = 'latest'`,
+        [registry],
+      );
+      expect(legacyMonitoring.rows).toEqual([{ digest_monitoring_enabled: true }]);
 
       await env.dbPool.query(
         `DELETE FROM work_queue WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1`,
@@ -328,6 +335,12 @@ describe('POST/GET /api/v1/external-image', () => {
         credentials: { type: 'basic', username: 'typed-user', password: 'typed-password' },
       });
       expect(typedResponse.status).toBe(201);
+
+      const duplicateTypedResponse = await env.client.post('/api/v1/external-image', {
+        image_url: env.createImage,
+        credentials: { type: 'basic', username: 'typed-user', password: 'typed-password' },
+      });
+      expect(duplicateTypedResponse.status).toBe(201);
 
       const queued = await env.dbPool.query(
         `SELECT q.payload->>'credential_id' AS credential_id,
@@ -358,6 +371,14 @@ describe('POST/GET /api/v1/external-image', () => {
         [SEED_TEAM_ID, registry],
       );
       expect(legacyAfter.rows).toEqual(legacyBefore.rows);
+
+      const typedMonitoring = await env.dbPool.query(
+        `SELECT digest_monitoring_enabled
+         FROM external_image_tag
+         WHERE registry = $1 AND image_name = 'test-image' AND image_tag = 'latest'`,
+        [registry],
+      );
+      expect(typedMonitoring.rows).toEqual([{ digest_monitoring_enabled: false }]);
     });
   });
 
