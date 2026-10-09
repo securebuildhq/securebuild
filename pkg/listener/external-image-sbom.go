@@ -50,12 +50,12 @@ func WithMockResolveExternalImageArchitectures(ctx context.Context, mock func(co
 
 // getFetchSBOMFunc returns the SBOM fetch function from the context if injected,
 // otherwise falls back to the real implementation.
-func getFetchSBOMFunc(ctx context.Context, teamID string) func(context.Context, string, string, string) ([]sbom.SBOMResult, error) {
+func getFetchSBOMFunc(ctx context.Context, teamID, credentialID string) func(context.Context, string, string, string) ([]sbom.SBOMResult, error) {
 	if f, ok := ctx.Value(fetchSBOMFuncKey).(func(context.Context, string, string, string) ([]sbom.SBOMResult, error)); ok {
 		return f
 	}
 	return func(ctx context.Context, registry, imageName, digest string) ([]sbom.SBOMResult, error) {
-		return sbom.FetchSBOM(ctx, teamID, registry, imageName, digest)
+		return sbom.FetchSBOMWithPullCredential(ctx, teamID, credentialID, registry, imageName, digest)
 	}
 }
 
@@ -75,7 +75,17 @@ func resolveExternalImageArchitectures(ctx context.Context, p types.ExternalImag
 	if f, ok := ctx.Value(resolveExternalImageArchitecturesKey).(func(context.Context, types.ExternalImageSbomPayload, *extimgtypes.ExternalImage) ([]string, error)); ok {
 		return f(ctx, p, externalImage)
 	}
-	username, password, err := externalimage.GetExternalImageCredentials(ctx, p.TeamID, externalImage.Registry, externalImage.ImageName)
+	var username, password string
+	var err error
+	if p.CredentialID != "" {
+		credential, credentialErr := externalimage.GetExternalImagePullCredential(ctx, p.CredentialID, p.TeamID, externalImage.Registry, externalImage.ImageName)
+		if credentialErr != nil {
+			return nil, fmt.Errorf("failed to get job-scoped pull credential: %w", credentialErr)
+		}
+		username, password = credential.Username, credential.Password
+	} else {
+		username, password, err = externalimage.GetExternalImageCredentials(ctx, p.TeamID, externalImage.Registry, externalImage.ImageName)
+	}
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
@@ -123,6 +133,9 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 	}
 
 	if p.Arch == "" {
+		if p.CredentialID != "" {
+			return NewNonRetryableError(fmt.Errorf("job-scoped credential requires architecture-scoped work"))
+		}
 		architectures, err := resolveExternalImageArchitectures(ctx, p, externalImage)
 		if err != nil {
 			return err
@@ -166,6 +179,7 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 	if currentSBOM != nil && !hasMock {
 		logger.Debug("SBOM already exists for digest and architecture, skipping",
 			zap.String("digest", p.Digest), zap.String("arch", p.Arch))
+		deleteJobScopedPullCredential(ctx, p.CredentialID)
 		return nil
 	}
 
@@ -181,6 +195,7 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 			zap.String("digest", p.Digest),
 			zap.String("arch", p.Arch),
 			zap.Strings("discovered_architectures", architectures))
+		deleteJobScopedPullCredential(ctx, p.CredentialID)
 		return nil
 	}
 
@@ -219,10 +234,24 @@ func containsArchitecture(architectures []string, target string) bool {
 	return false
 }
 
+func deleteJobScopedPullCredential(ctx context.Context, credentialID string) {
+	if credentialID == "" {
+		return
+	}
+	if err := externalimage.DeleteExternalImagePullCredential(ctx, credentialID); err != nil {
+		logger.Warn("failed to delete job-scoped pull credential", zap.Error(err))
+	}
+}
+
 // handleExternalImageSbomInProcess is the in-process SBOM generation path used
 // by integration tests that inject mock SBOM fetch functions. It preserves the
 // rescan logic (EnqueueRescanAfter) for test coverage.
-func handleExternalImageSbomInProcess(ctx context.Context, p types.ExternalImageSbomPayload, externalImage *extimgtypes.ExternalImage, currentSBOM *string, attempt, maxAttempts int) error {
+func handleExternalImageSbomInProcess(ctx context.Context, p types.ExternalImageSbomPayload, externalImage *extimgtypes.ExternalImage, currentSBOM *string, attempt, maxAttempts int) (returnErr error) {
+	defer func() {
+		if p.CredentialID != "" && (returnErr == nil || IsNonRetryableError(returnErr) || attempt >= maxAttempts) {
+			deleteJobScopedPullCredential(ctx, p.CredentialID)
+		}
+	}()
 	// For rescan requests, check if we need to regenerate SBOMs to populate
 	// missing image_digest metadata. If not, just run the scan.
 	if currentSBOM != nil && p.EnqueueRescanAfter {
@@ -265,7 +294,7 @@ func handleExternalImageSbomInProcess(ctx context.Context, p types.ExternalImage
 		logger.Warnf("failed to set SBOM status to generating for digest %s: %s", p.Digest, err.Error())
 	}
 
-	sbomResults, err := getFetchSBOMFunc(ctx, p.TeamID)(ctx, externalImage.Registry, externalImage.ImageName, p.Digest)
+	sbomResults, err := getFetchSBOMFunc(ctx, p.TeamID, p.CredentialID)(ctx, externalImage.Registry, externalImage.ImageName, p.Digest)
 	if err != nil {
 		recordSBOMFailure(ctx, p.Digest, p.Arch, externalimage.NewScanFailureError(externalimage.ErrFetchSBOM, fmt.Sprintf("failed to fetch SBOM: %s", err.Error())), true, attempt, maxAttempts)
 		return fmt.Errorf("failed to fetch sbom: %w", err)

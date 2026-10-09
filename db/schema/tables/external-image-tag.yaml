@@ -40,6 +40,11 @@ schema:
       type: timestamp with time zone
       constraints:
         notNull: true
+    - name: digest_monitoring_enabled
+      type: boolean
+      default: "true"
+      constraints:
+        notNull: true
     - name: next_scan_at
       type: timestamp with time zone
       constraints:

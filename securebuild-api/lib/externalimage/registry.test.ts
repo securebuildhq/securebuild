@@ -1,4 +1,4 @@
-import { parseImageRef, getImageDescriptor, getImageDigest } from './registry';
+import { parseImageRef, getImageDescriptor, getImageDigest, parseRegistryCredentials, InvalidRegistryCredentialsError } from './registry';
 import { getImageConfig, registryCall } from '@snyk/docker-registry-v2-client';
 
 // Mock the Snyk client
@@ -81,6 +81,64 @@ describe('parseImageRef', () => {
       tag: 'latest',
       contentSha: 'sha256:123456789abc'
     });
+  });
+});
+
+describe('parseRegistryCredentials', () => {
+  test('preserves the legacy untyped contract', () => {
+    expect(parseRegistryCredentials({ username: 'legacy-user', password: 'legacy-password' })).toEqual({
+      username: 'legacy-user',
+      password: 'legacy-password',
+    });
+  });
+
+  test('accepts typed basic credentials', () => {
+    expect(parseRegistryCredentials({ type: 'basic', username: 'user', password: 'password' })).toEqual({
+      type: 'basic',
+      username: 'user',
+      password: 'password',
+    });
+  });
+
+  test('normalizes a live ECR authorization token expiration', () => {
+    const expiration = new Date(Date.now() + 60_000).toISOString();
+    expect(parseRegistryCredentials({
+      type: 'ecr_authorization_token',
+      username: 'AWS',
+      password: 'token',
+      expires_at: expiration,
+    })).toEqual({
+      type: 'ecr_authorization_token',
+      username: 'AWS',
+      password: 'token',
+      expires_at: expiration,
+    });
+  });
+
+  test('rejects expired ECR authorization tokens', () => {
+    expect(() => parseRegistryCredentials({
+      type: 'ecr_authorization_token',
+      username: 'AWS',
+      password: 'token',
+      expires_at: new Date(Date.now() - 60_000).toISOString(),
+    })).toThrow(InvalidRegistryCredentialsError);
+  });
+
+  test('rejects ECR authorization tokens without the Docker username AWS', () => {
+    expect(() => parseRegistryCredentials({
+      type: 'ecr_authorization_token',
+      username: 'access-key-id',
+      password: 'token',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    })).toThrow(InvalidRegistryCredentialsError);
+  });
+
+  test('rejects unknown typed credential contracts', () => {
+    expect(() => parseRegistryCredentials({
+      type: 'aws_access_key',
+      username: 'key-id',
+      password: 'secret-key',
+    })).toThrow(InvalidRegistryCredentialsError);
   });
 });
 
@@ -188,6 +246,31 @@ describe('getImageDigest OCI support', () => {
       undefined,
       undefined,
       expect.objectContaining({ protocol: 'http:' }),
+    );
+  });
+
+  test('uses typed credentials directly instead of treating them as AWS keys', async () => {
+    mockedRegistryCall.mockResolvedValue(registryResponse(
+      imageManifest(),
+      'application/vnd.docker.distribution.manifest.v2+json',
+      'sha256:ecr-token',
+    ));
+
+    await getImageDescriptor({
+      registry: '123456789012.dkr.ecr.us-east-1.amazonaws.com',
+      repository: 'private/image',
+      tag: 'latest',
+    }, {
+      type: 'basic',
+      username: 'pull-ready-user',
+      password: 'pull-ready-password',
+    });
+
+    expect(mockedRegistryCall).toHaveBeenCalledWith(
+      '123456789012.dkr.ecr.us-east-1.amazonaws.com/v2/private/image/manifests/latest',
+      'pull-ready-user',
+      'pull-ready-password',
+      expect.any(Object),
     );
   });
 

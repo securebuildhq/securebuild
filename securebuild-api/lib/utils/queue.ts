@@ -4,6 +4,7 @@ import * as srs from "secure-random-string";
 import { PoolClient } from "pg";
 import { adoptStoredSBOMPlatformStatuses } from "../externalimage/sbom-status";
 import type { ExternalImageArchitecture } from "../externalimage/registry";
+import { createExternalImagePullCredential, type PullCredentialContext } from "../externalimage/pull-credential";
 
 interface QueuePayload {
   [key: string]: string | number | boolean | null | undefined | any;
@@ -89,6 +90,7 @@ export async function enqueueExternalImageSBOMWork(
   payload: QueuePayload,
   digest: string,
   architectures: ExternalImageArchitecture[],
+  pullCredential?: PullCredentialContext,
 ): Promise<string | null> {
   let firstID: string | null = null;
   const errors: Error[] = [];
@@ -98,7 +100,7 @@ export async function enqueueExternalImageSBOMWork(
         ...payload,
         arch,
         architecture_verified: true,
-      }, digest, arch);
+      }, digest, arch, pullCredential);
       if (firstID === null && id !== null) firstID = id;
     } catch (error) {
       console.error(`Failed to enqueue SBOM work for ${digest}/${arch}`, error);
@@ -115,6 +117,7 @@ async function enqueueExternalImageSBOMPlatformWork(
   payload: QueuePayload,
   digest: string,
   arch: string,
+  pullCredential?: PullCredentialContext,
 ): Promise<string | null> {
   const db = getDB(await getParam("DB_URI"));
   const dedupeKey = `${digest}:${arch}`;
@@ -183,8 +186,18 @@ async function enqueueExternalImageSBOMPlatformWork(
       return null;
     }
 
-    const id = await enqueueUniqueWork('external_image_sbom', payload, dedupeKey, client);
+    let workPayload = payload;
+    let credentialID: string | undefined;
+    if (pullCredential) {
+      credentialID = await createExternalImagePullCredential(client, pullCredential);
+      workPayload = { ...payload, credential_id: credentialID };
+    }
+
+    const id = await enqueueUniqueWork('external_image_sbom', workPayload, dedupeKey, client);
     if (id === null) {
+      if (credentialID) {
+        await client.query(`DELETE FROM external_image_pull_credential WHERE id = $1`, [credentialID]);
+      }
       return null;
     }
 

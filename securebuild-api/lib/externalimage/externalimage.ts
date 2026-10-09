@@ -11,9 +11,21 @@ import {
   adoptStoredSBOMPlatformStatuses,
   adoptTrackedSBOMPlatformStatuses,
 } from './sbom-status';
+import { decryptPassword, encryptPassword } from './credential-crypto';
+
+export { decryptPassword, encryptPassword } from './credential-crypto';
 
 
-export async function upsertExternalImage(registry: string, imageName: string, imageTag: string, digest: string, username: string | null, password: string | null, teamId: string): Promise<TrackedExternalImage> {
+export async function upsertExternalImage(
+  registry: string,
+  imageName: string,
+  imageTag: string,
+  digest: string,
+  username: string | null,
+  password: string | null,
+  teamId: string,
+  digestMonitoringEnabled = true,
+): Promise<TrackedExternalImage> {
   try {
     const db = getDB(await getParam("DB_URI"))
 
@@ -23,8 +35,8 @@ export async function upsertExternalImage(registry: string, imageName: string, i
 
       await client.query(query, [registry, imageName, new Date()])
 
-      const queryTag = `insert into external_image_tag (registry, image_name, image_tag, created_at, last_submitted_at, digest, next_check_digest_at, next_scan_at) values ($1, $2, $3, $4, $4, $5, $6, $7) on conflict (registry, image_name, image_tag) do update set digest = $5, next_check_digest_at = $6, next_scan_at = $7, last_submitted_at = $4`
-      await client.query(queryTag, [registry, imageName, imageTag, new Date(), digest, inFourHours, inFourHours])
+      const queryTag = `insert into external_image_tag (registry, image_name, image_tag, created_at, last_submitted_at, digest, next_check_digest_at, next_scan_at, digest_monitoring_enabled) values ($1, $2, $3, $4, $4, $5, $6, $7, $8) on conflict (registry, image_name, image_tag) do update set digest = $5, next_check_digest_at = $6, next_scan_at = $7, last_submitted_at = $4, digest_monitoring_enabled = $8`
+      await client.query(queryTag, [registry, imageName, imageTag, new Date(), digest, inFourHours, inFourHours, digestMonitoringEnabled])
 
       if (username && password) {
         let encryptedPassword: string | null = null;
@@ -165,85 +177,6 @@ export async function listExternalImages(teamId: string): Promise<TrackedExterna
   }
 }
 
-
-export async function encryptPassword(password: string): Promise<string> {
-  const secretEncoded = process.env.EXTERNAL_REGISTRY_ENCRYPTION_SECRET;
-  if (!secretEncoded) {
-    throw new Error("EXTERNAL_REGISTRY_ENCRYPTION_SECRET environment variable is required");
-  }
-  const secret = Buffer.from(secretEncoded, 'base64').toString('utf-8');
-
-  // Generate a random IV for each encryption
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-
-  // Create a 32-byte key from the secret using SHA-256
-  const keyBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
-
-  // Import the key for AES-GCM
-  const key = await crypto.subtle.importKey(
-    "raw",
-    keyBuffer,
-    { name: "AES-GCM" },
-    false,
-    ["encrypt"]
-  );
-
-  // Encrypt the password
-  const encrypted = await crypto.subtle.encrypt(
-    {
-      name: "AES-GCM",
-      iv: iv,
-    },
-    key,
-    new TextEncoder().encode(password)
-  );
-
-  // Combine IV and encrypted data, then base64 encode
-  const combined = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv);
-  combined.set(new Uint8Array(encrypted), iv.length);
-
-  return Buffer.from(combined).toString('base64');
-}
-
-export async function decryptPassword(encryptedPassword: string): Promise<string> {
-  const secretEncoded = process.env.EXTERNAL_REGISTRY_ENCRYPTION_SECRET;
-  if (!secretEncoded) {
-    throw new Error("EXTERNAL_REGISTRY_ENCRYPTION_SECRET environment variable is required");
-  }
-  const secret = Buffer.from(secretEncoded, 'base64').toString('utf-8');
-
-  // Decode the base64 combined data
-  const combined = Buffer.from(encryptedPassword, 'base64');
-
-  // Extract IV (first 12 bytes) and encrypted data
-  const iv = combined.slice(0, 12);
-  const encrypted = combined.slice(12);
-
-  // Create a 32-byte key from the secret using SHA-256
-  const keyBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
-
-  // Import the key for AES-GCM
-  const key = await crypto.subtle.importKey(
-    "raw",
-    keyBuffer,
-    { name: "AES-GCM" },
-    false,
-    ["decrypt"]
-  );
-
-  // Decrypt the password
-  const decrypted = await crypto.subtle.decrypt(
-    {
-      name: "AES-GCM",
-      iv: iv,
-    },
-    key,
-    encrypted
-  );
-
-  return new TextDecoder().decode(decrypted);
-}
 
 type PublishedScanResultRow = {
   is_in_object_store: boolean;

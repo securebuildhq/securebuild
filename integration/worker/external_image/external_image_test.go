@@ -287,6 +287,50 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 	require.NoError(t, persistence.InitPostgres(ctx))
 	defer persistence.ClosePool(ctx)
 
+	t.Run("builder recovery owns a separate pull credential", func(t *testing.T) {
+		const sourceCredentialID = "source-recovery-credential"
+		const recoveryDigest = "sha256:test-builder-recovery-123456789012345678901234567890"
+		_, err := testDB.Pool.Exec(ctx, `
+			INSERT INTO external_image_pull_credential
+				(id, team_id, registry, image_name, credential_type, username, password,
+				 provider_expires_at, delete_after, created_at)
+			VALUES ($1, 'team-1', 'registry.example.com', 'private/image', 'basic',
+			        'test-user', 'encrypted-password', NULL, NOW() + INTERVAL '1 hour', NOW())
+		`, sourceCredentialID)
+		require.NoError(t, err)
+
+		payload := `{"digest":"` + recoveryDigest + `","arch":"x86_64","team_id":"team-1","credential_id":"` + sourceCredentialID + `"}`
+		replacementCredentialID, err := externalimage.EnqueueRecoveredSBOMWork(ctx, payload, sourceCredentialID, "team-1")
+		require.NoError(t, err)
+		require.NotEmpty(t, replacementCredentialID)
+		require.NotEqual(t, sourceCredentialID, replacementCredentialID)
+
+		var queuedCredentialID string
+		require.NoError(t, testDB.Pool.QueryRow(ctx, `
+			SELECT payload->>'credential_id'
+			FROM work_queue
+			WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1
+		`, recoveryDigest).Scan(&queuedCredentialID))
+		require.Equal(t, replacementCredentialID, queuedCredentialID)
+
+		var sourceCount int
+		require.NoError(t, testDB.Pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM external_image_pull_credential WHERE id = $1
+		`, sourceCredentialID).Scan(&sourceCount))
+		require.Zero(t, sourceCount, "credential ownership should transfer to the replacement")
+
+		// A late cleanup from the abandoned download must not delete the
+		// replacement's separately owned credential.
+		require.NoError(t, externalimage.DeleteExternalImagePullCredential(ctx, sourceCredentialID))
+		var clonedPassword string
+		require.NoError(t, testDB.Pool.QueryRow(ctx, `
+			SELECT password
+			FROM external_image_pull_credential
+			WHERE id = $1 AND team_id = 'team-1'
+		`, replacementCredentialID).Scan(&clonedPassword))
+		require.Equal(t, "encrypted-password", clonedPassword)
+	})
+
 	digest := "sha256:test-sbom-enqueue-1234567890123456789012345678901234"
 	payload := `{"digest":"` + digest + `","team_id":"team-1"}`
 

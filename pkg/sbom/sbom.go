@@ -40,6 +40,10 @@ type SBOMResult struct {
 }
 
 func FetchSBOM(ctx context.Context, teamID string, registry string, imageName string, digest string) (results []SBOMResult, err error) {
+	return FetchSBOMWithPullCredential(ctx, teamID, "", registry, imageName, digest)
+}
+
+func FetchSBOMWithPullCredential(ctx context.Context, teamID, credentialID, registry, imageName, digest string) (results []SBOMResult, err error) {
 	span, ctx := telemetry.StartSpan(ctx, "sbom.FetchSBOM")
 	defer func() {
 		if err != nil {
@@ -54,16 +58,25 @@ func FetchSBOM(ctx context.Context, teamID string, registry string, imageName st
 	auth := authn.Anonymous
 	isAnonDockerHub := false
 
-	username, password, err := externalimage.GetExternalImageCredentials(ctx, teamID, registry, imageName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get external image credentials: %w", err)
-	}
-	if username != "" && password != "" {
-		logger.Info("using external image credentials")
-		// Use registry package to get credentials - this handles ECR token exchange
-		auth, err = registrypkg.GetCredentialsForEndpoint(ctx, registry, username, password)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get credentials for registry %s: %w", registry, err)
+	if credentialID != "" {
+		credential, credentialErr := externalimage.GetExternalImagePullCredential(ctx, credentialID, teamID, registry, imageName)
+		if credentialErr != nil {
+			return nil, fmt.Errorf("failed to get job-scoped pull credential: %w", credentialErr)
+		}
+		auth = &authn.Basic{Username: credential.Username, Password: credential.Password}
+		logger.Info("using job-scoped external image credentials")
+	} else {
+		username, password, credentialErr := externalimage.GetExternalImageCredentials(ctx, teamID, registry, imageName)
+		if credentialErr != nil {
+			return nil, fmt.Errorf("failed to get external image credentials: %w", credentialErr)
+		}
+		if username != "" && password != "" {
+			logger.Info("using external image credentials")
+			// Legacy credentials may contain AWS keys and still require ECR token exchange.
+			auth, err = registrypkg.GetCredentialsForEndpoint(ctx, registry, username, password)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get credentials for registry %s: %w", registry, err)
+			}
 		}
 	}
 

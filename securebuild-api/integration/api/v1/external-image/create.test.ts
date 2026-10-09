@@ -292,6 +292,94 @@ describe('POST/GET /api/v1/external-image', () => {
         await env.dbPool.query(`DROP FUNCTION reject_x86_sbom_platform_status()`);
       }
     });
+
+    it('keeps legacy credentials compatible and stores typed credentials per queued pull', async () => {
+      const registry = env.createImage.split('/')[0];
+      await env.dbPool.query(
+        `DELETE FROM work_queue WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(`DELETE FROM external_image_sbom WHERE digest = $1`, [createdDigest]);
+      await env.dbPool.query(`DELETE FROM external_image_sbom_platform_status WHERE digest = $1`, [createdDigest]);
+
+      const legacyResponse = await env.client.post('/api/v1/external-image', {
+        image_url: env.createImage,
+        credentials: { username: 'legacy-user', password: 'legacy-password' },
+      });
+      expect(legacyResponse.status).toBe(201);
+      const legacyBefore = await env.dbPool.query(
+        `SELECT username, password
+         FROM external_image_credential
+         WHERE team_id = $1 AND registry = $2 AND image_name = 'test-image'`,
+        [SEED_TEAM_ID, registry],
+      );
+      expect(legacyBefore.rows).toHaveLength(1);
+      expect(legacyBefore.rows[0].username).toBe('legacy-user');
+      expect(legacyBefore.rows[0].password).not.toBe('legacy-password');
+      const legacyMonitoring = await env.dbPool.query(
+        `SELECT digest_monitoring_enabled
+         FROM external_image_tag
+         WHERE registry = $1 AND image_name = 'test-image' AND image_tag = 'latest'`,
+        [registry],
+      );
+      expect(legacyMonitoring.rows).toEqual([{ digest_monitoring_enabled: true }]);
+
+      await env.dbPool.query(
+        `DELETE FROM work_queue WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(`DELETE FROM external_image_sbom_platform_status WHERE digest = $1`, [createdDigest]);
+
+      const typedResponse = await env.client.post('/api/v1/external-image', {
+        image_url: env.createImage,
+        credentials: { type: 'basic', username: 'typed-user', password: 'typed-password' },
+      });
+      expect(typedResponse.status).toBe(201);
+
+      const duplicateTypedResponse = await env.client.post('/api/v1/external-image', {
+        image_url: env.createImage,
+        credentials: { type: 'basic', username: 'typed-user', password: 'typed-password' },
+      });
+      expect(duplicateTypedResponse.status).toBe(201);
+
+      const queued = await env.dbPool.query(
+        `SELECT q.payload->>'credential_id' AS credential_id,
+                c.credential_type,
+                c.username,
+                c.password,
+                c.delete_after > NOW() AS is_live
+         FROM work_queue q
+         JOIN external_image_pull_credential c
+           ON c.id = q.payload->>'credential_id'
+         WHERE q.channel = 'external_image_sbom'
+           AND q.payload->>'digest' = $1`,
+        [createdDigest],
+      );
+      expect(queued.rows).toHaveLength(1);
+      expect(queued.rows[0]).toEqual(expect.objectContaining({
+        credential_type: 'basic',
+        username: 'typed-user',
+        is_live: true,
+      }));
+      expect(queued.rows[0].credential_id).toBeTruthy();
+      expect(queued.rows[0].password).not.toBe('typed-password');
+
+      const legacyAfter = await env.dbPool.query(
+        `SELECT username, password
+         FROM external_image_credential
+         WHERE team_id = $1 AND registry = $2 AND image_name = 'test-image'`,
+        [SEED_TEAM_ID, registry],
+      );
+      expect(legacyAfter.rows).toEqual(legacyBefore.rows);
+
+      const typedMonitoring = await env.dbPool.query(
+        `SELECT digest_monitoring_enabled
+         FROM external_image_tag
+         WHERE registry = $1 AND image_name = 'test-image' AND image_tag = 'latest'`,
+        [registry],
+      );
+      expect(typedMonitoring.rows).toEqual([{ digest_monitoring_enabled: false }]);
+    });
   });
 
   describe('Phase 3 — Auth', () => {
