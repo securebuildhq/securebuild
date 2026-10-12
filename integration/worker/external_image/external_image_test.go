@@ -376,12 +376,42 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 		// replacement's separately owned credential.
 		require.NoError(t, externalimage.DeleteExternalImagePullCredential(ctx, sourceCredentialID))
 		var clonedPassword string
+		var clonedDeleteAfter, clonedCreatedAt time.Time
 		require.NoError(t, testDB.Pool.QueryRow(ctx, `
-			SELECT password
+			SELECT password, delete_after, created_at
 			FROM external_image_pull_credential
 			WHERE id = $1 AND team_id = 'team-1'
-		`, replacementCredentialID).Scan(&clonedPassword))
+		`, replacementCredentialID).Scan(&clonedPassword, &clonedDeleteAfter, &clonedCreatedAt))
 		require.Equal(t, "encrypted-password", clonedPassword)
+		require.WithinDuration(t, clonedCreatedAt.Add(24*time.Hour), clonedDeleteAfter, time.Second)
+	})
+
+	t.Run("builder recovery remains capped by provider expiration", func(t *testing.T) {
+		const sourceCredentialID = "source-provider-capped-credential"
+		const recoveryDigest = "sha256:test-provider-capped-recovery-123456789012345678901234"
+		providerExpiresAt := time.Now().UTC().Add(time.Hour)
+		_, err := testDB.Pool.Exec(ctx, `
+			INSERT INTO external_image_pull_credential
+				(id, team_id, registry, image_name, credential_type, username, password,
+				 provider_expires_at, delete_after, created_at)
+			VALUES ($1, 'team-1', 'registry.example.com', 'private/image',
+			        'ecr_authorization_token', 'AWS', 'encrypted-token', $2,
+			        NOW() + INTERVAL '5 minutes', NOW())
+		`, sourceCredentialID, providerExpiresAt)
+		require.NoError(t, err)
+
+		payload := `{"digest":"` + recoveryDigest + `","arch":"x86_64","team_id":"team-1","credential_id":"` + sourceCredentialID + `"}`
+		replacementCredentialID, err := externalimage.EnqueueRecoveredSBOMWork(ctx, payload, sourceCredentialID, "team-1")
+		require.NoError(t, err)
+
+		var clonedProviderExpiresAt, clonedDeleteAfter time.Time
+		require.NoError(t, testDB.Pool.QueryRow(ctx, `
+			SELECT provider_expires_at, delete_after
+			FROM external_image_pull_credential
+			WHERE id = $1
+		`, replacementCredentialID).Scan(&clonedProviderExpiresAt, &clonedDeleteAfter))
+		require.WithinDuration(t, providerExpiresAt, clonedProviderExpiresAt, time.Millisecond)
+		require.WithinDuration(t, providerExpiresAt, clonedDeleteAfter, time.Millisecond)
 	})
 
 	digest := "sha256:test-sbom-enqueue-1234567890123456789012345678901234"

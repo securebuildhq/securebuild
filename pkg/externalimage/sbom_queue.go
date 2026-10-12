@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	externalImageSBOMChannel = "external_image_sbom"
+	externalImageSBOMChannel            = "external_image_sbom"
+	maxRecoveredPullCredentialRetention = 24 * time.Hour
 
 	// Syft downloads time out after 30 minutes. Keep fresh generating rows
 	// deduplicated for one additional minute so the status poller can record the
@@ -61,19 +62,23 @@ func EnqueueRecoveredSBOMWork(ctx context.Context, payload, credentialID, teamID
 			return "", fmt.Errorf("failed to generate replacement pull credential id: %w", err)
 		}
 
+		replacementCreatedAt := time.Now().UTC()
+		replacementDeleteAfter := replacementCreatedAt.Add(maxRecoveredPullCredentialRetention)
 		err = tx.QueryRow(ctx, `
 			INSERT INTO external_image_pull_credential
 				(id, team_id, registry, image_name, credential_type, username, password,
 				 provider_expires_at, delete_after, created_at)
 			SELECT $1, team_id, registry, image_name, credential_type, username, password,
-			       provider_expires_at, delete_after, NOW()
+			       provider_expires_at,
+			       LEAST($4, COALESCE(provider_expires_at, $4)),
+			       $5
 			FROM external_image_pull_credential
 			WHERE id = $2
 			  AND team_id = $3
 			  AND delete_after > NOW()
 			  AND (provider_expires_at IS NULL OR provider_expires_at > NOW())
 			RETURNING id
-		`, replacementCredentialID, credentialID, teamID).Scan(&replacementCredentialID)
+		`, replacementCredentialID, credentialID, teamID, replacementDeleteAfter, replacementCreatedAt).Scan(&replacementCredentialID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return "", ErrPullCredentialUnavailableForRecovery
