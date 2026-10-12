@@ -1,0 +1,41 @@
+securebuild-api/lib/externalimage/externalimage.ts
+  s_1eb33ad6874e96::t_8da2e54475b1fc 25,52-64
+pkg/externalimage/digest.go
+  s_1eb33ad6874e96::t_8da2e54475b1fc 14-16,61,67,94-98
+pkg/externalimage/externalimage.go
+  s_1eb33ad6874e96::t_8da2e54475b1fc 928-955
+securebuild-api/lib/externalimage/registry.test.ts
+  s_1eb33ad6874e96::t_4f5c1302efdd6b 209,239,263,284
+securebuild-api/lib/externalimage/registry.ts
+  s_1eb33ad6874e96::t_8da2e54475b1fc 25,328,352-354,363
+securebuild-api/app/api/v1/external-image/platforms/route.ts
+  s_1eb33ad6874e96::t_4f5c1302efdd6b 77-89,93-100
+securebuild-api/integration/api/v1/external-image/scan.test.ts
+  s_1eb33ad6874e96::t_4f5c1302efdd6b 65-71,73,75-82,84-88,468-483
+  s_1eb33ad6874e96::t_2753ec725317e8 72,74,83
+securebuild-api/app/api/v1/external-image/route.ts
+  s_1eb33ad6874e96::t_8da2e54475b1fc 60,63-65
+pkg/externalimage/monitor.go
+  s_1eb33ad6874e96::t_8da2e54475b1fc 92-107
+pkg/externalimage/digest_test.go
+  s_1eb33ad6874e96::t_4f5c1302efdd6b 44
+  s_1eb33ad6874e96::t_79a6b9a8a9e2bf 82
+  s_1eb33ad6874e96::t_42b4cceef9e5dc 47-81,83-84
+  s_1eb33ad6874e96::t_589684e7e9c2a2 45-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3de17e3cc3a421104ecf93128d7eab61122c208d",
+  "prompts": {},
+  "sessions": {
+    "s_1eb33ad6874e96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ee65-2ff6-7431-895a-9bea2a247876",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
