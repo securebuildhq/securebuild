@@ -1,0 +1,21 @@
+securebuild-api/integration/api/v1/external-image/scan.test.ts
+  s_1eb33ad6874e96::t_99458fe60f47be 469-479
+securebuild-api/app/api/v1/external-image/platforms/route.ts
+  s_1eb33ad6874e96::t_99458fe60f47be 18-19,68-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6cb958fffdb1a788b9b2e8c748ce731a38a9303b",
+  "prompts": {},
+  "sessions": {
+    "s_1eb33ad6874e96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ee65-2ff6-7431-895a-9bea2a247876",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
