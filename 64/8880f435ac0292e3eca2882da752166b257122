@@ -1,0 +1,41 @@
+pkg/externalimage/externalimage.go
+  s_23d39fc1a52f75::t_b4430a2e6f768c 139-190
+pkg/listener/types/types.go
+  s_23d39fc1a52f75::t_ebecca6a05a477 11-12
+pkg/listener/external-image-sbom.go
+  s_23d39fc1a52f75::t_b4430a2e6f768c 126-137
+securebuild-api/app/api/v1/external-image/route.ts
+  s_23d39fc1a52f75::t_ebecca6a05a477 84-85
+pkg/externalimage/monitor.go
+  s_23d39fc1a52f75::t_5c7a93c4bf92f9 138-139
+pkg/listener/update-external-image-sbom-status.go
+  s_23d39fc1a52f75::t_ebecca6a05a477 127-128,600,625,630-631
+securebuild-api/integration/api/v1/external-image/create.test.ts
+  s_23d39fc1a52f75::t_96026a6ac6db1f 400-401,415-416
+pkg/listener/external-image-sbom-builder.go
+  s_23d39fc1a52f75::t_ebecca6a05a477 172-173
+integration/worker/external_image/external_image_test.go
+  s_23d39fc1a52f75::t_96026a6ac6db1f 321-350,355-359,364-366,370-399
+  s_23d39fc1a52f75::t_a451c263046807 351-354,360-363,369
+  s_23d39fc1a52f75::t_5328c483171e01 367-368
+  s_23d39fc1a52f75::t_cc3189e82b8ad3 694-695,721-730
+  s_23d39fc1a52f75::t_9ab54fa138f9dd 731
+pkg/sbom/sbom_download_capacity.go
+  s_23d39fc1a52f75::t_ebecca6a05a477 63-64,343-344
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "648880f435ac0292e3eca2882da752166b257122",
+  "prompts": {},
+  "sessions": {
+    "s_23d39fc1a52f75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1133a-c555-79a2-9cfe-9e9dafc1e004",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
