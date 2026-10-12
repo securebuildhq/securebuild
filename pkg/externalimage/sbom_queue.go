@@ -3,6 +3,7 @@ package externalimage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,6 +20,11 @@ const (
 	// timeout before a later submission recovers an orphaned generation.
 	externalImageSBOMGeneratingStaleAfter = 31 * time.Minute
 )
+
+// ErrPullCredentialUnavailableForRecovery means builder-loss recovery cannot
+// continue without a newly issued credential. Unlike database failures, this
+// condition is permanent for the current job and must not be retried forever.
+var ErrPullCredentialUnavailableForRecovery = errors.New("pull credential is unavailable for builder recovery")
 
 // EnqueueSBOMWork atomically creates pending SBOM work when the digest is not
 // already queued, actively generating, or stored. The advisory lock coordinates
@@ -69,8 +75,8 @@ func EnqueueRecoveredSBOMWork(ctx context.Context, payload, credentialID, teamID
 			RETURNING id
 		`, replacementCredentialID, credentialID, teamID).Scan(&replacementCredentialID)
 		if err != nil {
-			if err == pgx.ErrNoRows {
-				return "", fmt.Errorf("pull credential is unavailable for builder recovery")
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", ErrPullCredentialUnavailableForRecovery
 			}
 			return "", fmt.Errorf("failed to clone pull credential for builder recovery: %w", err)
 		}

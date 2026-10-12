@@ -596,6 +596,13 @@ func handleMissingBuilderForSbomDownload(ctx context.Context, cache *sbom.SbomDo
 			}
 		}
 		if err := reenqueueSbomDownload(ctx, d.TeamID, d.CredentialID, d.Digest, d.Arch); err != nil {
+			if errors.Is(err, externalimage.ErrPullCredentialUnavailableForRecovery) {
+				logger.Warn("cannot recover external image SBOM download without a live pull credential",
+					zap.String("digest", d.Digest),
+					zap.String("machineID", machineID))
+				cache.RemoveDownload(machineID, d.Digest, d.Arch)
+				continue
+			}
 			logger.Error(fmt.Errorf("failed to re-enqueue external image SBOM download: %w", err),
 				zap.String("digest", d.Digest),
 				zap.String("machineID", machineID))

@@ -582,6 +582,73 @@ func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {
 	}
 }
 
+func TestMissingBuilderRecoveryDropsUnavailableCredential(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
+		filepath.Join(projectRoot, "db", "schema", "tables"), false))
+
+	ctx, err = param.Init(param.InitSourceEnvironment, map[string]string{"DB_URI": testDB.ConnStr})
+	require.NoError(t, err)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	digest := "sha256:test-missing-recovery-credential-123456789012345678901234"
+	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest, "x86_64"))
+	require.NoError(t, externalimage.SetSBOMStatusGenerating(ctx, digest, "x86_64"))
+
+	const missingBuilderID = "missing-builder-with-expired-credential"
+	cache := sbom.NewSbomDownloadCapacityCache()
+	cache.AddDownload(missingBuilderID, sbom.SbomDownloadDirInfo{
+		TeamID:       "team-missing-credential",
+		CredentialID: "expired-or-deleted-credential",
+		Digest:       digest,
+		Arch:         "x86_64",
+		WorkDir:      "/tmp/missing-builder-sbom",
+		CreatedAt:    time.Now().UTC(),
+	})
+
+	checkerDone := make(chan error, 1)
+	checkerCtx, cancelChecker := context.WithCancel(ctx)
+	defer cancelChecker()
+	go func() {
+		checkerDone <- listener.StartExternalImageSbomDownloadStatusChecker(checkerCtx, cache)
+	}()
+
+	require.Eventually(t, func() bool {
+		return len(cache.GetDownloadsForBuilder(missingBuilderID)) == 0
+	}, 5*time.Second, 25*time.Millisecond, "unrecoverable credential must release the stale recovery record")
+
+	var replacements int
+	require.NoError(t, testDB.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM work_queue
+		WHERE channel = 'external_image_sbom'
+		  AND payload->>'digest' = $1
+	`, digest).Scan(&replacements))
+	assert.Zero(t, replacements, "expired credentials must not enqueue unauthenticated replacement work")
+
+	statuses := getSBOMStatuses(t, ctx, digest)
+	require.Len(t, statuses, 1)
+	assert.Equal(t, "failed", statuses[0].Status)
+
+	cancelChecker()
+	select {
+	case err := <-checkerDone:
+		require.NoError(t, err)
+	case <-time.After(sbom.SbomDownloadPollerInterval + time.Second):
+		t.Fatal("SBOM status checker did not stop after cancellation")
+	}
+}
+
 func TestMigrateScanStatusColumn(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
