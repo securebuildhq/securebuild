@@ -41,6 +41,47 @@ func TestGetImageDescriptorPreservesSchema1DigestWithoutGuessingArchitecture(t *
 	require.NoError(t, err)
 	assert.Equal(t, digest, descriptor.Digest)
 	assert.Empty(t, descriptor.Architectures)
+	assert.False(t, descriptor.PlatformsResolved)
+}
+
+func TestGetImageDescriptorMarksUnsupportedOnlyIndexResolved(t *testing.T) {
+	const (
+		imageName = "unsupported/image"
+		tag       = "latest"
+		digest    = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/":
+			w.WriteHeader(http.StatusOK)
+		case fmt.Sprintf("/v2/%s/manifests/%s", imageName, tag):
+			w.Header().Set("Content-Type", string(types.OCIImageIndex))
+			w.Header().Set("Docker-Content-Digest", digest)
+			_, _ = w.Write([]byte(`{
+				"schemaVersion": 2,
+				"mediaType": "application/vnd.oci.image.index.v1+json",
+				"manifests": [{
+					"mediaType": "application/vnd.oci.image.manifest.v1+json",
+					"digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+					"size": 1,
+					"platform": {"os": "windows", "architecture": "amd64"}
+				}]
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	registryURL, err := url.Parse(server.URL)
+	require.NoError(t, err)
+
+	descriptor, err := GetImageDescriptor(t.Context(), registryURL.Host, imageName, tag, "", "")
+	require.NoError(t, err)
+	assert.Regexp(t, `^sha256:[a-f0-9]{64}$`, descriptor.Digest)
+	assert.Empty(t, descriptor.Architectures)
+	assert.True(t, descriptor.PlatformsResolved)
 }
 
 func TestSupportedIndexArchitecturesUsesSecureBuildArchitectureFamilies(t *testing.T) {

@@ -41,6 +41,12 @@ describe('POST/GET /api/v1/external-image', () => {
       expect(data.status).toBe(201);
 
       createdDigest = data.digest as string;
+
+      const inventory = await env.dbPool.query(
+        `SELECT architectures FROM external_image_platform_inventory WHERE digest = $1`,
+        [createdDigest],
+      );
+      expect(inventory.rows).toEqual([{ architectures: ['x86_64'] }]);
     });
 
     it('deduplicates active and recovers stale SBOM work', async () => {
@@ -147,7 +153,31 @@ describe('POST/GET /api/v1/external-image', () => {
         expect.objectContaining({ arch: 'x86_64', status: 'pending' }),
       ]);
       expect(data.scan_status).toBeDefined();
-      expect(Array.isArray(data.platforms)).toBe(true);
+      expect(data.platforms).toEqual(['linux/amd64']);
+    });
+
+    it('preserves scan-derived platforms for images tracked before inventory existed', async () => {
+      await env.dbPool.query(
+        `DELETE FROM external_image_platform_inventory WHERE digest = $1`,
+        [createdDigest],
+      );
+      await env.dbPool.query(
+        `INSERT INTO external_image_scan (digest, arch, parsed_results, created_at, status)
+         VALUES ($1, 'x86_64', '{}', NOW(), 'succeeded')
+         ON CONFLICT (digest, arch) DO UPDATE SET status = 'succeeded'`,
+        [createdDigest],
+      );
+
+      const res = await env.client.get(`/api/v1/external-image?sha=${encodeURIComponent(createdDigest)}`);
+
+      expect(res.status).toBe(200);
+      expect((res.data as Record<string, unknown>).platforms).toEqual(['linux/amd64']);
+
+      // Restore authoritative descriptor inventory for the remaining tests.
+      const restore = await env.client.post('/api/v1/external-image', {
+        image_url: env.createImage,
+      });
+      expect(restore.status).toBe(201);
     });
 
     it('does not bypass pending legacy digest-keyed SBOM work', async () => {
@@ -280,6 +310,11 @@ describe('POST/GET /api/v1/external-image', () => {
         expect(activeWork.rows).toEqual([
           { dedupe_key: `${createdDigest}:aarch64`, arch: 'aarch64' },
         ]);
+        const inventory = await env.dbPool.query(
+          `SELECT architectures FROM external_image_platform_inventory WHERE digest = $1`,
+          [createdDigest],
+        );
+        expect(inventory.rows).toEqual([{ architectures: ['x86_64'] }]);
       } finally {
         if (previousDBURI === undefined) {
           delete process.env.DB_URI;

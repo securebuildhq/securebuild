@@ -925,6 +925,34 @@ func AddExternalImage(ctx context.Context, registry string, imageName string, ta
 	return nil
 }
 
+// UpsertExternalImagePlatformInventory records authoritative platform metadata
+// discovered from a registry descriptor. Callers must not invoke it when the
+// descriptor format cannot reliably expose platform metadata.
+func UpsertExternalImagePlatformInventory(ctx context.Context, digest string, architectures []string) error {
+	conn, err := persistence.GetPooledPostgresSession(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get postgres session: %w", err)
+	}
+	defer conn.Release()
+
+	if architectures == nil {
+		architectures = []string{}
+	}
+
+	query := `
+		insert into external_image_platform_inventory (digest, architectures, discovered_at)
+		values ($1, $2, $3)
+		on conflict (digest) do update
+		set architectures = excluded.architectures,
+		    discovered_at = excluded.discovered_at
+	`
+	if _, err := conn.Exec(ctx, query, digest, architectures, time.Now()); err != nil {
+		return fmt.Errorf("failed to persist platform inventory for digest %s: %w", digest, err)
+	}
+
+	return nil
+}
+
 func UpdateExternalImageTagNextCheckDigestAt(ctx context.Context, registry string, imageName string, tags []string, nextCheckDigestAt time.Time) error {
 	if len(tags) == 0 {
 		return nil

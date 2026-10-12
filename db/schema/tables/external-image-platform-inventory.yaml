@@ -1,0 +1,19 @@
+database: securebuild
+name: external_image_platform_inventory
+schema:
+  postgres:
+    primaryKey:
+    - digest
+    columns:
+    - name: digest
+      type: text
+      constraints:
+        notNull: true
+    - name: architectures
+      type: text[]
+      constraints:
+        notNull: true
+    - name: discovered_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true

@@ -30,6 +30,115 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
     const digest = () => env.existingDigest;
     const image = () => env.existingImage;
 
+    it('POST /platforms returns persisted platform inventory for digests and tags', async () => {
+      await env.dbPool.query(
+        `INSERT INTO external_image_platform_inventory (digest, architectures, discovered_at)
+         VALUES ($1, $2::text[], NOW())
+         ON CONFLICT (digest) DO UPDATE
+         SET architectures = EXCLUDED.architectures,
+             discovered_at = EXCLUDED.discovered_at`,
+        [digest(), ['x86_64', 'aarch64']],
+      );
+
+      const res = await env.client.post('/api/v1/external-image/platforms', {
+        digests: [digest()],
+        images: [image()],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.data).toEqual([
+        {
+          input: digest(),
+          digest: digest(),
+          architectures: ['amd64', 'arm64'],
+          status: 'resolved',
+        },
+        {
+          input: image(),
+          digest: digest(),
+          architectures: ['amd64', 'arm64'],
+          status: 'resolved',
+        },
+      ]);
+    });
+
+    it('POST /platforms honors a digest-pinned image reference', async () => {
+      await env.dbPool.query(
+        `INSERT INTO external_image_platform_inventory (digest, architectures, discovered_at)
+         VALUES ($1, $2::text[], NOW())
+         ON CONFLICT (digest) DO UPDATE
+         SET architectures = EXCLUDED.architectures,
+             discovered_at = EXCLUDED.discovered_at`,
+        [SUMMARY_ONLY_DIGEST, ['aarch64']],
+      );
+      const pinnedImage = `${image().replace(/:latest$/, '')}@${SUMMARY_ONLY_DIGEST}`;
+
+      const res = await env.client.post('/api/v1/external-image/platforms', {
+        images: [pinnedImage],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.data).toEqual([{
+        input: pinnedImage,
+        digest: SUMMARY_ONLY_DIGEST,
+        architectures: ['arm64'],
+        status: 'resolved',
+      }]);
+    });
+
+    it('POST /platforms distinguishes unavailable metadata from inaccessible images', async () => {
+      await env.dbPool.query(
+        `DELETE FROM external_image_platform_inventory WHERE digest = $1`,
+        [digest()],
+      );
+
+      const inaccessible = 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+      const res = await env.client.post('/api/v1/external-image/platforms', {
+        digests: [digest(), inaccessible],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.data).toEqual([
+        {
+          input: digest(),
+          digest: digest(),
+          architectures: [],
+          status: 'unresolved',
+          reason: 'platform_metadata_unavailable',
+        },
+        {
+          input: inaccessible,
+          digest: null,
+          architectures: [],
+          status: 'unresolved',
+          reason: 'not_found_or_access_denied',
+        },
+      ]);
+    });
+
+    it('POST /platforms preserves a resolved image with no supported Linux architecture', async () => {
+      await env.dbPool.query(
+        `INSERT INTO external_image_platform_inventory (digest, architectures, discovered_at)
+         VALUES ($1, ARRAY[]::text[], NOW())
+         ON CONFLICT (digest) DO UPDATE
+         SET architectures = EXCLUDED.architectures,
+             discovered_at = EXCLUDED.discovered_at`,
+        [digest()],
+      );
+
+      const res = await env.client.post('/api/v1/external-image/platforms', {
+        digests: [digest()],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.data).toEqual([{
+        input: digest(),
+        digest: digest(),
+        architectures: [],
+        status: 'resolved',
+      }]);
+    });
+
     it('GET /scan?digest&arch=amd64&format=parsed returns counts + vulnerability_details', async () => {
       const res = await env.client.get(
         `/api/v1/external-image/scan?digest=${encodeURIComponent(digest())}&arch=amd64&format=parsed`,
@@ -345,6 +454,44 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
   });
 
   describe('Phase 3 — Auth', () => {
+    it('POST /platforms without token returns 401', async () => {
+      const res = await env.client.postNoAuth('/api/v1/external-image/platforms', {
+        digests: [env.existingDigest],
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it('POST /platforms rejects an empty request', async () => {
+      const res = await env.client.post('/api/v1/external-image/platforms', {});
+      expect(res.status).toBe(400);
+    });
+
+    it('POST /platforms rejects more than 500 combined inputs', async () => {
+      const res = await env.client.post('/api/v1/external-image/platforms', {
+        digests: Array.from({ length: 250 }, (_, index) => `sha256:${index}`),
+        images: Array.from({ length: 251 }, (_, index) => `registry.example.com/image-${index}:latest`),
+      });
+      expect(res.status).toBe(400);
+      expect(res.data).toEqual({
+        error: 'Provide no more than 500 combined images and digests',
+      });
+    });
+
+    it('POST /platforms rejects malformed image references', async () => {
+      const res = await env.client.post('/api/v1/external-image/platforms', {
+        images: ['registry.example.com'],
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('POST /platforms with invalid token returns 401', async () => {
+      const badClient = new HttpClient(env.baseUrl, 'invalid-token');
+      const res = await badClient.post('/api/v1/external-image/platforms', {
+        digests: [env.existingDigest],
+      });
+      expect(res.status).toBe(401);
+    });
+
     it('GET /scan without token returns 401', async () => {
       const res = await env.client.getNoAuth(
         `/api/v1/external-image/scan?digest=${encodeURIComponent(env.existingDigest)}&arch=amd64`,

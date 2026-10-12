@@ -206,6 +206,7 @@ describe('getImageDigest OCI support', () => {
     })).resolves.toEqual({
       digest: 'sha256:arm-manifest',
       architectures: ['aarch64'],
+      platformsResolved: true,
     });
     expect(mockedRegistryCall).toHaveBeenCalledTimes(1);
   });
@@ -235,6 +236,7 @@ describe('getImageDigest OCI support', () => {
     })).resolves.toEqual({
       digest: 'sha256:index',
       architectures: ['x86_64', 'aarch64'],
+      platformsResolved: true,
     });
     expect(mockedRegistryCall).toHaveBeenCalledTimes(1);
     expect(mockedGetImageConfig).not.toHaveBeenCalled();
@@ -258,6 +260,7 @@ describe('getImageDigest OCI support', () => {
     })).resolves.toEqual({
       digest: 'sha256:unsupported-index',
       architectures: [],
+      platformsResolved: true,
     });
     expect(mockedGetImageConfig).not.toHaveBeenCalled();
   });
@@ -278,6 +281,7 @@ describe('getImageDigest OCI support', () => {
     })).resolves.toEqual({
       digest: 'sha256:schema1',
       architectures: [],
+      platformsResolved: false,
     });
     expect(mockedGetImageConfig).not.toHaveBeenCalled();
   });
