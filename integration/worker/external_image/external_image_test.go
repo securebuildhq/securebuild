@@ -265,6 +265,59 @@ func TestExternalImageSbomWaitsForBuilderCapacity(t *testing.T) {
 	assert.Equal(t, "waiting for builder capacity", *statuses[0].StatusMessage)
 }
 
+func TestDigestMonitoringIsScopedToEachTeam(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
+		filepath.Join(projectRoot, "db", "schema", "tables"), false))
+
+	ctx, err = param.Init(param.InitSourceEnvironment, map[string]string{"DB_URI": testDB.ConnStr})
+	require.NoError(t, err)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	const (
+		registry  = "registry.example.com"
+		imageName = "shared/private-image"
+		imageTag  = "latest"
+		digest    = "sha256:team-scoped-monitoring-1234567890123456789012345678"
+	)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image_tag
+			(registry, image_name, image_tag, created_at, last_submitted_at, digest,
+			 next_check_digest_at, next_scan_at)
+		VALUES ($1, $2, $3, NOW(), NOW(), $4, NOW() - INTERVAL '1 hour', NOW())
+	`, registry, imageName, imageTag, digest)
+	require.NoError(t, err)
+
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image_team
+			(team_id, registry, image_name, image_tag, created_at, digest_monitoring_enabled)
+		VALUES
+			('legacy-team', $1, $2, $3, NOW(), true),
+			('typed-team', $1, $2, $3, NOW(), false)
+	`, registry, imageName, imageTag)
+	require.NoError(t, err)
+
+	images, err := externalimage.ListExternalImagesNeedDigestCheck(ctx)
+	require.NoError(t, err)
+	require.Len(t, images, 1)
+	assert.Equal(t, "legacy-team", images[0].TeamID)
+	assert.Equal(t, registry, images[0].Registry)
+	assert.Equal(t, imageName, images[0].ImageName)
+	assert.Equal(t, digest, images[0].Digest)
+	assert.Equal(t, []string{imageTag}, images[0].Tags)
+}
+
 func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")

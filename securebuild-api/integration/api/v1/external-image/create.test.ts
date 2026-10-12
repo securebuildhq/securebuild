@@ -328,7 +328,7 @@ describe('POST/GET /api/v1/external-image', () => {
       }
     });
 
-    it('keeps legacy credentials compatible and stores typed credentials per queued pull', async () => {
+    it('keeps legacy credentials compatible and scopes typed pull behavior to the submitting team', async () => {
       const registry = env.createImage.split('/')[0];
       await env.dbPool.query(
         `DELETE FROM work_queue WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1`,
@@ -351,13 +351,23 @@ describe('POST/GET /api/v1/external-image', () => {
       expect(legacyBefore.rows).toHaveLength(1);
       expect(legacyBefore.rows[0].username).toBe('legacy-user');
       expect(legacyBefore.rows[0].password).not.toBe('legacy-password');
+      await env.dbPool.query(
+        `INSERT INTO external_image_team
+           (team_id, registry, image_name, image_tag, created_at, digest_monitoring_enabled)
+         VALUES ('other-team', $1, 'test-image', 'latest', NOW(), true)`,
+        [registry],
+      );
       const legacyMonitoring = await env.dbPool.query(
-        `SELECT digest_monitoring_enabled
-         FROM external_image_tag
+        `SELECT team_id, digest_monitoring_enabled
+         FROM external_image_team
          WHERE registry = $1 AND image_name = 'test-image' AND image_tag = 'latest'`,
         [registry],
       );
-      expect(legacyMonitoring.rows).toEqual([{ digest_monitoring_enabled: true }]);
+      expect(legacyMonitoring.rows).toHaveLength(2);
+      expect(legacyMonitoring.rows).toEqual(expect.arrayContaining([
+        { team_id: SEED_TEAM_ID, digest_monitoring_enabled: true },
+        { team_id: 'other-team', digest_monitoring_enabled: true },
+      ]));
 
       await env.dbPool.query(
         `DELETE FROM work_queue WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1`,
@@ -408,12 +418,34 @@ describe('POST/GET /api/v1/external-image', () => {
       expect(legacyAfter.rows).toEqual(legacyBefore.rows);
 
       const typedMonitoring = await env.dbPool.query(
-        `SELECT digest_monitoring_enabled
-         FROM external_image_tag
+        `SELECT team_id, digest_monitoring_enabled
+         FROM external_image_team
          WHERE registry = $1 AND image_name = 'test-image' AND image_tag = 'latest'`,
         [registry],
       );
-      expect(typedMonitoring.rows).toEqual([{ digest_monitoring_enabled: false }]);
+      expect(typedMonitoring.rows).toHaveLength(2);
+      expect(typedMonitoring.rows).toEqual(expect.arrayContaining([
+        { team_id: SEED_TEAM_ID, digest_monitoring_enabled: false },
+        { team_id: 'other-team', digest_monitoring_enabled: true },
+      ]));
+
+      const resumedLegacyResponse = await env.client.post('/api/v1/external-image', {
+        image_url: env.createImage,
+        credentials: { username: 'legacy-user', password: 'legacy-password' },
+      });
+      expect(resumedLegacyResponse.status).toBe(201);
+
+      const resumedLegacyMonitoring = await env.dbPool.query(
+        `SELECT team_id, digest_monitoring_enabled
+         FROM external_image_team
+         WHERE registry = $1 AND image_name = 'test-image' AND image_tag = 'latest'`,
+        [registry],
+      );
+      expect(resumedLegacyMonitoring.rows).toHaveLength(2);
+      expect(resumedLegacyMonitoring.rows).toEqual(expect.arrayContaining([
+        { team_id: SEED_TEAM_ID, digest_monitoring_enabled: true },
+        { team_id: 'other-team', digest_monitoring_enabled: true },
+      ]));
     });
   });
 

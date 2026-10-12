@@ -37,8 +37,8 @@ export async function upsertExternalImage(
 
       await client.query(query, [registry, imageName, new Date()])
 
-      const queryTag = `insert into external_image_tag (registry, image_name, image_tag, created_at, last_submitted_at, digest, next_check_digest_at, next_scan_at, digest_monitoring_enabled) values ($1, $2, $3, $4, $4, $5, $6, $7, $8) on conflict (registry, image_name, image_tag) do update set digest = $5, next_check_digest_at = $6, next_scan_at = $7, last_submitted_at = $4, digest_monitoring_enabled = $8`
-      await client.query(queryTag, [registry, imageName, imageTag, new Date(), digest, inFourHours, inFourHours, digestMonitoringEnabled])
+      const queryTag = `insert into external_image_tag (registry, image_name, image_tag, created_at, last_submitted_at, digest, next_check_digest_at, next_scan_at) values ($1, $2, $3, $4, $4, $5, $6, $7) on conflict (registry, image_name, image_tag) do update set digest = $5, next_check_digest_at = $6, next_scan_at = $7, last_submitted_at = $4`
+      await client.query(queryTag, [registry, imageName, imageTag, new Date(), digest, inFourHours, inFourHours])
 
       if (username && password) {
         let encryptedPassword: string | null = null;
@@ -50,8 +50,8 @@ export async function upsertExternalImage(
         await client.query(query, [registry, imageName, username, encryptedPassword, new Date(), teamId])
       }
 
-      const teamQuery = `insert into external_image_team (team_id, registry, image_name, image_tag, created_at) values ($1, $2, $3, $4, $5) on conflict (team_id, registry, image_name, image_tag) do nothing`
-      await client.query(teamQuery, [teamId, registry, imageName, imageTag, new Date()])
+      const teamQuery = `insert into external_image_team (team_id, registry, image_name, image_tag, created_at, digest_monitoring_enabled) values ($1, $2, $3, $4, $5, $6) on conflict (team_id, registry, image_name, image_tag) do update set digest_monitoring_enabled = $6`
+      await client.query(teamQuery, [teamId, registry, imageName, imageTag, new Date(), digestMonitoringEnabled])
 
       if (platformsResolved) {
         // Platform inventory records what registry descriptor discovery proved,
