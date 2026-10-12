@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
     // Only enqueue SBOM work if needed (no existing SBOM)
     // This prevents duplicate work items and unnecessary processing
     // Note: scan_attempted_at will be set when the scan starts (SetScanStatusRunning in Go)
-    await enqueueExternalImageSBOMWork({
+    const enqueueResult = await enqueueExternalImageSBOMWork({
       digest: digest,
       team_id: teamId,
     }, digest, descriptor.architectures, typedCredentials ? {
@@ -87,12 +87,19 @@ export async function POST(request: NextRequest) {
       imageName: parsed.repository,
       credentials: typedCredentials,
     } : undefined)
+    console.info('External image SBOM enqueue result', {
+      digest,
+      enqueued_architectures: enqueueResult.enqueuedArchitectures,
+      deduplicated_architectures: enqueueResult.deduplicatedArchitectures,
+    })
 
     return NextResponse.json(
       {
         status: 201,
         digest: digest,
         image_url: image_url,
+        enqueued: enqueueResult.enqueuedArchitectures.length > 0,
+        deduplicated: enqueueResult.deduplicatedArchitectures.length > 0,
       },
       {
         status: 201,

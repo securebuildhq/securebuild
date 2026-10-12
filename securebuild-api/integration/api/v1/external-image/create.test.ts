@@ -380,12 +380,20 @@ describe('POST/GET /api/v1/external-image', () => {
         credentials: { type: 'basic', username: 'typed-user', password: 'typed-password' },
       });
       expect(typedResponse.status).toBe(201);
+      expect(typedResponse.data).toEqual(expect.objectContaining({
+        enqueued: true,
+        deduplicated: false,
+      }));
 
       const duplicateTypedResponse = await env.client.post('/api/v1/external-image', {
         image_url: env.createImage,
-        credentials: { type: 'basic', username: 'typed-user', password: 'typed-password' },
+        credentials: { type: 'basic', username: 'replacement-user', password: 'replacement-password' },
       });
       expect(duplicateTypedResponse.status).toBe(201);
+      expect(duplicateTypedResponse.data).toEqual(expect.objectContaining({
+        enqueued: false,
+        deduplicated: true,
+      }));
 
       const queued = await env.dbPool.query(
         `SELECT q.payload->>'credential_id' AS credential_id,
@@ -408,6 +416,14 @@ describe('POST/GET /api/v1/external-image', () => {
       }));
       expect(queued.rows[0].credential_id).toBeTruthy();
       expect(queued.rows[0].password).not.toBe('typed-password');
+
+      const pullCredentialCount = await env.dbPool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM external_image_pull_credential
+         WHERE team_id = $1 AND registry = $2 AND image_name = 'test-image'`,
+        [SEED_TEAM_ID, registry],
+      );
+      expect(pullCredentialCount.rows).toEqual([{ count: 1 }]);
 
       const legacyAfter = await env.dbPool.query(
         `SELECT username, password
