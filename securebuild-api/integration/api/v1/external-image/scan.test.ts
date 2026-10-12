@@ -466,6 +466,17 @@ describe('Read endpoints /scan, /scan-summary, /sbom', () => {
       expect(res.status).toBe(400);
     });
 
+    it('POST /platforms rejects more than 500 combined inputs', async () => {
+      const res = await env.client.post('/api/v1/external-image/platforms', {
+        digests: Array.from({ length: 250 }, (_, index) => `sha256:${index}`),
+        images: Array.from({ length: 251 }, (_, index) => `registry.example.com/image-${index}:latest`),
+      });
+      expect(res.status).toBe(400);
+      expect(res.data).toEqual({
+        error: 'Provide no more than 500 combined images and digests',
+      });
+    });
+
     it('POST /platforms rejects malformed image references', async () => {
       const res = await env.client.post('/api/v1/external-image/platforms', {
         images: ['registry.example.com'],

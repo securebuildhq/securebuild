@@ -15,6 +15,8 @@ interface RequestBody {
   images?: string[]
 }
 
+const MAX_PLATFORM_REQUEST_INPUTS = 500
+
 type PlatformResult = {
   input: string
   digest: string | null
@@ -63,6 +65,12 @@ export async function POST(request: NextRequest) {
     const requestBody = body as RequestBody
     const digests = Array.isArray(requestBody.digests) ? requestBody.digests : []
     const images = Array.isArray(requestBody.images) ? requestBody.images : []
+    if (digests.length + images.length > MAX_PLATFORM_REQUEST_INPUTS) {
+      return NextResponse.json(
+        { error: `Provide no more than ${MAX_PLATFORM_REQUEST_INPUTS} combined images and digests` },
+        { status: 400 },
+      )
+    }
     if (
       (digests.length === 0 && images.length === 0) ||
       digests.some((value) => typeof value !== 'string' || value.trim() === '') ||
