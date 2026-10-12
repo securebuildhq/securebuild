@@ -1,0 +1,22 @@
+integration/worker/external_image/external_image_test.go
+  s_23d39fc1a52f75::t_1ea18bc08ca8f3 379,381,384,386-414
+pkg/externalimage/sbom_queue.go
+  s_23d39fc1a52f75::t_cf673a7ff036ed 16
+  s_23d39fc1a52f75::t_1ea18bc08ca8f3 17,65-66,72-74,81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "917c0ec0781f8896f1d34758a91375a177f60ae1",
+  "prompts": {},
+  "sessions": {
+    "s_23d39fc1a52f75": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1133a-c555-79a2-9cfe-9e9dafc1e004",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
