@@ -11,8 +11,9 @@ import (
 )
 
 type ImageDescriptor struct {
-	Digest        string
-	Architectures []string
+	Digest            string
+	Architectures     []string
+	PlatformsResolved bool
 }
 
 // GetImageDigest fetches the digest of an image from a container registry.
@@ -57,11 +58,13 @@ func getImageDescriptor(ctx context.Context, refStr, registryHost, username, pas
 	}
 
 	var architectures []string
+	platformsResolved := true
 	if desc.MediaType.IsSchema1() {
 		// Schema 1 manifests do not expose a config from which we can reliably
 		// discover the platform. Preserve the resolved digest for compatibility,
 		// but do not guess an architecture and enqueue incorrect SBOM work.
 		architectures = nil
+		platformsResolved = false
 	} else if desc.MediaType.IsIndex() {
 		index, err := desc.ImageIndex()
 		if err != nil {
@@ -88,7 +91,11 @@ func getImageDescriptor(ctx context.Context, refStr, registryHost, username, pas
 		return nil, fmt.Errorf("unsupported image descriptor media type %q", desc.MediaType)
 	}
 
-	return &ImageDescriptor{Digest: desc.Digest.String(), Architectures: architectures}, nil
+	return &ImageDescriptor{
+		Digest:            desc.Digest.String(),
+		Architectures:     architectures,
+		PlatformsResolved: platformsResolved,
+	}, nil
 }
 
 func supportedIndexArchitectures(manifest *v1.IndexManifest) []string {

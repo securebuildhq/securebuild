@@ -74,15 +74,31 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const imageRefs: ImageRefTag[] = images.map((image) => {
-      const parsed = parseImageRef(image)
-      return {
+    let parsedImages: ReturnType<typeof parseImageRef>[]
+    try {
+      parsedImages = images.map((image) => parseImageRef(image))
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Invalid image reference' },
+        { status: 400 },
+      )
+    }
+
+    const tagRefs: ImageRefTag[] = parsedImages
+      .filter((parsed) => !parsed.contentSha)
+      .map((parsed) => ({
         registry: parsed.registry,
         repository: parsed.repository,
         tag: parsed.tag,
-      }
+      }))
+    const tagDigests = await getBatchDigestsForTags(authResult.teamId, tagRefs)
+    let tagDigestIndex = 0
+    const imageDigests = parsedImages.map((parsed) => {
+      if (parsed.contentSha) return parsed.contentSha
+      const digest = tagDigests[tagDigestIndex]
+      tagDigestIndex += 1
+      return digest
     })
-    const imageDigests = await getBatchDigestsForTags(authResult.teamId, imageRefs)
     const allDigests = [...new Set([
       ...digests,
       ...imageDigests.filter((digest): digest is string => digest !== undefined),

@@ -88,10 +88,23 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 				continue
 			}
 
-			// Mark this tag as successfully checked
-			successfulTags = append(successfulTags, tag)
 			currentDigest := descriptor.Digest
-			if len(descriptor.Architectures) == 0 {
+			if descriptor.PlatformsResolved {
+				if err := UpsertExternalImagePlatformInventory(ctx, currentDigest, descriptor.Architectures); err != nil {
+					return fmt.Errorf("failed to persist external image platforms for %s/%s:%s: %w", externalImage.Registry, externalImage.ImageName, tag, err)
+				}
+			} else {
+				logger.Info("external image descriptor does not expose reliable platform metadata",
+					zap.String("registry", externalImage.Registry),
+					zap.String("image_name", externalImage.ImageName),
+					zap.String("tag", tag),
+					zap.String("digest", currentDigest))
+			}
+
+			// Mark this tag as successfully checked only after any authoritative
+			// platform observation has been persisted.
+			successfulTags = append(successfulTags, tag)
+			if descriptor.PlatformsResolved && len(descriptor.Architectures) == 0 {
 				logger.Info("external image has no supported SBOM architectures; tracking digest without enqueueing work",
 					zap.String("registry", externalImage.Registry),
 					zap.String("image_name", externalImage.ImageName),

@@ -22,6 +22,7 @@ export async function upsertExternalImage(
   password: string | null,
   teamId: string,
   architectures: ExternalImageArchitecture[],
+  platformsResolved: boolean,
 ): Promise<TrackedExternalImage> {
   try {
     const db = getDB(await getParam("DB_URI"))
@@ -48,17 +49,19 @@ export async function upsertExternalImage(
       const teamQuery = `insert into external_image_team (team_id, registry, image_name, image_tag, created_at) values ($1, $2, $3, $4, $5) on conflict (team_id, registry, image_name, image_tag) do nothing`
       await client.query(teamQuery, [teamId, registry, imageName, imageTag, new Date()])
 
-      // Platform inventory records what registry descriptor discovery proved,
-      // independently of whether SBOM or scan work is successfully enqueued.
-      // An empty array is authoritative: discovery completed, but the image did
-      // not expose a supported Linux architecture.
-      const platformQuery = `
-        insert into external_image_platform_inventory (digest, architectures, discovered_at)
-        values ($1, $2::text[], $3)
-        on conflict (digest) do update
-        set architectures = excluded.architectures,
-            discovered_at = excluded.discovered_at`
-      await client.query(platformQuery, [digest, architectures, new Date()])
+      if (platformsResolved) {
+        // Platform inventory records what registry descriptor discovery proved,
+        // independently of whether SBOM or scan work is successfully enqueued.
+        // An empty array is authoritative only when discovery completed but the
+        // image did not expose a supported Linux architecture.
+        const platformQuery = `
+          insert into external_image_platform_inventory (digest, architectures, discovered_at)
+          values ($1, $2::text[], $3)
+          on conflict (digest) do update
+          set architectures = excluded.architectures,
+              discovered_at = excluded.discovered_at`
+        await client.query(platformQuery, [digest, architectures, new Date()])
+      }
     })
 
     // Initialize SBOM status as 'pending' to ensure it's immediately available via the API

@@ -57,9 +57,12 @@ export async function POST(request: NextRequest) {
       credentials?.password,
       teamId,
       descriptor.architectures,
+      descriptor.platformsResolved,
     )
 
-    if (descriptor.architectures.length === 0) {
+    if (!descriptor.platformsResolved) {
+      console.warn(`External image ${image_url} does not expose reliable platform metadata; tracking it without enqueueing work`)
+    } else if (descriptor.architectures.length === 0) {
       console.warn(`External image ${image_url} has no supported SBOM architectures; tracking it without enqueueing work`)
     }
 

@@ -22,6 +22,7 @@ export type ExternalImageArchitecture = 'x86_64' | 'aarch64';
 export interface ExternalImageDescriptor {
   digest: string;
   architectures: ExternalImageArchitecture[];
+  platformsResolved: boolean;
 }
 
 const architectureOrder: ExternalImageArchitecture[] = ['x86_64', 'aarch64'];
@@ -324,6 +325,7 @@ export async function getImageDescriptor(
     const manifest = parseRegistryManifest(response.body);
     const digest = parsed.contentSha || responseDigest(response, response.body);
     const discoveredArchitectures = new Set<ExternalImageArchitecture>();
+    let platformsResolved = true;
 
     if (isImageIndex(manifest, response.headers['content-type'])) {
       for (const descriptor of manifest.manifests ?? []) {
@@ -347,7 +349,9 @@ export async function getImageDescriptor(
     } else {
       // Schema 1 and other config-less manifests can still provide a stable
       // digest, but not reliable platform metadata. Preserve the digest and
-      // leave architectures empty so callers do not enqueue guessed work.
+      // leave the metadata unresolved so callers do not persist an
+      // authoritative empty platform list or enqueue guessed work.
+      platformsResolved = false;
     }
 
     const architectures = architectureOrder
@@ -356,7 +360,7 @@ export async function getImageDescriptor(
     if (!hideLogs) {
       console.log(`Retrieved digest ${digest} for architectures: ${architectures.join(', ')}`);
     }
-    return { digest, architectures };
+    return { digest, architectures, platformsResolved };
   } catch (error) {
     console.error(`getImageDescriptor error:`, error);
     throw new Error(`Failed to get image descriptor for ${parsed.registry}/${parsed.repository}:${parsed.tag}: ${error instanceof Error ? error.message : 'Unknown error'}`);
