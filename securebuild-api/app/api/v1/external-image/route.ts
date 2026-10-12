@@ -48,7 +48,16 @@ export async function POST(request: NextRequest) {
     const descriptor = await getImageDescriptor(parsed, credentials)
     const { digest } = descriptor
 
-    await upsertExternalImage(parsed.registry, parsed.repository, parsed.tag, digest, credentials?.username, credentials?.password, teamId)
+    await upsertExternalImage(
+      parsed.registry,
+      parsed.repository,
+      parsed.tag,
+      digest,
+      credentials?.username,
+      credentials?.password,
+      teamId,
+      descriptor.architectures,
+    )
 
     if (descriptor.architectures.length === 0) {
       console.warn(`External image ${image_url} has no supported SBOM architectures; tracking it without enqueueing work`)

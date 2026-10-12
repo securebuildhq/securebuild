@@ -13,7 +13,16 @@ import {
 } from './sbom-status';
 
 
-export async function upsertExternalImage(registry: string, imageName: string, imageTag: string, digest: string, username: string | null, password: string | null, teamId: string): Promise<TrackedExternalImage> {
+export async function upsertExternalImage(
+  registry: string,
+  imageName: string,
+  imageTag: string,
+  digest: string,
+  username: string | null,
+  password: string | null,
+  teamId: string,
+  architectures: ExternalImageArchitecture[],
+): Promise<TrackedExternalImage> {
   try {
     const db = getDB(await getParam("DB_URI"))
 
@@ -38,6 +47,18 @@ export async function upsertExternalImage(registry: string, imageName: string, i
 
       const teamQuery = `insert into external_image_team (team_id, registry, image_name, image_tag, created_at) values ($1, $2, $3, $4, $5) on conflict (team_id, registry, image_name, image_tag) do nothing`
       await client.query(teamQuery, [teamId, registry, imageName, imageTag, new Date()])
+
+      // Platform inventory records what registry descriptor discovery proved,
+      // independently of whether SBOM or scan work is successfully enqueued.
+      // An empty array is authoritative: discovery completed, but the image did
+      // not expose a supported Linux architecture.
+      const platformQuery = `
+        insert into external_image_platform_inventory (digest, architectures, discovered_at)
+        values ($1, $2::text[], $3)
+        on conflict (digest) do update
+        set architectures = excluded.architectures,
+            discovered_at = excluded.discovered_at`
+      await client.query(platformQuery, [digest, architectures, new Date()])
     })
 
     // Initialize SBOM status as 'pending' to ensure it's immediately available via the API
@@ -694,11 +715,27 @@ export async function getExternalImagePlatforms(digest: string): Promise<string[
   try {
     const db = getDB(await getParam("DB_URI"))
 
-    const query = `select distinct arch from external_image_scan where digest = $1 order by arch`
-    const result = await db.query(query, [digest])
+    const inventoryResult = await db.query(
+      `select architectures from external_image_platform_inventory where digest = $1`,
+      [digest],
+    )
 
-    const platforms = result.rows.map((row) => {
-      const arch = row.arch
+    // Preserve the existing status response for images tracked before platform
+    // inventory existed. The new batch endpoint does not use this fallback: it
+    // reports legacy rows as unresolved rather than treating scan completion as
+    // authoritative platform metadata.
+    let architectures: string[]
+    if (inventoryResult.rows.length > 0) {
+      architectures = inventoryResult.rows[0].architectures
+    } else {
+      const legacyResult = await db.query(
+        `select distinct arch from external_image_scan where digest = $1 order by arch`,
+        [digest],
+      )
+      architectures = legacyResult.rows.map((row) => row.arch)
+    }
+
+    const platforms = architectures.map((arch) => {
       if (arch === 'x86_64') {
         return 'linux/amd64'
       } else if (arch === 'aarch64') {
@@ -714,6 +751,69 @@ export async function getExternalImagePlatforms(digest: string): Promise<string[
     throw err;
   }
 }
+
+export interface BatchExternalImagePlatformInventoryResult {
+  digest: string;
+  architectures: ExternalImageArchitecture[];
+  hasAccess: boolean;
+  resolved: boolean;
+}
+
+/**
+ * Reads descriptor-discovered platform inventory for multiple digests while
+ * preserving team ownership independently from metadata availability.
+ */
+export const getBatchExternalImagePlatformInventory = traceFunction(
+  'lib.externalimage.getBatchExternalImagePlatformInventory',
+  async (
+    teamId: string,
+    digests: string[],
+  ): Promise<Map<string, BatchExternalImagePlatformInventoryResult>> => {
+    const resultMap = new Map<string, BatchExternalImagePlatformInventoryResult>()
+    if (digests.length === 0) {
+      return resultMap
+    }
+
+    const db = getDB(await getParam('DB_URI'))
+    const query = `
+      SELECT
+        requested.digest,
+        COALESCE(inventory.architectures, ARRAY[]::text[]) AS architectures,
+        (owned.digest IS NOT NULL) AS has_access,
+        (inventory.digest IS NOT NULL AND owned.digest IS NOT NULL) AS resolved
+      FROM unnest($2::text[]) AS requested(digest)
+      LEFT JOIN (
+        SELECT DISTINCT etag.digest
+        FROM external_image_tag etag
+        INNER JOIN external_image_team eteam
+          ON eteam.team_id = $1
+          AND eteam.registry = etag.registry
+          AND eteam.image_name = etag.image_name
+          AND eteam.image_tag = etag.image_tag
+        WHERE etag.digest = ANY($2)
+      ) owned ON owned.digest = requested.digest
+      LEFT JOIN external_image_platform_inventory inventory
+        ON inventory.digest = requested.digest
+        AND owned.digest IS NOT NULL`
+
+    const result = await db.query(query, [teamId, digests])
+    for (const row of result.rows) {
+      resultMap.set(row.digest, {
+        digest: row.digest,
+        architectures: row.architectures as ExternalImageArchitecture[],
+        hasAccess: row.has_access === true,
+        resolved: row.resolved === true,
+      })
+    }
+    return resultMap
+  },
+  {
+    getTags: (teamId: string, digests: string[]) => ({
+      'args.team_id': teamId,
+      'args.digests.length': digests.length,
+    }),
+  },
+)
 
 // SBOM and Scan status types and functions
 /**
