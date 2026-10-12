@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -436,7 +437,7 @@ func dialSSH(ctx context.Context, vm buildertypes.BuilderVM) (*ssh.Client, error
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(key),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: builder.SSHHostKeyCallback(ctx, vm),
 		Timeout:         30 * time.Second,
 	}
 
@@ -450,6 +451,9 @@ func dialSSH(ctx context.Context, vm buildertypes.BuilderVM) (*ssh.Client, error
 		client, err = ssh.Dial("tcp", addr, config)
 		if err == nil {
 			return client, nil
+		}
+		if errors.Is(err, builder.ErrSSHHostKeyVerification) {
+			return nil, fmt.Errorf("SSH identity rejected for VM %s: %w", vm.ID, err)
 		}
 
 		if attempt < maxRetries-1 {

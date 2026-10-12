@@ -1,0 +1,23 @@
+database: securebuild
+name: machine_ssh_host_key
+schema:
+  postgres:
+    primaryKey:
+    - vm_id
+    columns:
+    - name: vm_id
+      type: text
+      constraints:
+        notNull: true
+    - name: created_at
+      type: timestamp with time zone
+      constraints:
+        notNull: true
+    - name: host_key
+      type: text
+    - name: enrolled_at
+      type: timestamp with time zone
+    - name: failed_at
+      type: timestamp with time zone
+    - name: failure_reason
+      type: text

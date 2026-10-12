@@ -19,6 +19,9 @@ import (
 // translates them as appropriate (DogStatsD metric names for Datadog, OTLP
 // instrument names + attributes for OpenTelemetry).
 const (
+	MetricCMXSSHHostKeyEnrolled = "securebuild.cmx.ssh_host_key.enrolled"
+	MetricCMXSSHHostKeyFailed   = "securebuild.cmx.ssh_host_key.failed"
+
 	MetricExternalImageSBOMFailed    = "securebuild.external_image.sbom.failed"
 	MetricExternalImageSBOMSucceeded = "securebuild.external_image.sbom.succeeded"
 	MetricExternalImageScanFailed    = "securebuild.external_image.scan.failed"

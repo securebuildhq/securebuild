@@ -75,6 +75,7 @@ const (
 	TerminationReasonBuildEnvFailed = "build_env_failed"
 	TerminationReasonTaskFailed     = "task_failed"
 	TerminationReasonOrphaned       = "orphaned"
+	TerminationReasonSSHHostKey     = "ssh_host_key_verification_failed"
 )
 
 var (
@@ -541,6 +542,14 @@ func CreatePool(ctx context.Context) error {
 }
 
 func checkAndUpdateVMStatus(ctx context.Context, vmID string) error {
+	unavailable, err := cmxHostKeyUnavailable(ctx, vmID)
+	if err != nil {
+		return fmt.Errorf("check CMX SSH host key state: %w", err)
+	}
+	if unavailable {
+		logger.Warn("retiring CMX VM with unavailable SSH identity", zap.String("vmID", vmID))
+		return DeleteVMWithReason(ctx, vmID, TerminationReasonSSHHostKey)
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v3/vm/%s", param.GetParam(ctx).ReplicatedAPIOrigin, vmID), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -653,10 +662,13 @@ func checkAndUpdateVMStatus(ctx context.Context, vmID string) error {
 		}
 
 		if lastVMState.Status != "installing" && lastVMState.Status != "running" {
-			query := `update machine_pool set status = $1, ip_address = $2, port = $3, expires_at = $4 where id = $5`
-			_, err = conn.Exec(ctx, query, "installing", response.VM.IPAddress, response.VM.Port, response.VM.ExpiresAt, vmID)
+			query := `update machine_pool set status = $1, ip_address = $2, port = $3, expires_at = $4 where id = $5 AND ` + cmxHostKeyEligibleSQL
+			result, err := conn.Exec(ctx, query, "installing", response.VM.IPAddress, response.VM.Port, response.VM.ExpiresAt, vmID)
 			if err != nil {
 				return fmt.Errorf("failed to update machine status: %w", err)
+			}
+			if result.RowsAffected() == 0 {
+				return machineStatusUpdateError(ctx, conn, vmID, cmxHostKeyEligibleSQL)
 			}
 
 			go func() {
@@ -664,7 +676,11 @@ func checkAndUpdateVMStatus(ctx context.Context, vmID string) error {
 					logger.Error(fmt.Errorf("build environment setup failed for VM %s, deleting for reprovisioning: %w", vmID, err))
 
 					// Delete the VM so it gets reprovisioned automatically
-					if deleteErr := DeleteVMWithReason(ctx, vmID, TerminationReasonBuildEnvFailed); deleteErr != nil {
+					terminationReason := TerminationReasonBuildEnvFailed
+					if errors.Is(err, ErrSSHHostKeyVerification) {
+						terminationReason = TerminationReasonSSHHostKey
+					}
+					if deleteErr := DeleteVMWithReason(ctx, vmID, terminationReason); deleteErr != nil {
 						logger.Error(fmt.Errorf("failed to delete VM %s after build env setup failure: %w", vmID, deleteErr))
 					}
 				}
@@ -691,10 +707,13 @@ func checkAndUpdateVMStatus(ctx context.Context, vmID string) error {
 			return fmt.Errorf("failed to get machine: %w", err)
 		}
 
-		query := `update machine_pool set status = $1 where id = $2`
-		_, err = conn.Exec(ctx, query, response.VM.Status, vmID)
+		query := `update machine_pool set status = $1 where id = $2 AND ` + cmxHostKeyEligibleSQL
+		result, err := conn.Exec(ctx, query, response.VM.Status, vmID)
 		if err != nil {
 			return fmt.Errorf("failed to update machine status: %w", err)
+		}
+		if result.RowsAffected() == 0 {
+			return machineStatusUpdateError(ctx, conn, vmID, cmxHostKeyEligibleSQL)
 		}
 
 		lastVMState.Status = response.VM.Status
@@ -819,10 +838,13 @@ func InstallBuildEnv(ctx context.Context, vmID string) error {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `update machine_pool set status = $1 where id = $2`
-	_, err = conn.Exec(ctx, query, "running", vmID)
+	query := `update machine_pool set status = $1 where id = $2 AND ` + cmxHostKeyReadySQL
+	result, err := conn.Exec(ctx, query, "running", vmID)
 	if err != nil {
 		return fmt.Errorf("failed to update machine %s status to running: %w", vmID, err)
+	}
+	if result.RowsAffected() == 0 {
+		return machineStatusUpdateError(ctx, conn, vmID, cmxHostKeyReadySQL)
 	}
 
 	// Check if this is an on-demand VM with an assigned task
@@ -1578,10 +1600,23 @@ func provisionVM(ctx context.Context, machineID string, architecture string, dis
 			zap.Duration("ttl", vmTTLDuration))
 	}
 
-	query := `insert into machine_pool (id, machine_id, created_at, expires_at, private_key, username, status, architecture, is_on_demand, type) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
-	_, err = conn.Exec(ctx, query, vm.ID, machineID, time.Now().UTC(), expiresAt, privateKeyEncoded, "builder", vm.Status, architecture, isOnDemand, "cmx")
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return types.BuilderVM{}, fmt.Errorf("begin machine enrollment: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	query := `insert into machine_pool (id, machine_id, created_at, expires_at, private_key, username, status, architecture, is_on_demand, type, ssh_host_key_enrollment_source) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'provisioning')`
+	_, err = tx.Exec(ctx, query, vm.ID, machineID, time.Now().UTC(), expiresAt, privateKeyEncoded, "builder", vm.Status, architecture, isOnDemand, "cmx")
 	if err != nil {
 		return types.BuilderVM{}, fmt.Errorf("failed to insert machine into database: %w", err)
+	}
+	// Provisioning and the one-time startup migration create enrollment records.
+	// Missing records after initialization must fail closed.
+	if _, err := tx.Exec(ctx, `INSERT INTO machine_ssh_host_key (vm_id, created_at) VALUES ($1, NOW())`, vm.ID); err != nil {
+		return types.BuilderVM{}, fmt.Errorf("create SSH host key enrollment: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return types.BuilderVM{}, fmt.Errorf("commit machine enrollment: %w", err)
 	}
 
 	builderVM := types.BuilderVM{
@@ -1592,6 +1627,7 @@ func provisionVM(ctx context.Context, machineID string, architecture string, dis
 		Username:     "builder",
 		Status:       vm.Status,
 		Architecture: architecture,
+		Type:         "cmx",
 	}
 
 	return builderVM, nil
@@ -1997,6 +2033,7 @@ func tryTakeVMWithAssignment(ctx context.Context, architecture string, taskType 
 		FROM machine_pool
 		WHERE architecture = $1
 		AND status = 'running'
+		AND ` + cmxHostKeyReadySQL + `
 		AND cleanup_locked_at IS NULL
 		AND is_on_demand = false
 		AND (SELECT COUNT(*) FROM machine_assignment WHERE machine_id = machine_pool.id) < $2
@@ -2450,7 +2487,7 @@ func GetSSHClient(ctx context.Context, vm types.BuilderVM) (*KeepAliveSSHClient,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(key),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: SSHHostKeyCallback(ctx, vm),
 		Timeout:         30 * time.Second, // Increased from 10 seconds
 	}
 
@@ -2726,7 +2763,7 @@ func getUptimeViaSSH(ctx context.Context, vm types.BuilderVM) (string, error) {
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Note: In production, you should verify host keys
+		HostKeyCallback: SSHHostKeyCallback(ctx, vm),
 		Timeout:         10 * time.Second,
 	}
 
@@ -2791,7 +2828,7 @@ func countVMsByArchitecture(ctx context.Context, machineID string, architecture 
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `SELECT COUNT(*) FROM machine_pool WHERE machine_id = $1 AND architecture = $2 AND (expires_at > now() OR expires_at IS NULL) AND cleanup_locked_at IS NULL`
+	query := `SELECT COUNT(*) FROM machine_pool WHERE machine_id = $1 AND architecture = $2 AND (expires_at > now() OR expires_at IS NULL) AND cleanup_locked_at IS NULL AND ` + cmxHostKeyEligibleSQL
 	var count int
 	err := conn.QueryRow(ctx, query, machineID, architecture).Scan(&count)
 	if err != nil {
@@ -2805,7 +2842,7 @@ func countAvailableVMsByArchitecture(ctx context.Context, machineID string, arch
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
-	query := `SELECT COUNT(*) FROM machine_pool WHERE machine_id = $1 AND architecture = $2 AND status = 'running' AND cleanup_locked_at IS NULL AND (expires_at > now() OR expires_at IS NULL) AND NOT EXISTS (SELECT 1 FROM machine_assignment WHERE machine_id = machine_pool.id)`
+	query := `SELECT COUNT(*) FROM machine_pool WHERE machine_id = $1 AND architecture = $2 AND status = 'running' AND cleanup_locked_at IS NULL AND (expires_at > now() OR expires_at IS NULL) AND NOT EXISTS (SELECT 1 FROM machine_assignment WHERE machine_id = machine_pool.id) AND ` + cmxHostKeyReadySQL
 	var count int
 	err := conn.QueryRow(ctx, query, machineID, architecture).Scan(&count)
 	if err != nil {
@@ -2866,6 +2903,7 @@ func getVMsByArchitectureForDeletion(ctx context.Context, machineID string, arch
 		       EXISTS(SELECT 1 FROM machine_assignment WHERE machine_id = machine_pool.id) as is_assigned
 		FROM machine_pool
 		WHERE machine_id = $1 AND architecture = $2 AND (expires_at > now() OR expires_at IS NULL) AND cleanup_locked_at IS NULL
+		AND ` + cmxHostKeyEligibleSQL + `
 		ORDER BY
 			CASE WHEN NOT EXISTS(SELECT 1 FROM machine_assignment WHERE machine_id = machine_pool.id) THEN 0 ELSE 1 END,
 			CASE status

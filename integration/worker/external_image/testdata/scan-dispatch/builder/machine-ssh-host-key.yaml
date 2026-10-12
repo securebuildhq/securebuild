@@ -1,0 +1,17 @@
+database: securebuild
+name: machine_ssh_host_key
+seedData:
+  rows:
+    - columns:
+        - column: vm_id
+          value:
+            str: "dispatch-builder"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: host_key
+          value:
+            str: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        - column: enrolled_at
+          value:
+            str: "2026-01-01T00:00:00Z"
