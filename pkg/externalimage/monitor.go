@@ -91,7 +91,18 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 			currentDigest := descriptor.Digest
 			if descriptor.PlatformsResolved {
 				if err := UpsertExternalImagePlatformInventory(ctx, currentDigest, descriptor.Architectures); err != nil {
-					return fmt.Errorf("failed to persist external image platforms for %s/%s:%s: %w", externalImage.Registry, externalImage.ImageName, tag, err)
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					logger.Warn("failed to persist external image platforms",
+						zap.String("registry", externalImage.Registry),
+						zap.String("image_name", externalImage.ImageName),
+						zap.String("tag", tag),
+						zap.String("digest", currentDigest),
+						zap.Error(err))
+					// Leave this tag due so the inventory write is retried on the
+					// next monitor pass without blocking unrelated tags or images.
+					continue
 				}
 			} else {
 				logger.Info("external image descriptor does not expose reliable platform metadata",
