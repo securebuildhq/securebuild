@@ -318,6 +318,85 @@ func TestDigestMonitoringIsScopedToEachTeam(t *testing.T) {
 	assert.Equal(t, []string{imageTag}, images[0].Tags)
 }
 
+func TestExternalImageSBOMUsesSubmittedRegistrySource(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
+		filepath.Join(projectRoot, "db", "schema", "tables"), false))
+
+	ctx, minioStorage := setupMinIOOverrides(ctx, t, testDB.ConnStr)
+	defer testutil.TeardownMinIO(ctx, t, minioStorage)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	const (
+		teamID             = "source-selection-team"
+		digest             = "sha256:shared-source-selection-123456789012345678901234567"
+		submittedRegistry  = "a.example.com"
+		submittedImageName = "private/image"
+		otherRegistry      = "z.example.com"
+		otherImageName     = "mirror/image"
+	)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image (registry, image_name, created_at)
+		VALUES ($1, $2, NOW()), ($3, $4, NOW())
+	`, submittedRegistry, submittedImageName, otherRegistry, otherImageName)
+	require.NoError(t, err)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image_tag
+			(registry, image_name, image_tag, created_at, last_submitted_at, digest,
+			 next_check_digest_at, next_scan_at)
+		VALUES
+			($1, $2, 'latest', NOW(), NOW(), $5, NOW() + INTERVAL '4 hours', NOW()),
+			($3, $4, 'latest', NOW(), NOW(), $5, NOW() + INTERVAL '4 hours', NOW())
+	`, submittedRegistry, submittedImageName, otherRegistry, otherImageName, digest)
+	require.NoError(t, err)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image_team
+			(team_id, registry, image_name, image_tag, created_at, digest_monitoring_enabled)
+		VALUES
+			($5, $1, $2, 'latest', NOW(), false),
+			($5, $3, $4, 'latest', NOW(), false)
+	`, submittedRegistry, submittedImageName, otherRegistry, otherImageName, teamID)
+	require.NoError(t, err)
+
+	var fetchedRegistry, fetchedImageName string
+	mockFetchSBOM := func(ctx context.Context, registry, imageName, digest string) ([]sbom.SBOMResult, error) {
+		fetchedRegistry = registry
+		fetchedImageName = imageName
+		return []sbom.SBOMResult{{
+			Architecture: "linux/amd64",
+			SBOM:         `{"artifacts":[]}`,
+			Source:       "syft",
+			ImageDigest:  digest,
+		}}, nil
+	}
+	mockScanExternalImage := func(ctx context.Context, digest string) (map[string]string, error) {
+		return map[string]string{"x86_64": `{"matches":[]}`}, nil
+	}
+	ctx = setupMocks(ctx, mockFetchSBOM, mockScanExternalImage)
+
+	require.NoError(t, listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{
+		Digest:               digest,
+		Arch:                 "x86_64",
+		TeamID:               teamID,
+		Registry:             submittedRegistry,
+		ImageName:            submittedImageName,
+		ArchitectureVerified: true,
+	}))
+	assert.Equal(t, submittedRegistry, fetchedRegistry)
+	assert.Equal(t, submittedImageName, fetchedImageName)
+}
+
 func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -612,6 +691,8 @@ func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {
 	cache.AddDownload(missingBuilderID, sbom.SbomDownloadDirInfo{
 		TeamID:    teamID,
 		Digest:    digest,
+		Registry:  "registry.example.com",
+		ImageName: "private/image",
 		WorkDir:   "/tmp/missing-builder-sbom",
 		CreatedAt: time.Now().UTC(),
 	})
@@ -636,6 +717,17 @@ func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {
 		`, digest).Scan(&replacements)
 		return err == nil && replacements == 1
 	}, 5*time.Second, 25*time.Millisecond, "builder-loss recovery must persist a replacement while the dispatch row is still active")
+
+	var recoveredRegistry, recoveredImageName string
+	require.NoError(t, testDB.Pool.QueryRow(ctx, `
+		SELECT payload->>'registry', payload->>'image_name'
+		FROM work_queue
+		WHERE channel = 'external_image_sbom'
+		  AND payload->>'digest' = $1
+		  AND id != 'active-sbom-dispatch'
+	`, digest).Scan(&recoveredRegistry, &recoveredImageName))
+	assert.Equal(t, "registry.example.com", recoveredRegistry)
+	assert.Equal(t, "private/image", recoveredImageName)
 
 	_, err = testDB.Pool.Exec(ctx, `
 		UPDATE work_queue

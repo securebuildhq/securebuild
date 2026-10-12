@@ -123,7 +123,18 @@ func HandleExternalImageSbom(ctx context.Context, p types.ExternalImageSbomPaylo
 	attempt, maxAttempts := GetAttemptInfo(ctx)
 	logger.Info("HandleExternalImageSbom", zap.String("digest", p.Digest), zap.Int("attempt", attempt), zap.Int("max_attempts", maxAttempts))
 
-	externalImage, err := externalimage.GetExternalImageForDigest(ctx, p.Digest)
+	var externalImage *extimgtypes.ExternalImage
+	var err error
+	if p.Registry != "" || p.ImageName != "" {
+		if p.Registry == "" || p.ImageName == "" || p.TeamID == "" {
+			return NewNonRetryableError(fmt.Errorf("submitted external image source requires team, registry, and image name"))
+		}
+		externalImage, err = externalimage.GetExternalImageForTeamSource(ctx, p.TeamID, p.Digest, p.Registry, p.ImageName)
+	} else {
+		// Compatibility for work queued before registry and image_name were
+		// included in the payload during a rolling deployment.
+		externalImage, err = externalimage.GetExternalImageForDigest(ctx, p.Digest)
+	}
 	if err != nil {
 		if errors.Is(err, externalimage.ErrExternalImageNotFound) {
 			telemetry.Increment(telemetry.MetricExternalImageSBOMFailed, []string{telemetry.TagChannelExternalImageSBOM, externalimage.ReasonForDatadogMetric(err)})

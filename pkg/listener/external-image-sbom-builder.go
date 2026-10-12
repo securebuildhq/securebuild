@@ -169,6 +169,8 @@ func dispatchSbomDownloadToBuilder(ctx context.Context, cache *sbom.SbomDownload
 		CredentialID: credentialID,
 		Digest:       digest,
 		Arch:         arch,
+		Registry:     registry,
+		ImageName:    imageName,
 		WorkDir:      workDir,
 		CreatedAt:    metadata.CreatedAt,
 	})

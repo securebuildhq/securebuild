@@ -397,6 +397,8 @@ describe('POST/GET /api/v1/external-image', () => {
 
       const queued = await env.dbPool.query(
         `SELECT q.payload->>'credential_id' AS credential_id,
+                q.payload->>'registry' AS queued_registry,
+                q.payload->>'image_name' AS queued_image_name,
                 c.credential_type,
                 c.username,
                 c.password,
@@ -410,6 +412,8 @@ describe('POST/GET /api/v1/external-image', () => {
       );
       expect(queued.rows).toHaveLength(1);
       expect(queued.rows[0]).toEqual(expect.objectContaining({
+        queued_registry: registry,
+        queued_image_name: 'test-image',
         credential_type: 'basic',
         username: 'typed-user',
         is_live: true,

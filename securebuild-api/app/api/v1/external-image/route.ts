@@ -81,6 +81,8 @@ export async function POST(request: NextRequest) {
     const enqueueResult = await enqueueExternalImageSBOMWork({
       digest: digest,
       team_id: teamId,
+      registry: parsed.registry,
+      image_name: parsed.repository,
     }, digest, descriptor.architectures, typedCredentials ? {
       teamId,
       registry: parsed.registry,

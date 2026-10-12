@@ -124,6 +124,8 @@ func processBuilderSbomDownloads(ctx context.Context, cache *sbom.SbomDownloadCa
 				CredentialID: dd.Metadata.CredentialID,
 				Digest:       dd.Metadata.Digest,
 				Arch:         dd.Metadata.Arch,
+				Registry:     dd.Metadata.Registry,
+				ImageName:    dd.Metadata.ImageName,
 				WorkDir:      dd.WorkDir,
 				CreatedAt:    dd.Metadata.CreatedAt,
 			})
@@ -595,7 +597,7 @@ func handleMissingBuilderForSbomDownload(ctx context.Context, cache *sbom.SbomDo
 					zap.String("digest", d.Digest), zap.String("arch", arch), zap.Error(err))
 			}
 		}
-		if err := reenqueueSbomDownload(ctx, d.TeamID, d.CredentialID, d.Digest, d.Arch); err != nil {
+		if err := reenqueueSbomDownload(ctx, d.TeamID, d.CredentialID, d.Digest, d.Arch, d.Registry, d.ImageName); err != nil {
 			if errors.Is(err, externalimage.ErrPullCredentialUnavailableForRecovery) {
 				logger.Warn("cannot recover external image SBOM download without a live pull credential",
 					zap.String("digest", d.Digest),
@@ -620,11 +622,13 @@ func handleMissingBuilderForSbomDownload(ctx context.Context, cache *sbom.SbomDo
 // Builder-loss recovery intentionally bypasses normal digest deduplication:
 // the original dispatch row may still be completing even though the builder
 // and its asynchronous Syft process are already known to be gone.
-func reenqueueSbomDownload(ctx context.Context, teamID, credentialID, digest, arch string) error {
+func reenqueueSbomDownload(ctx context.Context, teamID, credentialID, digest, arch, registry, imageName string) error {
 	payloadBytes, err := json.Marshal(listenertypes.ExternalImageSbomPayload{
 		Digest:               digest,
 		Arch:                 arch,
 		TeamID:               teamID,
+		Registry:             registry,
+		ImageName:            imageName,
 		CredentialID:         credentialID,
 		ArchitectureVerified: true,
 	})

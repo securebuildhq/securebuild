@@ -60,6 +60,8 @@ type SbomDownloadDirInfo struct {
 	CredentialID string
 	Digest       string
 	Arch         string
+	Registry     string
+	ImageName    string
 	WorkDir      string
 	CreatedAt    time.Time
 }
@@ -338,6 +340,8 @@ func InitSbomDownloadCapacityCache(ctx context.Context) (*SbomDownloadCapacityCa
 					CredentialID: d.Metadata.CredentialID,
 					Digest:       d.Metadata.Digest,
 					Arch:         d.Metadata.Arch,
+					Registry:     d.Metadata.Registry,
+					ImageName:    d.Metadata.ImageName,
 					WorkDir:      d.WorkDir,
 					CreatedAt:    d.Metadata.CreatedAt,
 				})
