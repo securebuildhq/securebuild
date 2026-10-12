@@ -49,9 +49,13 @@ export function parseRegistryCredentials(value: unknown): RegistryCredentials | 
 
   const candidate = value as Record<string, unknown>;
   if (candidate.type === undefined) {
+    const username = typeof candidate.username === 'string' ? candidate.username : undefined;
+    const password = typeof candidate.password === 'string' ? candidate.password : undefined;
+    if (username === undefined && password === undefined) return undefined;
+
     return {
-      username: typeof candidate.username === 'string' ? candidate.username : undefined,
-      password: typeof candidate.password === 'string' ? candidate.password : undefined,
+      username,
+      password,
     };
   }
 

@@ -85,6 +85,10 @@ describe('parseImageRef', () => {
 });
 
 describe('parseRegistryCredentials', () => {
+  test('normalizes an empty legacy credential object to anonymous access', () => {
+    expect(parseRegistryCredentials({})).toBeUndefined();
+  });
+
   test('preserves the legacy untyped contract', () => {
     expect(parseRegistryCredentials({ username: 'legacy-user', password: 'legacy-password' })).toEqual({
       username: 'legacy-user',
