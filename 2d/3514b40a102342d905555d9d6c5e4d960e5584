@@ -1,0 +1,35 @@
+securebuild-api/app/api/v1/external-image/platforms/route.ts
+  s_1eb33ad6874e96::t_9f80db1ae085cf 1-58,63-139
+  s_1eb33ad6874e96::t_83d3ca65cb274b 59-62
+securebuild-api/integration/api/v1/external-image/create.test.ts
+  s_1eb33ad6874e96::t_83d3ca65cb274b 313-317
+  s_1eb33ad6874e96::t_79cb8fce6dbc64 159-180
+  s_1eb33ad6874e96::t_057aeff210f55b 44-49,156
+  s_1eb33ad6874e96::t_ec8d744807ab71 157-158
+securebuild-api/app/api/v1/external-image/route.ts
+  s_1eb33ad6874e96::t_9f80db1ae085cf 51-60
+db/schema/tables/external-image-platform-inventory.yaml
+  s_1eb33ad6874e96::t_9f80db1ae085cf 1-19
+securebuild-api/lib/externalimage/externalimage.ts
+  s_1eb33ad6874e96::t_9f80db1ae085cf 16-25,50-61,738,755-816
+  s_1eb33ad6874e96::t_de973127b422a7 718-736
+  s_1eb33ad6874e96::t_83399f76c2206c 817
+securebuild-api/integration/api/v1/external-image/scan.test.ts
+  s_1eb33ad6874e96::t_057aeff210f55b 33-117,433-443
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2d3514b40a102342d905555d9d6c5e4d960e5584",
+  "prompts": {},
+  "sessions": {
+    "s_1eb33ad6874e96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ee65-2ff6-7431-895a-9bea2a247876",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Olivia Campbell <olivia.susan.campbell@gmail.com>"
+    }
+  }
+}
