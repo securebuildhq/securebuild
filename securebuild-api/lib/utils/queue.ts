@@ -4,6 +4,7 @@ import * as srs from "secure-random-string";
 import { PoolClient } from "pg";
 import { adoptStoredSBOMPlatformStatuses } from "../externalimage/sbom-status";
 import type { ExternalImageArchitecture } from "../externalimage/registry";
+import { createExternalImagePullCredential, type PullCredentialContext } from "../externalimage/pull-credential";
 
 interface QueuePayload {
   [key: string]: string | number | boolean | null | undefined | any;
@@ -83,14 +84,25 @@ export async function enqueueUniqueWork(
 /**
  * Atomically creates pending external-image SBOM work unless the digest is
  * already queued, actively generating, or stored. A failed or stale digest can
- * be submitted again after its previous queue item is no longer active.
+ * be submitted again after its previous queue item is no longer active. When
+ * work is deduplicated, any supplied pull credential is intentionally not
+ * persisted or attached to the existing job.
  */
+export interface ExternalImageSBOMEnqueueResult {
+  firstWorkID: string | null;
+  enqueuedArchitectures: ExternalImageArchitecture[];
+  deduplicatedArchitectures: ExternalImageArchitecture[];
+}
+
 export async function enqueueExternalImageSBOMWork(
   payload: QueuePayload,
   digest: string,
   architectures: ExternalImageArchitecture[],
-): Promise<string | null> {
+  pullCredential?: PullCredentialContext,
+): Promise<ExternalImageSBOMEnqueueResult> {
   let firstID: string | null = null;
+  const enqueuedArchitectures: ExternalImageArchitecture[] = [];
+  const deduplicatedArchitectures: ExternalImageArchitecture[] = [];
   const errors: Error[] = [];
   for (const arch of architectures) {
     try {
@@ -98,8 +110,13 @@ export async function enqueueExternalImageSBOMWork(
         ...payload,
         arch,
         architecture_verified: true,
-      }, digest, arch);
-      if (firstID === null && id !== null) firstID = id;
+      }, digest, arch, pullCredential);
+      if (id === null) {
+        deduplicatedArchitectures.push(arch);
+      } else {
+        if (firstID === null) firstID = id;
+        enqueuedArchitectures.push(arch);
+      }
     } catch (error) {
       console.error(`Failed to enqueue SBOM work for ${digest}/${arch}`, error);
       errors.push(new Error(`Failed to enqueue SBOM work for ${digest}/${arch}`, { cause: error }));
@@ -108,13 +125,18 @@ export async function enqueueExternalImageSBOMWork(
   if (errors.length > 0) {
     throw new AggregateError(errors, `Failed to enqueue one or more SBOM platforms for ${digest}`);
   }
-  return firstID;
+  return {
+    firstWorkID: firstID,
+    enqueuedArchitectures,
+    deduplicatedArchitectures,
+  };
 }
 
 async function enqueueExternalImageSBOMPlatformWork(
   payload: QueuePayload,
   digest: string,
   arch: string,
+  pullCredential?: PullCredentialContext,
 ): Promise<string | null> {
   const db = getDB(await getParam("DB_URI"));
   const dedupeKey = `${digest}:${arch}`;
@@ -183,8 +205,18 @@ async function enqueueExternalImageSBOMPlatformWork(
       return null;
     }
 
-    const id = await enqueueUniqueWork('external_image_sbom', payload, dedupeKey, client);
+    let workPayload = payload;
+    let credentialID: string | undefined;
+    if (pullCredential) {
+      credentialID = await createExternalImagePullCredential(client, pullCredential);
+      workPayload = { ...payload, credential_id: credentialID };
+    }
+
+    const id = await enqueueUniqueWork('external_image_sbom', workPayload, dedupeKey, client);
     if (id === null) {
+      if (credentialID) {
+        await client.query(`DELETE FROM external_image_pull_credential WHERE id = $1`, [credentialID]);
+      }
       return null;
     }
 

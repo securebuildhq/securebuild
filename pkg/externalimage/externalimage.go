@@ -136,6 +136,58 @@ func GetExternalImageForDigest(ctx context.Context, digest string) (*types.Exter
 	return externalImage, nil
 }
 
+// GetExternalImageForTeamSource returns the exact team-owned registry source
+// submitted with an SBOM job. A digest can be tracked under multiple registry
+// repositories, so digest-only selection is not safe for source-scoped pull
+// credentials.
+func GetExternalImageForTeamSource(ctx context.Context, teamID, digest, registry, imageName string) (*types.ExternalImage, error) {
+	conn := persistence.MustGetPooledPostgresSession(ctx)
+	defer conn.Release()
+
+	rows, err := conn.Query(ctx, `
+		SELECT et.image_tag, et.created_at
+		FROM external_image_tag et
+		JOIN external_image_team eit
+		  ON eit.registry = et.registry
+		 AND eit.image_name = et.image_name
+		 AND eit.image_tag = et.image_tag
+		WHERE eit.team_id = $1
+		  AND et.digest = $2
+		  AND et.registry = $3
+		  AND et.image_name = $4
+		ORDER BY et.image_tag
+	`, teamID, digest, registry, imageName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query submitted external image source: %w", err)
+	}
+	defer rows.Close()
+
+	var externalImage *types.ExternalImage
+	for rows.Next() {
+		var imageTag string
+		var createdAt time.Time
+		if err := rows.Scan(&imageTag, &createdAt); err != nil {
+			return nil, fmt.Errorf("failed to scan submitted external image source: %w", err)
+		}
+		if externalImage == nil {
+			externalImage = &types.ExternalImage{
+				Digest:    digest,
+				Registry:  registry,
+				ImageName: imageName,
+				CreatedAt: createdAt,
+			}
+		}
+		externalImage.Tags = append(externalImage.Tags, imageTag)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read submitted external image source: %w", err)
+	}
+	if externalImage == nil {
+		return nil, ErrExternalImageNotFound
+	}
+	return externalImage, nil
+}
+
 // SetExternalImageScanStatusParams contains parameters for setting scan status
 type SetExternalImageScanStatusParams struct {
 	Digest               string
@@ -852,7 +904,8 @@ func ListExternalImagesNeedDigestCheck(ctx context.Context) ([]*types.ExternalIm
 		  on eit.registry = et.registry
 		 and eit.image_name = et.image_name
 		 and eit.image_tag = et.image_tag
-		where et.next_check_digest_at < $1
+		where eit.digest_monitoring_enabled = true
+		  and et.next_check_digest_at < $1
 		group by eit.team_id, et.digest, et.registry, et.image_name
 		order by max_created_at desc
 	`

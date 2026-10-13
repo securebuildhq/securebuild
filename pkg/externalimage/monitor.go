@@ -135,6 +135,8 @@ func checkTagsForUpdatedDigests(ctx context.Context) error {
 						Digest:               currentDigest,
 						Arch:                 arch,
 						TeamID:               externalImage.TeamID,
+						Registry:             externalImage.Registry,
+						ImageName:            externalImage.ImageName,
 						ArchitectureVerified: true,
 					}
 					payload, err := json.Marshal(p)

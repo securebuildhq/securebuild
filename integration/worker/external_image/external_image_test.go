@@ -265,6 +265,138 @@ func TestExternalImageSbomWaitsForBuilderCapacity(t *testing.T) {
 	assert.Equal(t, "waiting for builder capacity", *statuses[0].StatusMessage)
 }
 
+func TestDigestMonitoringIsScopedToEachTeam(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
+		filepath.Join(projectRoot, "db", "schema", "tables"), false))
+
+	ctx, err = param.Init(param.InitSourceEnvironment, map[string]string{"DB_URI": testDB.ConnStr})
+	require.NoError(t, err)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	const (
+		registry  = "registry.example.com"
+		imageName = "shared/private-image"
+		imageTag  = "latest"
+		digest    = "sha256:team-scoped-monitoring-1234567890123456789012345678"
+	)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image_tag
+			(registry, image_name, image_tag, created_at, last_submitted_at, digest,
+			 next_check_digest_at, next_scan_at)
+		VALUES ($1, $2, $3, NOW(), NOW(), $4, NOW() - INTERVAL '1 hour', NOW())
+	`, registry, imageName, imageTag, digest)
+	require.NoError(t, err)
+
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image_team
+			(team_id, registry, image_name, image_tag, created_at, digest_monitoring_enabled)
+		VALUES
+			('legacy-team', $1, $2, $3, NOW(), true),
+			('typed-team', $1, $2, $3, NOW(), false)
+	`, registry, imageName, imageTag)
+	require.NoError(t, err)
+
+	images, err := externalimage.ListExternalImagesNeedDigestCheck(ctx)
+	require.NoError(t, err)
+	require.Len(t, images, 1)
+	assert.Equal(t, "legacy-team", images[0].TeamID)
+	assert.Equal(t, registry, images[0].Registry)
+	assert.Equal(t, imageName, images[0].ImageName)
+	assert.Equal(t, digest, images[0].Digest)
+	assert.Equal(t, []string{imageTag}, images[0].Tags)
+}
+
+func TestExternalImageSBOMUsesSubmittedRegistrySource(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	t.Parallel()
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
+		filepath.Join(projectRoot, "db", "schema", "tables"), false))
+
+	ctx, minioStorage := setupMinIOOverrides(ctx, t, testDB.ConnStr)
+	defer testutil.TeardownMinIO(ctx, t, minioStorage)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	const (
+		teamID             = "source-selection-team"
+		digest             = "sha256:shared-source-selection-123456789012345678901234567"
+		submittedRegistry  = "a.example.com"
+		submittedImageName = "private/image"
+		otherRegistry      = "z.example.com"
+		otherImageName     = "mirror/image"
+	)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image (registry, image_name, created_at)
+		VALUES ($1, $2, NOW()), ($3, $4, NOW())
+	`, submittedRegistry, submittedImageName, otherRegistry, otherImageName)
+	require.NoError(t, err)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image_tag
+			(registry, image_name, image_tag, created_at, last_submitted_at, digest,
+			 next_check_digest_at, next_scan_at)
+		VALUES
+			($1, $2, 'latest', NOW(), NOW(), $5, NOW() + INTERVAL '4 hours', NOW()),
+			($3, $4, 'latest', NOW(), NOW(), $5, NOW() + INTERVAL '4 hours', NOW())
+	`, submittedRegistry, submittedImageName, otherRegistry, otherImageName, digest)
+	require.NoError(t, err)
+	_, err = testDB.Pool.Exec(ctx, `
+		INSERT INTO external_image_team
+			(team_id, registry, image_name, image_tag, created_at, digest_monitoring_enabled)
+		VALUES
+			($5, $1, $2, 'latest', NOW(), false),
+			($5, $3, $4, 'latest', NOW(), false)
+	`, submittedRegistry, submittedImageName, otherRegistry, otherImageName, teamID)
+	require.NoError(t, err)
+
+	var fetchedRegistry, fetchedImageName string
+	mockFetchSBOM := func(ctx context.Context, registry, imageName, digest string) ([]sbom.SBOMResult, error) {
+		fetchedRegistry = registry
+		fetchedImageName = imageName
+		return []sbom.SBOMResult{{
+			Architecture: "linux/amd64",
+			SBOM:         `{"artifacts":[]}`,
+			Source:       "syft",
+			ImageDigest:  digest,
+		}}, nil
+	}
+	mockScanExternalImage := func(ctx context.Context, digest string) (map[string]string, error) {
+		return map[string]string{"x86_64": `{"matches":[]}`}, nil
+	}
+	ctx = setupMocks(ctx, mockFetchSBOM, mockScanExternalImage)
+
+	require.NoError(t, listener.HandleExternalImageSbom(ctx, listenertypes.ExternalImageSbomPayload{
+		Digest:               digest,
+		Arch:                 "x86_64",
+		TeamID:               teamID,
+		Registry:             submittedRegistry,
+		ImageName:            submittedImageName,
+		ArchitectureVerified: true,
+	}))
+	assert.Equal(t, submittedRegistry, fetchedRegistry)
+	assert.Equal(t, submittedImageName, fetchedImageName)
+}
+
 func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -286,6 +418,80 @@ func TestEnqueueExternalImageSBOMWorkDeduplicatesActiveAndRecoversStaleGeneratio
 	require.NoError(t, err)
 	require.NoError(t, persistence.InitPostgres(ctx))
 	defer persistence.ClosePool(ctx)
+
+	t.Run("builder recovery owns a separate pull credential", func(t *testing.T) {
+		const sourceCredentialID = "source-recovery-credential"
+		const recoveryDigest = "sha256:test-builder-recovery-123456789012345678901234567890"
+		_, err := testDB.Pool.Exec(ctx, `
+			INSERT INTO external_image_pull_credential
+				(id, team_id, registry, image_name, credential_type, username, password,
+				 provider_expires_at, delete_after, created_at)
+			VALUES ($1, 'team-1', 'registry.example.com', 'private/image', 'basic',
+			        'test-user', 'encrypted-password', NULL, NOW() + INTERVAL '1 hour', NOW())
+		`, sourceCredentialID)
+		require.NoError(t, err)
+
+		payload := `{"digest":"` + recoveryDigest + `","arch":"x86_64","team_id":"team-1","credential_id":"` + sourceCredentialID + `"}`
+		replacementCredentialID, err := externalimage.EnqueueRecoveredSBOMWork(ctx, payload, sourceCredentialID, "team-1")
+		require.NoError(t, err)
+		require.NotEmpty(t, replacementCredentialID)
+		require.NotEqual(t, sourceCredentialID, replacementCredentialID)
+
+		var queuedCredentialID string
+		require.NoError(t, testDB.Pool.QueryRow(ctx, `
+			SELECT payload->>'credential_id'
+			FROM work_queue
+			WHERE channel = 'external_image_sbom' AND payload->>'digest' = $1
+		`, recoveryDigest).Scan(&queuedCredentialID))
+		require.Equal(t, replacementCredentialID, queuedCredentialID)
+
+		var sourceCount int
+		require.NoError(t, testDB.Pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM external_image_pull_credential WHERE id = $1
+		`, sourceCredentialID).Scan(&sourceCount))
+		require.Zero(t, sourceCount, "credential ownership should transfer to the replacement")
+
+		// A late cleanup from the abandoned download must not delete the
+		// replacement's separately owned credential.
+		require.NoError(t, externalimage.DeleteExternalImagePullCredential(ctx, sourceCredentialID))
+		var clonedPassword string
+		var clonedDeleteAfter, clonedCreatedAt time.Time
+		require.NoError(t, testDB.Pool.QueryRow(ctx, `
+			SELECT password, delete_after, created_at
+			FROM external_image_pull_credential
+			WHERE id = $1 AND team_id = 'team-1'
+		`, replacementCredentialID).Scan(&clonedPassword, &clonedDeleteAfter, &clonedCreatedAt))
+		require.Equal(t, "encrypted-password", clonedPassword)
+		require.WithinDuration(t, clonedCreatedAt.Add(24*time.Hour), clonedDeleteAfter, time.Second)
+	})
+
+	t.Run("builder recovery remains capped by provider expiration", func(t *testing.T) {
+		const sourceCredentialID = "source-provider-capped-credential"
+		const recoveryDigest = "sha256:test-provider-capped-recovery-123456789012345678901234"
+		providerExpiresAt := time.Now().UTC().Add(time.Hour)
+		_, err := testDB.Pool.Exec(ctx, `
+			INSERT INTO external_image_pull_credential
+				(id, team_id, registry, image_name, credential_type, username, password,
+				 provider_expires_at, delete_after, created_at)
+			VALUES ($1, 'team-1', 'registry.example.com', 'private/image',
+			        'ecr_authorization_token', 'AWS', 'encrypted-token', $2,
+			        NOW() + INTERVAL '5 minutes', NOW())
+		`, sourceCredentialID, providerExpiresAt)
+		require.NoError(t, err)
+
+		payload := `{"digest":"` + recoveryDigest + `","arch":"x86_64","team_id":"team-1","credential_id":"` + sourceCredentialID + `"}`
+		replacementCredentialID, err := externalimage.EnqueueRecoveredSBOMWork(ctx, payload, sourceCredentialID, "team-1")
+		require.NoError(t, err)
+
+		var clonedProviderExpiresAt, clonedDeleteAfter time.Time
+		require.NoError(t, testDB.Pool.QueryRow(ctx, `
+			SELECT provider_expires_at, delete_after
+			FROM external_image_pull_credential
+			WHERE id = $1
+		`, replacementCredentialID).Scan(&clonedProviderExpiresAt, &clonedDeleteAfter))
+		require.WithinDuration(t, providerExpiresAt, clonedProviderExpiresAt, time.Millisecond)
+		require.WithinDuration(t, providerExpiresAt, clonedDeleteAfter, time.Millisecond)
+	})
 
 	digest := "sha256:test-sbom-enqueue-1234567890123456789012345678901234"
 	payload := `{"digest":"` + digest + `","team_id":"team-1"}`
@@ -485,6 +691,8 @@ func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {
 	cache.AddDownload(missingBuilderID, sbom.SbomDownloadDirInfo{
 		TeamID:    teamID,
 		Digest:    digest,
+		Registry:  "registry.example.com",
+		ImageName: "private/image",
 		WorkDir:   "/tmp/missing-builder-sbom",
 		CreatedAt: time.Now().UTC(),
 	})
@@ -510,6 +718,17 @@ func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {
 		return err == nil && replacements == 1
 	}, 5*time.Second, 25*time.Millisecond, "builder-loss recovery must persist a replacement while the dispatch row is still active")
 
+	var recoveredRegistry, recoveredImageName string
+	require.NoError(t, testDB.Pool.QueryRow(ctx, `
+		SELECT payload->>'registry', payload->>'image_name'
+		FROM work_queue
+		WHERE channel = 'external_image_sbom'
+		  AND payload->>'digest' = $1
+		  AND id != 'active-sbom-dispatch'
+	`, digest).Scan(&recoveredRegistry, &recoveredImageName))
+	assert.Equal(t, "registry.example.com", recoveredRegistry)
+	assert.Equal(t, "private/image", recoveredImageName)
+
 	_, err = testDB.Pool.Exec(ctx, `
 		UPDATE work_queue
 		SET completed_at = NOW(), dedupe_key = NULL
@@ -528,6 +747,73 @@ func TestMissingBuilderRecoveryEnqueuesWhileDispatchRowIsActive(t *testing.T) {
 	assert.Equal(t, 1, pendingReplacements)
 	assert.Empty(t, cache.GetDownloadsForBuilder(missingBuilderID),
 		"recovery record should be released after replacement work is queued")
+
+	cancelChecker()
+	select {
+	case err := <-checkerDone:
+		require.NoError(t, err)
+	case <-time.After(sbom.SbomDownloadPollerInterval + time.Second):
+		t.Fatal("SBOM status checker did not stop after cancellation")
+	}
+}
+
+func TestMissingBuilderRecoveryDropsUnavailableCredential(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	testDB := testutil.SetupTestDatabase(ctx, t)
+	defer testutil.TeardownTestDatabase(ctx, t, testDB)
+
+	projectRoot, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, testDB.ConnStr,
+		filepath.Join(projectRoot, "db", "schema", "tables"), false))
+
+	ctx, err = param.Init(param.InitSourceEnvironment, map[string]string{"DB_URI": testDB.ConnStr})
+	require.NoError(t, err)
+	require.NoError(t, persistence.InitPostgres(ctx))
+	defer persistence.ClosePool(ctx)
+
+	digest := "sha256:test-missing-recovery-credential-123456789012345678901234"
+	require.NoError(t, externalimage.InitializeSBOMStatusPending(ctx, digest, "x86_64"))
+	require.NoError(t, externalimage.SetSBOMStatusGenerating(ctx, digest, "x86_64"))
+
+	const missingBuilderID = "missing-builder-with-expired-credential"
+	cache := sbom.NewSbomDownloadCapacityCache()
+	cache.AddDownload(missingBuilderID, sbom.SbomDownloadDirInfo{
+		TeamID:       "team-missing-credential",
+		CredentialID: "expired-or-deleted-credential",
+		Digest:       digest,
+		Arch:         "x86_64",
+		WorkDir:      "/tmp/missing-builder-sbom",
+		CreatedAt:    time.Now().UTC(),
+	})
+
+	checkerDone := make(chan error, 1)
+	checkerCtx, cancelChecker := context.WithCancel(ctx)
+	defer cancelChecker()
+	go func() {
+		checkerDone <- listener.StartExternalImageSbomDownloadStatusChecker(checkerCtx, cache)
+	}()
+
+	require.Eventually(t, func() bool {
+		return len(cache.GetDownloadsForBuilder(missingBuilderID)) == 0
+	}, 5*time.Second, 25*time.Millisecond, "unrecoverable credential must release the stale recovery record")
+
+	var replacements int
+	require.NoError(t, testDB.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM work_queue
+		WHERE channel = 'external_image_sbom'
+		  AND payload->>'digest' = $1
+	`, digest).Scan(&replacements))
+	assert.Zero(t, replacements, "expired credentials must not enqueue unauthenticated replacement work")
+
+	statuses := getSBOMStatuses(t, ctx, digest)
+	require.Len(t, statuses, 1)
+	assert.Equal(t, "failed", statuses[0].Status)
 
 	cancelChecker()
 	select {
