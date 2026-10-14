@@ -62,6 +62,14 @@ func TestIsPackageCoreForAPKOWithNames(t *testing.T) {
 		wantErr       bool
 	}{
 		{
+			name:          "core package - exact APK pin includes release",
+			apkoYAML:      "contents:\n  packages:\n    - rook-1.19=1.19.7-r0\n",
+			apkoTags:      []string{"v1.19.7"},
+			possibleNames: map[string]struct{}{"rook-1.19": {}},
+			oldVersion:    "1.19.7",
+			expected:      true,
+		},
+		{
 			name: "core package - pinned with matching tag",
 			apkoYAML: `contents:
   packages:
@@ -230,6 +238,33 @@ func TestIsPackageCoreForAPKOWithNames(t *testing.T) {
 
 			if result != tt.expected {
 				t.Errorf("isPackageCoreForAPKOWithNames() = %v; want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCorePackageVersionForAPKOWithNames(t *testing.T) {
+	names := map[string]struct{}{"rook": {}, "rook-1.19": {}, "rook-1.19-compat": {}}
+	for _, tc := range []struct {
+		name, pin, sourceVersion, want string
+		tags                           []string
+	}{
+		{"exact release pin", "rook-1.19=1.19.7-r12", "1.19.7", "1.19.7", []string{"v1.19.7"}},
+		{"image lags source package", "rook-1.19=1.19.7-r0", "1.19.11", "1.19.7", []string{"v1.19.7"}},
+		{"subpackage is image core", "rook-1.19-compat=1.19.7-r2", "1.19.11", "1.19.7", []string{"v1.19.7"}},
+		{"minor alias tag", "rook-1.19~1.19.7", "1.19.11", "1.19.7", []string{"v1.19", "latest"}},
+		{"unrelated dependency", "ceph-19.2=19.2.4-r3", "1.19.11", "", []string{"v19.2.4"}},
+		{"pin and tag disagree", "rook-1.19=1.19.7-r0", "1.19.11", "", []string{"v1.19.8"}},
+		{"different source line", "rook=1.18.7-r0", "1.19.11", "", []string{"v1.18.7"}},
+		{"unversioned package", "rook-1.19", "1.19.11", "", []string{"v1.19.11"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := corePackageVersionForAPKOWithNames("contents:\n  packages:\n    - "+tc.pin+"\n", tc.tags, names, tc.sourceVersion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("got core version %q, want %q", got, tc.want)
 			}
 		})
 	}
