@@ -301,12 +301,24 @@ func createDirectories(config *ImageBuildConfig) error {
 }
 
 func runApkoBuild(ctx context.Context, config *ImageBuildConfig) error {
+	workDir, err := filepath.Abs(config.WorkDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve apko work directory: %w", err)
+	}
+	// Keep the cache within the work directory so cleanup also covers interrupted builds.
+	cacheDir, err := os.MkdirTemp(workDir, ".apko-cache-")
+	if err != nil {
+		return fmt.Errorf("failed to create apko cache directory: %w", err)
+	}
+	defer os.RemoveAll(cacheDir)
+
 	stdoutFile := filepath.Join(config.LogDir, "apko-build.stdout")
 	stderrFile := filepath.Join(config.LogDir, "apko-build.stderr")
 
 	args := []string{
 		"build",
 		"--log-level", "debug",
+		"--cache-dir", cacheDir,
 		"--build-date", config.BuildDate,
 		"--sbom-path", config.SBOMPath,
 		"--arch", "aarch64,x86_64",
