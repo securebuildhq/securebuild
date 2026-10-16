@@ -249,7 +249,8 @@ func prepareSbomDownloadFiles(ctx context.Context, runner buildbackend.Runner, w
 
 // buildSyftLaunchCommand constructs the nohup shell command that runs syft in
 // the background on the builder. Syft pulls the image from the registry and
-// generates SBOM output:
+// keeps temporary image data in the work directory so cleanup covers timeouts.
+// It generates SBOM output:
 //   - sbom.spdx.json (SPDX JSON output, stored as the SBOM)
 //   - sbom.syft.json (Syft JSON output, for extracting image size and digest)
 //   - output/exit_code (syft exit code: 0=success)
@@ -264,6 +265,7 @@ func buildSyftLaunchCommand(workDir, platform, registry, imageName, digest strin
 	}
 	return fmt.Sprintf(`nohup bash -c '
   cd %q
+  export TMPDIR="$PWD"
 %s  syft --platform %s -o spdx-json=./sbom.spdx.json -o syft-json=./sbom.syft.json registry:%s > output/syft.stderr 2>&1 &
   syft_pid=$!
   echo $syft_pid > output/syft.pid
