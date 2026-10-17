@@ -15,8 +15,6 @@ schema:
       constraints:
         notNull: true
       default: "x86_64"
-    - name: sbom
-      type: text
     - name: created_at
       type: timestamp with time zone
       constraints:
