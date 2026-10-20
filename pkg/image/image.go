@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -525,7 +526,26 @@ func IsPackageCoreForAPKO(ctx context.Context, apkoYAML string, apkoTags []strin
 		zap.String("oldVersion", oldVersion),
 		zap.String("oldPackageVersionID", oldPackageVersionID))
 
-	// Get all possible names from package_version_provides
+	possibleNames, err := corePackageNames(ctx, familyName, packageName, oldPackageVersionID)
+	if err != nil {
+		return false, err
+	}
+	return isPackageCoreForAPKOWithNames(apkoYAML, apkoTags, possibleNames, oldVersion)
+}
+
+// CorePackageVersionForAPKO returns the version actually pinned by a core image
+// template. Its patch version can lag the latest source package in this minor
+// line; using that latest version would incorrectly reject a valid template.
+func CorePackageVersionForAPKO(ctx context.Context, apkoYAML string, apkoTags []string, familyName string, packageName string, oldVersion string, oldPackageVersionID string) (string, error) {
+	possibleNames, err := corePackageNames(ctx, familyName, packageName, oldPackageVersionID)
+	if err != nil {
+		return "", err
+	}
+	return corePackageVersionForAPKOWithNames(apkoYAML, apkoTags, possibleNames, oldVersion)
+}
+
+func corePackageNames(ctx context.Context, familyName, packageName, oldPackageVersionID string) (map[string]struct{}, error) {
+	// Get all possible names from package_version_provides.
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -535,7 +555,7 @@ func IsPackageCoreForAPKO(ctx context.Context, apkoYAML string, apkoTags []strin
 		WHERE package_version_id = $1
 	`, oldPackageVersionID)
 	if err != nil {
-		return false, fmt.Errorf("failed to query provides: %w", err)
+		return nil, fmt.Errorf("failed to query provides: %w", err)
 	}
 	defer rows.Close()
 
@@ -548,7 +568,7 @@ func IsPackageCoreForAPKO(ctx context.Context, apkoYAML string, apkoTags []strin
 	for rows.Next() {
 		var pkgName, providesName string
 		if err := rows.Scan(&pkgName, &providesName); err != nil {
-			return false, fmt.Errorf("failed to scan provides: %w", err)
+			return nil, fmt.Errorf("failed to scan provides: %w", err)
 		}
 		logger.Debug("Found provides entry",
 			zap.String("package_name", pkgName),
@@ -558,7 +578,42 @@ func IsPackageCoreForAPKO(ctx context.Context, apkoYAML string, apkoTags []strin
 		possibleNames[providesName] = struct{}{}
 	}
 
-	return isPackageCoreForAPKOWithNames(apkoYAML, apkoTags, possibleNames, oldVersion)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate provides: %w", err)
+	}
+	return possibleNames, nil
+}
+
+var apkReleaseSuffix = regexp.MustCompile(`-r[0-9]+$`)
+
+func corePackageVersionForAPKOWithNames(apkoYAML string, apkoTags []string, possibleNames map[string]struct{}, sourceVersion string) (string, error) {
+	var imageConfig apkotypes.ImageConfiguration
+	if err := yaml.Unmarshal([]byte(apkoYAML), &imageConfig); err != nil {
+		return "", fmt.Errorf("failed to parse APKO YAML: %w", err)
+	}
+	source, err := semver.ParseTolerant(sourceVersion)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse source version: %w", err)
+	}
+	for _, pkg := range imageConfig.Contents.Packages {
+		parsed := apkopackage.ResolvePackageNameVersionPin(pkg)
+		if _, exists := possibleNames[parsed.Name]; !exists {
+			continue
+		}
+		version := apkReleaseSuffix.ReplaceAllString(parsed.Version, "")
+		pinned, err := semver.ParseTolerant(version)
+		if err != nil || pinned.Major != source.Major || pinned.Minor != source.Minor {
+			continue
+		}
+		core, err := isPackageCoreForAPKOWithNames(apkoYAML, apkoTags, possibleNames, version)
+		if err != nil {
+			return "", err
+		}
+		if core {
+			return version, nil
+		}
+	}
+	return "", nil
 }
 
 // isPackageCoreForAPKOWithNames checks if a package is a core package for a given APKO
@@ -590,7 +645,7 @@ func isPackageCoreForAPKOWithNames(apkoYAML string, apkoTags []string, possibleN
 			zap.String("old_version", oldVersion),
 			zap.Bool("name_exists", exists))
 
-		if exists && parsed.Version == oldVersion {
+		if exists && apkReleaseSuffix.ReplaceAllString(parsed.Version, "") == oldVersion {
 			logger.Debug("Found matching package pin",
 				zap.String("package", parsed.Name),
 				zap.String("version", parsed.Version),
