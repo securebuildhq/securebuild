@@ -1,0 +1,25 @@
+pkg/image/image.go
+  s_f22df7b173be42::t_768e4983f87953 14,529-548,558,571,581-616,648
+pkg/image/image_test.go
+  s_f22df7b173be42::t_0fbca5a13eaa71 64-71,245-272
+pkg/listener/package-family-update-check.go
+  s_f22df7b173be42::t_30df1f7100ecc9 2143,2149,2165,3227,3234,3250
+pkg/listener/package-family-update-check_test.go
+  s_f22df7b173be42::t_eae85cbd2f0bcd 86-108,440
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bf4a47281b885164cc182409cdf764bb83de160b",
+  "prompts": {},
+  "sessions": {
+    "s_f22df7b173be42": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f308-06ea-7c70-ac29-b92872b15a43",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Mikhail Swift <mikhail@replicated.com>"
+    }
+  }
+}
