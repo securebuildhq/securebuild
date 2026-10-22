@@ -18,16 +18,31 @@ var ErrInvalidRepositoryRequest = errors.New("invalid APK repository request")
 // RepositoryContainsPackage reports whether an exact package revision is
 // present in both public APK indexes.
 func RepositoryContainsPackage(ctx context.Context, repositoryURL, packageName, version string, release int) (bool, error) {
+	return RepositoryContainsPackages(ctx, repositoryURL, []RepositoryPackage{{Name: packageName, Version: version, Release: release}})
+}
+
+// RepositoryPackage identifies an exact revision required by a queued image.
+type RepositoryPackage struct {
+	Name, Version string
+	Release       int
+}
+
+// RepositoryContainsPackages checks the entire prerequisite set with one index
+// download per architecture, rather than two downloads per dependency bump.
+func RepositoryContainsPackages(ctx context.Context, repositoryURL string, packages []RepositoryPackage) (bool, error) {
 	repository, err := url.Parse(repositoryURL)
 	if err != nil || repository.Host == "" || (repository.Scheme != "https" && repository.Scheme != "http") || repository.RawQuery != "" || repository.Fragment != "" {
 		return false, fmt.Errorf("%w: repository must be an HTTP(S) URL without a query or fragment", ErrInvalidRepositoryRequest)
 	}
-	if strings.TrimSpace(packageName) == "" || strings.TrimSpace(version) == "" || release < 0 {
-		return false, fmt.Errorf("%w: package name, version and a nonnegative release are required", ErrInvalidRepositoryRequest)
+	type revision struct{ name, version string }
+	wanted := make(map[revision]bool)
+	for _, p := range packages {
+		if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.Version) == "" || p.Release < 0 {
+			return false, fmt.Errorf("%w: package name, version and a nonnegative release are required", ErrInvalidRepositoryRequest)
+		}
+		wanted[revision{p.Name, fmt.Sprintf("%s-r%d", p.Version, p.Release)}] = true
 	}
-
 	client := &http.Client{Timeout: 5 * time.Second}
-	wantedVersion := fmt.Sprintf("%s-r%d", version, release)
 
 	for _, architecture := range []string{"aarch64", "x86_64"} {
 		indexURL := fmt.Sprintf("%s/%s/APKINDEX.tar.gz", strings.TrimRight(repositoryURL, "/"), architecture)
@@ -70,14 +85,14 @@ func RepositoryContainsPackage(ctx context.Context, repositoryURL, packageName, 
 			return false, fmt.Errorf("parse %s APK index: %w", architecture, err)
 		}
 
-		found := false
-		for _, indexedPackage := range index.Packages {
-			if indexedPackage["P"] == packageName && indexedPackage["V"] == wantedVersion {
-				found = true
-				break
+		found := make(map[revision]bool)
+		for _, p := range index.Packages {
+			r := revision{p["P"], p["V"]}
+			if wanted[r] {
+				found[r] = true
 			}
 		}
-		if !found {
+		if len(found) != len(wanted) {
 			return false, nil
 		}
 	}

@@ -36,9 +36,12 @@ type BuildAPKOTriggerPackage struct {
 }
 
 type BuildAPKOPayload struct {
-	ImageID        string                   `json:"imageId"`
-	APKOID         string                   `json:"apkoId"`
-	TriggerPackage *BuildAPKOTriggerPackage `json:"triggerPackage,omitempty"`
+	ImageID         string                    `json:"imageId"`
+	APKOID          string                    `json:"apkoId"`
+	TriggerPackage  *BuildAPKOTriggerPackage  `json:"triggerPackage,omitempty"`
+	TriggerPackages []BuildAPKOTriggerPackage `json:"triggerPackages,omitempty"`
+	// New requirements get a full publication wait without changing FIFO order.
+	PublicationWaitStartedAt *time.Time `json:"publicationWaitStartedAt,omitempty"`
 }
 
 // handleBuildAPKO orchestrates the build process for a single APKO configuration
@@ -48,8 +51,15 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 		return fmt.Errorf("failed to unmarshal build apko payload: %w", err)
 	}
 
-	if buildAPKOPayload.TriggerPackage != nil {
-		if err := checkPackagePublication(ctx, *buildAPKOPayload.TriggerPackage); err != nil {
+	requirements, err := buildAPKOPayload.publicationRequirements()
+	if err != nil {
+		return NewNonRetryableError(err)
+	}
+	if len(requirements) > 0 {
+		if err := checkPackagesPublication(ctx, requirements); err != nil {
+			if retryAfter, ok := AsRetryAfterError(err); ok && buildAPKOPayload.PublicationWaitStartedAt != nil {
+				retryAfter.StartedAt = *buildAPKOPayload.PublicationWaitStartedAt
+			}
 			return err
 		}
 	}
@@ -156,12 +166,18 @@ func handleBuildAPKO(ctx context.Context, payload string) error {
 // checkPackagePublication checks the exact triggering package revision in both
 // public indexes before the image build record or VM assignment is created.
 func checkPackagePublication(ctx context.Context, trigger BuildAPKOTriggerPackage) error {
-	available, err := apk.RepositoryContainsPackage(
+	return checkPackagesPublication(ctx, []BuildAPKOTriggerPackage{trigger})
+}
+
+func checkPackagesPublication(ctx context.Context, triggers []BuildAPKOTriggerPackage) error {
+	packages := make([]apk.RepositoryPackage, 0, len(triggers))
+	for _, trigger := range triggers {
+		packages = append(packages, apk.RepositoryPackage{Name: trigger.Name, Version: trigger.Version, Release: trigger.APKRelease})
+	}
+	available, err := apk.RepositoryContainsPackages(
 		ctx,
 		param.GetParam(ctx).ApkRepository,
-		trigger.Name,
-		trigger.Version,
-		trigger.APKRelease,
+		packages,
 	)
 	if err != nil {
 		err = fmt.Errorf("check triggering package in APK repository: %w", err)
@@ -172,11 +188,9 @@ func checkPackagePublication(ctx context.Context, trigger BuildAPKOTriggerPackag
 	}
 	if !available {
 		return NewRetryAfterError(fmt.Errorf(
-			"%w: %s=%s-r%d",
+			"%w: required revisions %+v",
 			ErrRepositoryPackageUnavailable,
-			trigger.Name,
-			trigger.Version,
-			trigger.APKRelease,
+			triggers,
 		), repositoryPublicationRetryInterval, repositoryPublicationTimeout)
 	}
 	return nil

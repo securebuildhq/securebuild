@@ -179,3 +179,12 @@ func TestCheckPackagePublicationRejectsInvalidConfiguration(t *testing.T) {
 	err := checkPackagePublication(ctx, BuildAPKOTriggerPackage{Name: "example", Version: "10.3.1", APKRelease: 2})
 	require.True(t, IsNonRetryableError(err))
 }
+
+func TestAPKORequirementsPreserveLegacyAndEveryExactRevision(t *testing.T) {
+	p := BuildAPKOPayload{TriggerPackage: &BuildAPKOTriggerPackage{Name: "dep", Version: "1", APKRelease: 0}, TriggerPackages: []BuildAPKOTriggerPackage{{Name: "dep", Version: "1", APKRelease: 1}, {Name: "dep", Version: "1", APKRelease: 0}}}
+	requirements, err := p.publicationRequirements()
+	require.NoError(t, err)
+	require.Len(t, requirements, 2)
+	require.Equal(t, 0, requirements[0].APKRelease)
+	require.Equal(t, 1, requirements[1].APKRelease)
+}
