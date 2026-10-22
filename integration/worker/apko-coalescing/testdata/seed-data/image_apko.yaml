@@ -1,0 +1,44 @@
+database: securebuild
+name: image_apko
+requires:
+  - image
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "apko"
+        - column: image_id
+          value:
+            str: "image"
+        - column: name
+          value:
+            str: "apko"
+        - column: tags
+          value:
+            str: "{1.0}"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+    - columns:
+        - column: id
+          value:
+            str: "other-apko"
+        - column: image_id
+          value:
+            str: "image"
+        - column: name
+          value:
+            str: "other-apko"
+        - column: tags
+          value:
+            str: "{2.0}"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2026-01-01T00:00:00Z"
