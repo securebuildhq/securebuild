@@ -23,7 +23,8 @@ jobs:
   e2e-tests:
     needs: check-changes
     if: needs.check-changes.outputs.run-app == 'true'
-    runs-on: ubuntu-latest
+    # Playwright 1.60.0 supports Ubuntu 24.04, but not the 26.04 latest runner.
+    runs-on: ubuntu-24.04
     # Cap the job so a stalled setup step can't run to GitHub's 6h default.
     timeout-minutes: 20
     strategy:

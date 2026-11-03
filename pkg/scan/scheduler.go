@@ -81,7 +81,7 @@ func StartScheduler(ctx context.Context, cache *ScanCapacityCache) error {
 				logger.Info("Scan scheduler shutting down")
 				return
 			case <-time.After(CatalogCheckInterval):
-				if err := processPeriodicScans(ctx); err != nil {
+				if err := ProcessPeriodicScans(ctx); err != nil {
 					logger.Error(fmt.Errorf("failed to process periodic catalog scans: %w", err))
 				}
 			}
@@ -113,7 +113,8 @@ func StartScheduler(ctx context.Context, cache *ScanCapacityCache) error {
 	}
 }
 
-func processPeriodicScans(ctx context.Context) error {
+// ProcessPeriodicScans enqueues due catalog images that have no unfinished scan.
+func ProcessPeriodicScans(ctx context.Context) error {
 	maxImagesPerCycle := param.GetParam(ctx).MaxImagesPerCycle
 
 	conn := persistence.MustGetPooledPostgresSession(ctx)
@@ -126,6 +127,12 @@ func processPeriodicScans(ctx context.Context) error {
 		INNER JOIN image i ON ic.image_id = i.id
 		WHERE ic.next_scan_at < $1
 		  AND ic.is_published = true
+		  AND NOT EXISTS (
+		    SELECT 1 FROM work_queue pending
+		    WHERE pending.channel = 'scan_catalog_image'
+		      AND pending.completed_at IS NULL
+		      AND pending.payload->>'catalogImageId' = ic.id
+		  )
 		ORDER BY ic.next_scan_at ASC
 		LIMIT $2
 	`
@@ -159,10 +166,14 @@ func processPeriodicScans(ctx context.Context) error {
 			continue
 		}
 
-		if err := persistence.EnqueueWork(ctx, "scan_catalog_image", string(payloadJSON)); err != nil {
+		enqueued, err := persistence.EnqueueUniqueWork(ctx, "scan_catalog_image", string(payloadJSON), catalogImageID)
+		if err != nil {
 			logger.Warn("Failed to enqueue catalog image scan",
 				zap.String("catalogImageID", catalogImageID),
 				zap.Error(err))
+			continue
+		}
+		if !enqueued {
 			continue
 		}
 
@@ -172,6 +183,9 @@ func processPeriodicScans(ctx context.Context) error {
 			zap.String("tag", tag))
 
 		processedCount++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to read catalog images for scanning: %w", err)
 	}
 
 	if processedCount > 0 {

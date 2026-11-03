@@ -1,0 +1,11 @@
+database: securebuild
+name: image
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value: {str: "catalog-scan-image"}
+        - column: name
+          value: {str: "catalog-scan-image"}
+        - column: created_at
+          value: {str: "2025-01-01T00:00:00Z"}
