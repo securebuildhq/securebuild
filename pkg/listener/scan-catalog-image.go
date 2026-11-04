@@ -24,6 +24,23 @@ type ScanCatalogImagePayload struct {
 	ImageTag       string `json:"imageTag"`
 }
 
+type catalogSBOMScannerKey struct{}
+
+// WithMockCatalogSBOMScanner replaces Grype execution in catalog scan tests.
+func WithMockCatalogSBOMScanner(ctx context.Context, scanner func(context.Context, string, string, bool) (map[string]string, error)) context.Context {
+	return context.WithValue(ctx, catalogSBOMScannerKey{}, scanner)
+}
+
+func scanCatalogSBOMs(ctx context.Context, sbomX86, sbomAarch64 string, customDB bool) (map[string]string, error) {
+	if scanner, ok := ctx.Value(catalogSBOMScannerKey{}).(func(context.Context, string, string, bool) (map[string]string, error)); ok {
+		return scanner(ctx, sbomX86, sbomAarch64, customDB)
+	}
+	if customDB {
+		return scan.ScanCatalogImageSBOMsCustom(ctx, sbomX86, sbomAarch64)
+	}
+	return scan.ScanCatalogImageSBOMsStandard(ctx, sbomX86, sbomAarch64)
+}
+
 func handleScanCatalogImage(ctx context.Context, payload string) error {
 	var scanPayload ScanCatalogImagePayload
 	if err := json.Unmarshal([]byte(payload), &scanPayload); err != nil {
@@ -55,14 +72,14 @@ func handleScanCatalogImage(ctx context.Context, payload string) error {
 	// This will show vulnerabilities with SecureBuild fixes applied
 	go func() {
 		defer wg.Done()
-		standardScanResults, standardErr = scan.ScanCatalogImageSBOMsStandard(ctx, catalogImage.SbomX86, catalogImage.SbomAarch64)
+		standardScanResults, standardErr = scanCatalogSBOMs(ctx, catalogImage.SbomX86, catalogImage.SbomAarch64, false)
 	}()
 
 	// Scan 2: Custom database (NO SecureOS provider) for SecDB feed generation
 	// This uses only NVD + GitHub to avoid circular dependency
 	go func() {
 		defer wg.Done()
-		customScanResults, customErr = scan.ScanCatalogImageSBOMsCustom(ctx, catalogImage.SbomX86, catalogImage.SbomAarch64)
+		customScanResults, customErr = scanCatalogSBOMs(ctx, catalogImage.SbomX86, catalogImage.SbomAarch64, true)
 	}()
 
 	wg.Wait()
@@ -184,7 +201,7 @@ func updateCatalogScanResults(ctx context.Context, catalogImageID string, standa
 	// Get catalog image info to find the alternate image and tag
 	var imageName, imageTag, alternateImageName string
 	catalogQuery := `
-		SELECT ic.name, ic.tag, i.alternate_image
+		SELECT ic.name, ic.tag, COALESCE(i.alternate_image, '')
 		FROM image_catalog ic
 		JOIN image i ON ic.image_id = i.id
 		WHERE ic.id = $1`
