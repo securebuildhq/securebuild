@@ -6,7 +6,7 @@ seedData:
         - column: id
           value: {str: "scan-results-sbom"}
         - column: image_apko_id
-          value: {str: ""}
+          value: {str: "scan-results-apko"}
         - column: syft_sbom_x86
           value: {str: "{\"artifacts\":[]}"}
         - column: syft_sbom_aarch64

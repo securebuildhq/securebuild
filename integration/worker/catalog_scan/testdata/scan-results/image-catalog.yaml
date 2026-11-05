@@ -18,7 +18,7 @@ seedData:
         - column: image_id
           value: {str: "null-alternate"}
         - column: apko_id
-          value: {str: ""}
+          value: {str: "scan-results-apko"}
         - column: apko_version_id
           value: {str: "scan-results-test"}
         - column: is_published
@@ -39,7 +39,7 @@ seedData:
         - column: image_id
           value: {str: "empty-alternate"}
         - column: apko_id
-          value: {str: ""}
+          value: {str: "scan-results-apko"}
         - column: apko_version_id
           value: {str: "scan-results-test"}
         - column: is_published
@@ -60,7 +60,7 @@ seedData:
         - column: image_id
           value: {str: "configured-alternate"}
         - column: apko_id
-          value: {str: ""}
+          value: {str: "scan-results-apko"}
         - column: apko_version_id
           value: {str: "scan-results-test"}
         - column: is_published

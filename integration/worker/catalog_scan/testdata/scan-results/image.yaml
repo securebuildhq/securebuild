@@ -16,8 +16,6 @@ seedData:
           value: {str: "empty-alternate"}
         - column: created_at
           value: {str: "2025-01-01T00:00:00Z"}
-        - column: alternate_image
-          value: {str: ""}
     - columns:
         - column: id
           value: {str: "configured-alternate"}

@@ -24,6 +24,13 @@ func TestCatalogScanStoresResultsWithOptionalAlternateImage(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, testutil.ApplySchemaHero(ctx, db.ConnStr,
 				filepath.Join(root, "integration", "worker", "catalog_scan", "testdata", "scan-results"), true))
+			// SchemaHero's Postgres plugin omits empty-string seed values.
+			_, err = db.Pool.Exec(ctx, `
+				UPDATE image SET alternate_image = '' WHERE id = 'empty-alternate';
+				UPDATE image_catalog SET apko_id = '' WHERE apko_id = 'scan-results-apko';
+				UPDATE image_sbom SET image_apko_id = '' WHERE image_apko_id = 'scan-results-apko';
+			`)
+			require.NoError(t, err)
 
 			const standardResult = `{"matches":[],"descriptor":{"name":"grype","version":"standard-test"}}`
 			const alternateResult = `{"matches":[],"descriptor":{"name":"grype","version":"alternate-test"}}`
