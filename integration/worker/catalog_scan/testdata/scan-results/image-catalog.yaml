@@ -1,0 +1,69 @@
+database: securebuild
+name: image_catalog
+requires:
+  - image
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value: {str: "scan-null-alternate"}
+        - column: name
+          value: {str: "null-alternate"}
+        - column: tag
+          value: {str: "latest"}
+        - column: created_at
+          value: {str: "2025-01-01T00:00:00Z"}
+        - column: updated_at
+          value: {str: "2025-01-01T00:00:00Z"}
+        - column: image_id
+          value: {str: "null-alternate"}
+        - column: apko_id
+          value: {str: "scan-results-apko"}
+        - column: apko_version_id
+          value: {str: "scan-results-test"}
+        - column: is_published
+          value: {str: "true"}
+        - column: next_scan_at
+          value: {str: "2025-01-01T00:00:00Z"}
+    - columns:
+        - column: id
+          value: {str: "scan-empty-alternate"}
+        - column: name
+          value: {str: "empty-alternate"}
+        - column: tag
+          value: {str: "latest"}
+        - column: created_at
+          value: {str: "2025-01-01T00:00:00Z"}
+        - column: updated_at
+          value: {str: "2025-01-01T00:00:00Z"}
+        - column: image_id
+          value: {str: "empty-alternate"}
+        - column: apko_id
+          value: {str: "scan-results-apko"}
+        - column: apko_version_id
+          value: {str: "scan-results-test"}
+        - column: is_published
+          value: {str: "true"}
+        - column: next_scan_at
+          value: {str: "2025-01-01T00:00:00Z"}
+    - columns:
+        - column: id
+          value: {str: "scan-configured-alternate"}
+        - column: name
+          value: {str: "configured-alternate"}
+        - column: tag
+          value: {str: "latest"}
+        - column: created_at
+          value: {str: "2025-01-01T00:00:00Z"}
+        - column: updated_at
+          value: {str: "2025-01-01T00:00:00Z"}
+        - column: image_id
+          value: {str: "configured-alternate"}
+        - column: apko_id
+          value: {str: "scan-results-apko"}
+        - column: apko_version_id
+          value: {str: "scan-results-test"}
+        - column: is_published
+          value: {str: "true"}
+        - column: next_scan_at
+          value: {str: "2025-01-01T00:00:00Z"}

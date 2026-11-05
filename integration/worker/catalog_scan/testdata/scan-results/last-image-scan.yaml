@@ -1,0 +1,46 @@
+database: securebuild
+name: last_image_scan
+seedData:
+  rows:
+    - columns:
+        - column: image_name
+          value: {str: "upstream/catalog-test"}
+        - column: image_tag
+          value: {str: "latest"}
+        - column: image_arch
+          value: {str: "x86_64"}
+        - column: result
+          value: {str: "{\"matches\":[],\"descriptor\":{\"name\":\"grype\",\"version\":\"alternate-test\"}}"}
+        - column: created_at
+          value: {str: "2025-01-01T00:00:00Z"}
+        - column: updated_at
+          value: {str: "2025-01-01T00:00:00Z"}
+        - column: vuln_count_critical
+          value: {str: "0"}
+        - column: vuln_count_high
+          value: {str: "0"}
+        - column: vuln_count_medium
+          value: {str: "0"}
+        - column: vuln_count_low
+          value: {str: "0"}
+    - columns:
+        - column: image_name
+          value: {str: "upstream/catalog-test"}
+        - column: image_tag
+          value: {str: "latest"}
+        - column: image_arch
+          value: {str: "aarch64"}
+        - column: result
+          value: {str: "{\"matches\":[],\"descriptor\":{\"name\":\"grype\",\"version\":\"alternate-test\"}}"}
+        - column: created_at
+          value: {str: "2025-01-01T00:00:00Z"}
+        - column: updated_at
+          value: {str: "2025-01-01T00:00:00Z"}
+        - column: vuln_count_critical
+          value: {str: "0"}
+        - column: vuln_count_high
+          value: {str: "0"}
+        - column: vuln_count_medium
+          value: {str: "0"}
+        - column: vuln_count_low
+          value: {str: "0"}
