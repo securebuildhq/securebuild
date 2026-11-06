@@ -2140,13 +2140,13 @@ func generateImageAPKOsForPatchVersion(
 			}
 
 			// Check if this package is a core package
-			isCorePackage, err := image.IsPackageCoreForAPKO(ctx, apkoYAML, apkoTags, pf.Name, packageName, oldVersion, oldPackageVersionID)
+			templateVersion, err := image.CorePackageVersionForAPKO(ctx, apkoYAML, apkoTags, pf.Name, packageName, oldVersion, oldPackageVersionID)
 			if err != nil {
 				logger.Error(fmt.Errorf("failed to check if package is core for image %s, APKO %s: %w", imageID, templateApkoID, err))
 				continue
 			}
 
-			if !isCorePackage {
+			if templateVersion == "" {
 				logger.Debug("Skipping APKO generation - package is not a core package",
 					zap.String("image_id", imageID),
 					zap.String("apko_id", templateApkoID),
@@ -2162,7 +2162,7 @@ func generateImageAPKOsForPatchVersion(
 				zap.String("old_version", oldVersion))
 
 			// For patch updates, package name stays the same (no major.minor change)
-			newApkoID, err := generateSingleImageAPKO(ctx, pf, imageID, templateApkoID, oldApkoVersionID, apkoYAML, apkoTags, packageID, packageID, packageName, packageName, oldVersion, newVersion, majorMinor, majorMinor, templateMelangeYAML)
+			newApkoID, err := generateSingleImageAPKO(ctx, pf, imageID, templateApkoID, oldApkoVersionID, apkoYAML, apkoTags, packageID, packageID, packageName, packageName, templateVersion, newVersion, majorMinor, majorMinor, templateMelangeYAML)
 			if err != nil {
 				logger.Error(fmt.Errorf("failed to generate APKO for image %s, template APKO %s: %w", imageID, templateApkoID, err))
 				continue
@@ -3224,14 +3224,14 @@ func generateImageAPKOsForMinorVersion(
 
 			// Check if this package is a core package for this APKO
 			// Core packages are those pinned to a full version that matches one of the image tags
-			isCorePackage, err := image.IsPackageCoreForAPKO(ctx, apkoYAML, apkoTags, pf.Name, oldPackageName, oldVersion, oldPackageVersionID)
+			templateVersion, err := image.CorePackageVersionForAPKO(ctx, apkoYAML, apkoTags, pf.Name, oldPackageName, oldVersion, oldPackageVersionID)
 			if err != nil {
 				logger.Error(fmt.Errorf("failed to check if package is core for image %s, APKO %s: %w", imageID, templateApkoID, err))
 				// Continue processing other APKOs even if one fails
 				continue
 			}
 
-			if !isCorePackage {
+			if templateVersion == "" {
 				logger.Debug("Skipping APKO generation - package is not a core package",
 					zap.String("image_id", imageID),
 					zap.String("apko_id", templateApkoID),
@@ -3247,7 +3247,7 @@ func generateImageAPKOsForMinorVersion(
 				zap.String("package_name", oldPackageName),
 				zap.String("old_version", oldVersion))
 
-			newApkoID, err := generateSingleImageAPKO(ctx, pf, imageID, templateApkoID, oldApkoVersionID, apkoYAML, apkoTags, oldPackageID, newPackageID, oldPackageName, newPackageName, oldVersion, newVersion, oldMajorMinor, newMajorMinor, templateMelangeYAML)
+			newApkoID, err := generateSingleImageAPKO(ctx, pf, imageID, templateApkoID, oldApkoVersionID, apkoYAML, apkoTags, oldPackageID, newPackageID, oldPackageName, newPackageName, templateVersion, newVersion, oldMajorMinor, newMajorMinor, templateMelangeYAML)
 			if err != nil {
 				logger.Error(fmt.Errorf("failed to generate APKO for image %s, template APKO %s: %w", imageID, templateApkoID, err))
 				// Continue processing other APKOs even if one fails

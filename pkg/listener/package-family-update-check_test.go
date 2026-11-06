@@ -83,6 +83,29 @@ func TestTransformApkoYAMLForNewMinorVersion(t *testing.T) {
 	}
 }
 
+func TestTransformApkoYAMLFromLaggingImage(t *testing.T) {
+	input := `contents:
+  packages:
+    - rook-1.19~1.19.7
+    - rook-1.19-compat~1.19.7
+    - ceph-19.2~19.2.4
+annotations:
+  org.opencontainers.image.version: "1.19.7"
+`
+	got, err := transformApkoYAMLForNewMinorVersion(input, "1.19.7", "1.21.0", "1.19", "1.21", "rook-1.19", []string{"rook-1.19-compat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"rook-1.21~1.21.0", "rook-1.21-compat~1.21.0", "ceph-19.2~19.2.4", `org.opencontainers.image.version: "1.21.0"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in transformed image:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "1.19.7") {
+		t.Fatalf("old image version remains:\n%s", got)
+	}
+}
+
 func TestTransformMelangeYAMLForNewMinorVersion(t *testing.T) {
 	ctx := context.Background()
 
@@ -414,7 +437,7 @@ entrypoint:
   command: /kotsadm
 `,
 			possibleNames: map[string]struct{}{"kotsadm": {}},
-			version:     "1.131.1",
+			version:       "1.131.1",
 			expectedYAML: `contents:
   packages:
     - kotsadm~1.131.1
