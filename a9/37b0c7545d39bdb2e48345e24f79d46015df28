@@ -1,0 +1,25 @@
+.claude/skills/doomer-review/SKILL.md
+  s_6ef660d72ec335::t_112241bbf88732 1-197
+CLAUDE.md
+  s_6ef660d72ec335::t_112241bbf88732 205-215
+.agents/skills/doomer-review/SKILL.md
+  s_6ef660d72ec335::t_112241bbf88732 1-197
+AGENTS.md
+  s_6ef660d72ec335::t_112241bbf88732 1-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a937b0c7545d39bdb2e48345e24f79d46015df28",
+  "prompts": {},
+  "sessions": {
+    "s_6ef660d72ec335": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1c5f4-e8f1-7f00-a96d-526278db97ec",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Mikhail Swift <mikhail@replicated.com>"
+    }
+  }
+}
