@@ -1,16 +1,27 @@
 ---
 name: doomer-review
-description: Review edited source with Doomer and reuse approved setup.
+description: >-
+  Use Doomer for every coding task that creates or modifies source code, fixes
+  bugs, refactors code, or changes tests or build configuration. Start before
+  editing and complete the review workflow before delivering changes, even
+  when the user does not explicitly request code review.
 metadata:
-  doomer-bootstrap-version: 2026.11.9.6
-  doomer-cli-range: '>=2026.11.9.6'
+  doomer-bootstrap-version: 2026.11.10.3
+  doomer-cli-range: '>=2026.11.10.3'
   doomer-protocol: "2"
   doomer-update-policy: stable
 ---
 
 # Doomer review
 
-At task start, run `doomer preflight --agent AGENT --repo .` for local-only
+Apply this workflow to coding tasks or explicitly requested Doomer setup/review.
+For exploration-only or read-only requests, do not run preflight, prepare a
+task, or offer setup/upgrades merely because the skill or a hook is present.
+Before any authorized source edit, including a fix identified during an
+investigation, run this workflow. Respect explicit requests not to edit.
+
+For coding, setup, or review tasks, start with
+`doomer preflight --agent AGENT --repo .` for local-only
 readiness evidence. Saved receipts do not verify the current
 account or authorize uploads. If it returns `setup_decision_required`, present
 its next decision and wait for the answer BEFORE running prepare. Do not treat
@@ -23,8 +34,9 @@ the one decision in `action`, execute the accepted command (or explicit Never
 ask again command), then rerun prepare with the same task handle. Not now is
 not a permanent refusal. If host approval blocks prepare, use the local preflight
 evidence to offer missing scoped setup; respect the denial until authorized.
-Use codex or claude and the actual task without shell interpolation. Keep the
-returned task handle. An older CLI may lack preflight; continue with prepare.
+Set AGENT to the current harness: `codex` for Codex, `claude` for Claude Code.
+Use that same agent for every command; never switch agents to bypass a denial.
+Supply the actual task without shell interpolation. Keep the returned task handle. An older CLI may lack preflight; continue with prepare.
 If a real harness session ID is available, pass it with `--session`. For Claude,
 use the active harness's `CLAUDE_CODE_SESSION_ID` when exposed. Chat URL IDs and
 invented prefixes do not establish a hook binding.
@@ -67,9 +79,29 @@ helper/guide suggestions to ask do not override these rules:
 
 Authentication/network errors require recovery and rechecking, not new consent.
 Do not retry a stated reviewer/user refusal. Diagnose ambiguous errors read-only.
-For a confirmed sandbox restriction, request normal host approval once for
-private-state access/account checks. Saved scope is context, not current
-consent. Never bypass host controls or broaden grants.
+A filesystem permission error is not an explicit user/reviewer denial.
+For a confirmed sandbox restriction or `state_access_required`, request normal
+host approval once for the same command with private-state access/account checks.
+Use `retry_command`, `retry_env`, and `retry_cwd` when supplied; preserve stdin when
+required. Saved scope is context, not current consent. Never bypass host controls
+or broaden grants. If that approval is explicitly denied, stop only that Doomer
+operation; continue permitted coding and tests. Report the operation and path,
+who denied it and their actual reason if available, and the exact terminal
+recovery command. Do not invent a reason or re-request a refused approval.
+Preserve any task handle and baseline so the user can run the command in their
+terminal and ask you to resume. A recovery command requiring stdin is incomplete
+without its original payload; say so without exposing it in shell arguments.
+If the host denies execution before the CLI can return recovery details, reuse
+any existing task handle with `--task HANDLE`; never add or replace its baseline.
+Only when no task handle exists, record `git rev-parse HEAD` before editing and
+include that exact commit as `--base` inside the complete terminal recovery
+command. Preserve the original agent, repository, prompt, service, and profile.
+Identify the checkout with an absolute `--repo` path or an explicit `cd` to its
+absolute working directory; `--repo .` alone is not a complete recovery location.
+Use the CLI-provided quoted command when available; otherwise safely shell-quote
+every argument, including embedded quotes and dollar signs, without interpolation.
+Keep original stdin payloads on stdin, not in arguments. Do not leave a separate
+instruction to add the baseline.
 During onboarding, complete any accepted Codex policy installation and inspect
 `codex_policy_status`. `configured` means saved, not active. Reload/restart Codex
 as needed and verify a permitted Doomer operation in a fresh reviewer session
