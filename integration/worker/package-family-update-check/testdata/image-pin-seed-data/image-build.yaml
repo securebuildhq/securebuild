@@ -1,0 +1,17 @@
+database: securebuild
+name: image_build
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "old-image-build"
+        - column: image_apko_version_id
+          value:
+            str: "apkov-pin-test"
+        - column: status
+          value:
+            str: "success"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"

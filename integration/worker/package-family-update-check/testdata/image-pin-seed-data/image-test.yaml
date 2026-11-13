@@ -1,0 +1,26 @@
+database: securebuild
+name: image_test
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "pin-image-test"
+        - column: apko_id
+          value:
+            str: "apko-pin-test"
+        - column: apko_version_id
+          value:
+            str: "apkov-pin-test"
+        - column: yaml_content
+          value:
+            str: "pipeline: [{runs: test --version}]"
+        - column: description
+          value:
+            str: "Check the image version"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"

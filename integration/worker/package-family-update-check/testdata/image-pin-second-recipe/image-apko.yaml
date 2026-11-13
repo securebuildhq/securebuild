@@ -1,0 +1,32 @@
+database: securebuild
+name: image_apko
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "apko-second-test"
+        - column: image_id
+          value:
+            str: "img-git-linked-test"
+        - column: name
+          value:
+            str: "v1.0.0"
+        - column: tags
+          value:
+            str: "{v1.0.0}"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: git_remote
+          value:
+            str: "https://github.com/test-org/test-repo.git"
+        - column: git_tag
+          value:
+            str: "v1.0.0"
+        - column: apko_file_path
+          value:
+            str: "securebuild/image/apko-test.yaml"

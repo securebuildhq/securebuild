@@ -78,11 +78,15 @@ func setupGitLinkedTestEnv(t *testing.T, ctx context.Context) (context.Context, 
 	return ctx, testDB, l
 }
 
-func startGitLinkedGitHubMock(t *testing.T, tag, commitSHA string) *httptest.Server {
+func startGitLinkedGitHubMock(t *testing.T, tag, commitSHA string, apkoSpecs ...string) *httptest.Server {
 	t.Helper()
 
 	melangeBase64 := base64.StdEncoding.EncodeToString([]byte(gitLinkedMelangeYAML))
-	apkoBase64 := base64.StdEncoding.EncodeToString([]byte(gitLinkedApkoYAML))
+	apkoYAML := gitLinkedApkoYAML
+	if len(apkoSpecs) > 0 {
+		apkoYAML = apkoSpecs[0]
+	}
+	apkoBase64 := base64.StdEncoding.EncodeToString([]byte(apkoYAML))
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path

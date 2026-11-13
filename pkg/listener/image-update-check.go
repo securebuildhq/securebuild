@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	apkopackage "chainguard.dev/apko/pkg/apk/apk"
+	apkotypes "chainguard.dev/apko/pkg/build/types"
 	"github.com/Masterminds/semver"
 	"github.com/google/go-github/v61/github"
 	"github.com/jackc/pgx/v5"
@@ -18,9 +20,9 @@ import (
 	"github.com/securebuildhq/securebuild/pkg/package_family"
 	"github.com/securebuildhq/securebuild/pkg/param"
 	"github.com/securebuildhq/securebuild/pkg/persistence"
-	"github.com/tuvistavie/securerandom"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
+	"gopkg.in/yaml.v3"
 )
 
 type ImageUpdateCheckPayload struct {
@@ -189,109 +191,27 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 			return fmt.Errorf("failed to get latest APKO version: %w", err)
 		}
 
-		if latestVersion.GitCommitSHA == currentSHA {
-			// Same SHA — check if a build already exists
-			logger.Info("APKO already exists with same SHA",
-				zap.String("image_id", img.ID),
-				zap.String("tag", tag),
-				zap.String("apko_id", existingApkoID))
-
-			existingBuild, err := image.GetLatestImageBuildByImageApkoVersionID(ctx, latestVersion.ID)
-			if err == nil && existingBuild != nil && !imageTagsAdded && isReusableImageBuildStatus(existingBuild.Status) {
-				resultJSON, _ := json.Marshal(map[string]string{
-					"image_build_id": existingBuild.ID,
-				})
-				SetResult(ctx, resultJSON)
-				return nil
-			}
-
-			// A new alias must go through the builder even when this commit was
-			// built previously, otherwise the registry never receives that tag.
-			logger.Info("Queuing image build for APKO",
-				zap.String("apko_id", existingApkoID),
-				zap.String("tag", tag),
-				zap.Bool("image_tags_added", imageTagsAdded),
-				zap.Bool("existing_build_found", err == nil && existingBuild != nil))
-
-			if err := queueImageBuildForAPKO(ctx, existingApkoID); err != nil {
-				return fmt.Errorf("failed to queue image build: %w", err)
-			}
-
-			// Get the image_build_id we just created
-			imageBuildID := ""
-			newBuild, err := image.GetLatestImageBuildByImageApkoVersionID(ctx, latestVersion.ID)
-			if err == nil && newBuild != nil {
-				imageBuildID = newBuild.ID
-			}
-
-			resultJSON, _ := json.Marshal(map[string]string{
-				"image_build_id": imageBuildID,
-			})
+		versionID, err := refreshLinkedApko(ctx, githubClient, &imagetypes.ImageAPKO{
+			ID: existingApkoID, GitRemote: gitRemote, GitTag: tag,
+			ApkoFilePath: apkoFilePath, LatestVersion: latestVersion,
+		}, currentSHA)
+		if err != nil {
+			return fmt.Errorf("refresh linked APKO: %w", err)
+		}
+		existingBuild, err := image.GetLatestImageBuildByImageApkoVersionID(ctx, versionID)
+		if err == nil && existingBuild != nil && !imageTagsAdded && isReusableImageBuildStatus(existingBuild.Status) {
+			resultJSON, _ := json.Marshal(map[string]string{"image_build_id": existingBuild.ID})
 			SetResult(ctx, resultJSON)
 			return nil
 		}
-
-		// SHA differs — re-tag: pull new spec, create new APKO version, queue build
-		logger.Info("APKO exists but SHA differs, creating new version",
-			zap.String("image_id", img.ID),
-			zap.String("tag", tag),
-			zap.String("old_sha", latestVersion.GitCommitSHA),
-			zap.String("new_sha", currentSHA))
-
-		apkoSpec, err := gitspec.PullSpecFromGit(ctx, githubClient, gitRemote, apkoFilePath, tag)
-		if err != nil {
-			return fmt.Errorf("pull APKO spec from git: %w", err)
-		}
-
-		// Find the core package and pin it
-		pinnedYAML, packageID, pinnedVersion, err := pinCorePackageForImage(ctx, conn, gitRemote, apkoSpec.Content, tag)
-		if err != nil {
-			logger.Warn("Failed to pin core package, using APKO YAML as-is", zap.Error(err))
-			pinnedYAML = apkoSpec.Content
-		}
-
-		// Create new APKO version (not a new image_apko — reuse the existing one)
-		apkoVersionID, err := securerandom.Hex(32)
-		if err != nil {
-			return fmt.Errorf("generate apko version id: %w", err)
-		}
-
-		_, err = conn.Exec(ctx, `
-			INSERT INTO image_apko_version (id, image_apko_id, apko_yaml, created_at, updated_at, git_remote, apko_file_path, git_commit_sha)
-			VALUES ($1, $2, $3, NOW(), NOW(), $4, $5, $6)
-		`, apkoVersionID, existingApkoID, pinnedYAML, gitRemote, apkoFilePath, currentSHA)
-		if err != nil {
-			return fmt.Errorf("insert image_apko_version: %w", err)
-		}
-
-		// Update image_package link if we found a package
-		if packageID != "" && pinnedVersion != "" {
-			_, err = conn.Exec(ctx, `
-				INSERT INTO image_package (image_id, apko_id, package_id, pinned_version)
-				VALUES ($1, $2, $3, $4)
-				ON CONFLICT (apko_id, package_id) DO UPDATE
-				SET pinned_version = EXCLUDED.pinned_version
-			`, img.ID, existingApkoID, packageID, pinnedVersion)
-			if err != nil {
-				logger.Warn("Failed to update image_package link", zap.Error(err))
-			}
-		}
-
-		// Queue the image build
 		if err := queueImageBuildForAPKO(ctx, existingApkoID); err != nil {
 			return fmt.Errorf("failed to queue image build: %w", err)
 		}
-
-		// Get the image_build_id we just created
-		imageBuildID := ""
-		newBuild, err := image.GetLatestImageBuildByImageApkoVersionID(ctx, apkoVersionID)
-		if err == nil && newBuild != nil {
-			imageBuildID = newBuild.ID
+		newBuild, err := image.GetLatestImageBuildByImageApkoVersionID(ctx, versionID)
+		if err != nil {
+			return fmt.Errorf("get queued image build: %w", err)
 		}
-
-		resultJSON, _ := json.Marshal(map[string]string{
-			"image_build_id": imageBuildID,
-		})
+		resultJSON, _ := json.Marshal(map[string]string{"image_build_id": newBuild.ID})
 		SetResult(ctx, resultJSON)
 		return nil
 	}
@@ -305,12 +225,11 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 	// Find the core package and pin it
 	pinnedYAML, packageID, pinnedVersion, err := pinCorePackageForImage(ctx, conn, gitRemote, apkoSpec.Content, tag)
 	if err != nil {
-		logger.Warn("Failed to pin core package, using APKO YAML as-is", zap.Error(err))
-		pinnedYAML = apkoSpec.Content
+		return fmt.Errorf("pin core package for image %s: %w", img.Name, err)
 	}
 
 	// Create image_apko + image_apko_version + image_package
-	apkoID, err := createLinkedImageAPKO(ctx, img.ID, gitRemote, apkoFilePath, tag, currentSHA, imageTags, pinnedYAML, packageID, pinnedVersion)
+	apkoID, err := createLinkedImageAPKO(ctx, img.ID, gitRemote, apkoFilePath, tag, apkoSpec.CommitSHA, imageTags, pinnedYAML, packageID, pinnedVersion)
 	if err != nil {
 		return fmt.Errorf("failed to create linked image APKO: %w", err)
 	}
@@ -342,19 +261,9 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 
 // pinCorePackageForImage finds the core package for an image by looking up package families
 // with the same git_remote, then pins the package version in the APKO YAML.
-// The package record is looked up by the full semantic version from the tag, while
-// the APK pin uses only major.minor.patch to match the version emitted by Melange.
+// Both the package lookup and APK pin use the normalized version stored by Melange.
 // Returns the pinned YAML, package ID, and Melange package version string.
 func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, apkoYAML, tag string) (string, string, string, error) {
-	version, err := semver.NewVersion(tag)
-	if err != nil {
-		return apkoYAML, "", "", fmt.Errorf("parse git tag %q as semver: %w", tag, err)
-	}
-	melangeVersion, err := gitspec.VersionFromTag(tag)
-	if err != nil {
-		return apkoYAML, "", "", fmt.Errorf("derive package pin from git tag: %w", err)
-	}
-
 	// Find package families with the same git_remote
 	rows, err := conn.Query(ctx, `
 		SELECT id, name, package_name_template, image_tag_template
@@ -377,13 +286,27 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 	for rows.Next() {
 		var fi familyInfo
 		if err := rows.Scan(&fi.ID, &fi.Name, &fi.PackageNameTemplate, &fi.ImageTagTemplate); err != nil {
-			continue
+			return "", "", "", fmt.Errorf("read package family: %w", err)
 		}
 		families = append(families, fi)
 	}
 
+	if err := rows.Err(); err != nil {
+		return "", "", "", fmt.Errorf("read package families: %w", err)
+	}
+	rows.Close()
 	if len(families) == 0 {
-		return apkoYAML, "", "", fmt.Errorf("no package families found with git_remote %s", gitRemote)
+		// Standalone image repositories have no package version to derive from their tag.
+		return apkoYAML, "", "", nil
+	}
+
+	version, err := semver.NewVersion(tag)
+	if err != nil {
+		return apkoYAML, "", "", fmt.Errorf("parse git tag %q as semver: %w", tag, err)
+	}
+	melangeVersion, err := gitspec.VersionFromTag(tag)
+	if err != nil {
+		return apkoYAML, "", "", fmt.Errorf("derive package pin from git tag: %w", err)
 	}
 
 	// For each family, find the package version matching the tag
@@ -399,10 +322,10 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 		// Find the package by exact name and version matching the tag
 		var pkgID string
 		var pkgName string
-		var pkgVersion string
+		var pkgVersionID string
 
 		err = conn.QueryRow(ctx, `
-			SELECT p.id, p.name, pv.version
+			SELECT p.id, p.name, pv.id
 			FROM package p
 			INNER JOIN package_version pv ON p.id = pv.package_id
 			WHERE p.name = $1
@@ -410,41 +333,38 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 			  AND p.parent_id IS NULL
 			ORDER BY pv.apk_release DESC
 			LIMIT 1
-		`, packageName, version.String()).Scan(&pkgID, &pkgName, &pkgVersion)
+		`, packageName, melangeVersion).Scan(&pkgID, &pkgName, &pkgVersionID)
 
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				continue
 			}
-			continue
+			return "", "", "", fmt.Errorf("find package for tag %s: %w", tag, err)
 		}
 
 		possibleNames[fi.Name] = struct{}{}
 		possibleNames[pkgName] = struct{}{}
 
-		// Also look up provides for this package version
-		var pkgVersionID string
-		err = conn.QueryRow(ctx, `
-			SELECT pv.id FROM package_version pv
-			WHERE pv.package_id = $1 AND pv.version = $2
-			ORDER BY pv.apk_release DESC LIMIT 1
-		`, pkgID, pkgVersion).Scan(&pkgVersionID)
-		if err == nil {
-			providesRows, err := conn.Query(ctx, `
-				SELECT package_name, provides_name FROM package_version_provides WHERE package_version_id = $1
-			`, pkgVersionID)
-			if err == nil {
-				for providesRows.Next() {
-					var pn, providesName string
-					if err := providesRows.Scan(&pn, &providesName); err != nil {
-						continue
-					}
-					possibleNames[pn] = struct{}{}
-					possibleNames[providesName] = struct{}{}
-				}
-				providesRows.Close()
-			}
+		providesRows, err := conn.Query(ctx, `
+			SELECT package_name, provides_name FROM package_version_provides WHERE package_version_id = $1
+		`, pkgVersionID)
+		if err != nil {
+			return "", "", "", fmt.Errorf("query package provides: %w", err)
 		}
+		for providesRows.Next() {
+			var pn, providesName string
+			if err := providesRows.Scan(&pn, &providesName); err != nil {
+				providesRows.Close()
+				return "", "", "", fmt.Errorf("read package provides: %w", err)
+			}
+			possibleNames[pn] = struct{}{}
+			possibleNames[providesName] = struct{}{}
+		}
+		if err := providesRows.Err(); err != nil {
+			providesRows.Close()
+			return "", "", "", fmt.Errorf("read package provides: %w", err)
+		}
+		providesRows.Close()
 
 		packageID = pkgID
 		pinnedVersion = melangeVersion
@@ -452,6 +372,21 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 
 	if packageID == "" {
 		return apkoYAML, "", "", fmt.Errorf("no matching package found for tag %s in families with git_remote %s", tag, gitRemote)
+	}
+
+	var imageConfig apkotypes.ImageConfiguration
+	if err := yaml.Unmarshal([]byte(apkoYAML), &imageConfig); err != nil {
+		return "", "", "", fmt.Errorf("parse linked APKO: %w", err)
+	}
+	matched := false
+	for _, pkg := range imageConfig.Contents.Packages {
+		if _, ok := possibleNames[apkopackage.ResolvePackageNameVersionPin(pkg).Name]; ok {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return "", "", "", fmt.Errorf("no core package found in linked APKO for tag %s", tag)
 	}
 
 	pinnedYAML, err := pinCorePackageInApkoYAML(apkoYAML, possibleNames, pinnedVersion, true)

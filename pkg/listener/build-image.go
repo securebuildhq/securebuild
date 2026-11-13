@@ -76,41 +76,28 @@ func handleBuildImage(ctx context.Context, payload string) error {
 		return fmt.Errorf("failed to get image: %w", err)
 	}
 
-	// Create image build records for each APKO version
-	var imageBuilds []*imagetypes.ImageBuild
-	for _, apko := range img.APKOs {
-		// For linked APKOs, check if the git tag has been reassigned to a new commit.
-		// If so, create a new image_apko_version with the updated spec before building.
+	// Validate every recipe before creating any builds.
+	apkoVersionIDs := make([]string, len(img.APKOs))
+	for i, apko := range img.APKOs {
 		apkoVersionID, err := checkAndRefreshLinkedApko(ctx, apko)
 		if err != nil {
-			logger.Warn("failed to check/refresh linked APKO, proceeding with existing version",
-				zap.String("apkoId", apko.ID),
-				zap.Error(err))
-			apkoVersionID = apko.LatestVersion.ID
+			return fmt.Errorf("refresh linked APKO %s: %w", apko.ID, err)
 		}
+		apkoVersionIDs[i] = apkoVersionID
+	}
 
-		imageBuild, err := image.CreateImageBuild(ctx, apkoVersionID)
+	// Dispatch each build before creating the next, so a later failure cannot strand it.
+	for i, apko := range img.APKOs {
+		imageBuild, err := image.CreateImageBuild(ctx, apkoVersionIDs[i])
 		if err != nil {
 			return fmt.Errorf("failed to create image build record for APKO %s: %w", apko.ID, err)
 		}
 
 		logger.Debug("created image build record",
 			zap.String("buildID", imageBuild.ID),
-			zap.String("imageApkoVersionID", apko.LatestVersion.ID),
+			zap.String("imageApkoVersionID", apkoVersionIDs[i]),
 			zap.String("imageName", img.Name),
 			zap.String("apkoID", apko.ID))
-
-		// Update status to queued
-		if err := image.UpdateImageBuildStatus(ctx, imageBuild.ID, imagetypes.ImageBuildStatusQueued); err != nil {
-			logger.Warn("failed to update image build status to queued", zap.Error(err))
-		}
-
-		imageBuilds = append(imageBuilds, imageBuild)
-	}
-
-	// Process each APKO build
-	for i, apko := range img.APKOs {
-		imageBuild := imageBuilds[i]
 
 		// Assign VM for image building using the active backend
 		vmID, workDir, err := assignVMForImageBuild(ctx, imageBuild.ID)
@@ -157,6 +144,9 @@ func handleBuildImage(ctx context.Context, payload string) error {
 				logger.Warn("failed to update image build status to failed", zap.Error(statusErr))
 			}
 			continue
+		}
+		if err := image.UpdateImageBuildStatusIfCurrent(ctx, imageBuild.ID, imagetypes.ImageBuildStatusPending, imagetypes.ImageBuildStatusQueued); err != nil {
+			logger.Warn("failed to update image build status to queued", zap.Error(err))
 		}
 	}
 
