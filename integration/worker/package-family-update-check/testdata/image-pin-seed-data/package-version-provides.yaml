@@ -1,0 +1,36 @@
+database: securebuild
+name: package_version_provides
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "main-provides-pin-test"
+        - column: package_version_id
+          value:
+            str: "pkgv-git-linked-1.0.0-test"
+        - column: package_name
+          value:
+            str: "test-git-linked-1.0"
+        - column: provides_name
+          value:
+            str: "test-git-linked"
+        - column: is_subpackage
+          value:
+            str: "false"
+    - columns:
+        - column: id
+          value:
+            str: "sub-provides-pin-test"
+        - column: package_version_id
+          value:
+            str: "pkgv-git-linked-1.0.0-test"
+        - column: package_name
+          value:
+            str: "test-git-linked-1.0-migrations"
+        - column: provides_name
+          value:
+            str: "test-migrations"
+        - column: is_subpackage
+          value:
+            str: "true"

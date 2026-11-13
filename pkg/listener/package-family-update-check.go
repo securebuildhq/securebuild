@@ -843,7 +843,7 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 		// Generate image APKOs if the image is linked to git
 		var imageAPKOs []*ImageAPKOInfo
 		if !skipImageCreation {
-			imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, newPackageID, packageName, versionStr)
+			imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, newPackageID)
 			if err != nil {
 				logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
 			}
@@ -931,7 +931,7 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 	// Generate image APKOs if the image is linked to git
 	var imageAPKOs []*ImageAPKOInfo
 	if !skipImageCreation {
-		imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, existingPackageID, packageName, versionStr)
+		imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, existingPackageID)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
 		}
@@ -1064,7 +1064,7 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 	// Generate image APKOs
 	var imageAPKOs []*ImageAPKOInfo
 	if !skipImageCreation {
-		imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, melangeFilePath, packageID, packageName, versionStr)
+		imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, packageID)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
 		}
@@ -1080,7 +1080,7 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 // generateImageAPKOsForGitLinkedVersion generates image APKOs for a git-linked package version.
 // If the image is linked to git, it pulls the APKO spec from the repo. Otherwise, it uses
 // the existing clone logic.
-func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, gitTag, gitRemote, melangeFilePath string, packageID, packageName, versionStr string) ([]*ImageAPKOInfo, error) {
+func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, gitTag, gitRemote, packageID string) ([]*ImageAPKOInfo, error) {
 	melangeVersion, err := gitspec.VersionFromTag(gitTag)
 	if err != nil {
 		return nil, fmt.Errorf("derive package pin from git tag: %w", err)
@@ -1123,41 +1123,6 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 	}
 	rows.Close()
 
-	// Get the package version ID for the version we just created, to look up provides
-	var packageVersionID string
-	err = conn.QueryRow(ctx, `
-		SELECT pv.id FROM package_version pv
-		WHERE pv.package_id = $1 AND pv.version = $2 AND pv.apk_release = 0
-		ORDER BY pv.created_at DESC LIMIT 1
-	`, packageID, versionStr).Scan(&packageVersionID)
-	if err != nil {
-		logger.Warn("failed to get package version ID for provides lookup, skipping pinning",
-			zap.String("package_id", packageID),
-			zap.String("version", versionStr),
-			zap.Error(err))
-	}
-
-	// Collect possible package names for core package detection
-	possibleNames := make(map[string]struct{})
-	possibleNames[pf.Name] = struct{}{}
-	possibleNames[packageName] = struct{}{}
-	if packageVersionID != "" {
-		providesRows, err := conn.Query(ctx, `
-			SELECT package_name, provides_name FROM package_version_provides WHERE package_version_id = $1
-		`, packageVersionID)
-		if err == nil {
-			for providesRows.Next() {
-				var pkgName, providesName string
-				if err := providesRows.Scan(&pkgName, &providesName); err != nil {
-					continue
-				}
-				possibleNames[pkgName] = struct{}{}
-				possibleNames[providesName] = struct{}{}
-			}
-			providesRows.Close()
-		}
-	}
-
 	var result []*ImageAPKOInfo
 	for _, img := range linkedImages {
 		// Check if an APKO with this git_tag already exists for this image.
@@ -1191,12 +1156,9 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 		}
 
 		// Pin the core package to the correct version in the APKO YAML
-		pinnedApkoYAML, err := pinCorePackageInApkoYAML(apkoSpec.Content, possibleNames, melangeVersion, true)
+		pinnedApkoYAML, _, _, err := pinCorePackageForImage(ctx, conn, gitRemote, apkoSpec.Content, gitTag)
 		if err != nil {
-			logger.Warn("failed to pin core package in APKO YAML, using as-is",
-				zap.String("image_id", img.ImageID),
-				zap.Error(err))
-			pinnedApkoYAML = apkoSpec.Content
+			return nil, fmt.Errorf("pin core package for image %s: %w", img.ImageID, err)
 		}
 
 		// Generate the OCI tag from the git tag using the template
@@ -1318,7 +1280,9 @@ func pinCorePackageInApkoYAML(apkoYAML string, possibleNames map[string]struct{}
 		}
 		if _, exists := possibleNames[parsed.Name]; exists {
 			newPkg := fmt.Sprintf("%s~%s", parsed.Name, version)
-			replacements[pkg] = newPkg
+			if pkg != newPkg {
+				replacements[pkg] = newPkg
+			}
 		}
 	}
 
