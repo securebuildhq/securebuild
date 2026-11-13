@@ -179,7 +179,9 @@ func TestGitLinkedPackageCreatesImageWithNormalizedTag(t *testing.T) {
 		t.Run(tag, func(t *testing.T) {
 			t.Parallel()
 			ctx, db := setupImagePinTestForTag(t, retryCommitSHA, tag)
-			_, err := db.Pool.Exec(ctx, `DELETE FROM image_build; DELETE FROM image_test; DELETE FROM image_apko_version; DELETE FROM image_apko`)
+			_, err := db.Pool.Exec(ctx, `UPDATE image SET git_remote = 'https://github.com/test-org/test-repo'`)
+			require.NoError(t, err)
+			_, err = db.Pool.Exec(ctx, `DELETE FROM image_build; DELETE FROM image_test; DELETE FROM image_apko_version; DELETE FROM image_apko`)
 			require.NoError(t, err)
 			payload, err := json.Marshal(listener.PackageFamilyUpdateCheckPayload{
 				PackageFamilyID: gitLinkedFamilyID, Tag: tag, Force: true,
@@ -195,6 +197,69 @@ func TestGitLinkedPackageCreatesImageWithNormalizedTag(t *testing.T) {
 			require.Equal(t, version, pin)
 		})
 	}
+}
+
+func TestGitLinkedImageRemoteVariants(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	for _, tc := range []struct{ name, imageRemote, familyRemote string }{
+		{"image omits suffix", "https://github.com/test-org/test-repo", "https://github.com/test-org/test-repo.git"},
+		{"family omits suffix", "https://github.com/test-org/test-repo.git", "https://github.com/test-org/test-repo"},
+		{"trailing slash", "https://github.com/test-org/test-repo.git/", "https://github.com/test-org/test-repo/"},
+	} {
+		for _, channel := range []string{"build_apko", "image_update_check"} {
+			t.Run(tc.name+"/"+channel, func(t *testing.T) {
+				t.Parallel()
+				ctx, db := setupImagePinTest(t, retryCommitSHA)
+				root, err := testutil.FindProjectRoot()
+				require.NoError(t, err)
+				require.NoError(t, testutil.ApplySchemaHero(ctx, db.ConnStr, filepath.Join(root, "integration/worker/package-family-update-check/testdata/image-pin-sibling-family"), true))
+				_, err = db.Pool.Exec(ctx, `UPDATE image SET git_remote = $1`, tc.imageRemote)
+				require.NoError(t, err)
+				_, err = db.Pool.Exec(ctx, `UPDATE image_apko SET git_remote = $1`, tc.imageRemote)
+				require.NoError(t, err)
+				_, err = db.Pool.Exec(ctx, `UPDATE package_family SET git_remote = $1`, tc.familyRemote)
+				require.NoError(t, err)
+				requestImagePinBuild(t, ctx, db, channel, false)
+				var yaml, packageID, pin string
+				require.NoError(t, db.Pool.QueryRow(ctx, `SELECT apko_yaml FROM image_apko_version ORDER BY created_at DESC LIMIT 1`).Scan(&yaml))
+				require.Contains(t, yaml, "test-git-linked~1.0.0")
+				require.Contains(t, yaml, "test-migrations~1.0.0")
+				require.NoError(t, db.Pool.QueryRow(ctx, `SELECT package_id, pinned_version FROM image_package`).Scan(&packageID, &pin))
+				require.Equal(t, "pkg-git-linked-1.0-test", packageID)
+				require.Equal(t, "1.0.0", pin)
+				var dispatches int
+				require.NoError(t, db.Pool.QueryRow(ctx, `SELECT count(*) FROM work_queue WHERE channel = 'build_image_with_vm_assigned'`).Scan(&dispatches))
+				require.Equal(t, 1, dispatches)
+			})
+		}
+	}
+}
+
+func TestGitLinkedPackageCreatesImageFromSharedRepository(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	ctx, db := setupImagePinTest(t, "def456movedcommit0000000000000000000def")
+	root, err := testutil.FindProjectRoot()
+	require.NoError(t, err)
+	require.NoError(t, testutil.ApplySchemaHero(ctx, db.ConnStr, filepath.Join(root, "integration/worker/package-family-update-check/testdata/image-pin-sibling-family"), true))
+	_, err = db.Pool.Exec(ctx, `DELETE FROM image_build; DELETE FROM image_test; DELETE FROM image_apko_version; DELETE FROM image_apko;
+		UPDATE image SET git_remote = 'https://github.com/test-org/test-repo'`)
+	require.NoError(t, err)
+	payload, err := json.Marshal(listener.PackageFamilyUpdateCheckPayload{
+		PackageFamilyID: "pf-sibling-test", Tag: retryTag, Force: true,
+	})
+	require.NoError(t, err)
+	requestImagePinWork(t, ctx, db, "package_family_update_check", payload, false)
+	var yaml, packageID, pin string
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT apko_yaml FROM image_apko_version`).Scan(&yaml))
+	require.Contains(t, yaml, "test-git-linked~1.0.0")
+	require.Contains(t, yaml, "test-migrations~1.0.0")
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT package_id, pinned_version FROM image_package`).Scan(&packageID, &pin))
+	require.Equal(t, "pkg-git-linked-1.0-test", packageID, "the image must link to its core package, not the sibling that triggered the update")
+	require.Equal(t, "1.0.0", pin)
 }
 
 func TestGitLinkedImageCreationPins(t *testing.T) {

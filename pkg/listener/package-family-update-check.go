@@ -843,7 +843,7 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 		// Generate image APKOs if the image is linked to git
 		var imageAPKOs []*ImageAPKOInfo
 		if !skipImageCreation {
-			imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, newPackageID)
+			imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote)
 			if err != nil {
 				logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
 			}
@@ -931,7 +931,7 @@ func processGitLinkedNewVersion(ctx context.Context, githubClient *github.Client
 	// Generate image APKOs if the image is linked to git
 	var imageAPKOs []*ImageAPKOInfo
 	if !skipImageCreation {
-		imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, existingPackageID)
+		imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
 		}
@@ -1064,7 +1064,7 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 	// Generate image APKOs
 	var imageAPKOs []*ImageAPKOInfo
 	if !skipImageCreation {
-		imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote, packageID)
+		imageAPKOs, err = generateImageAPKOsForGitLinkedVersion(ctx, githubClient, pf, gitTag, gitRemote)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to generate image APKOs: %w", err))
 		}
@@ -1080,12 +1080,7 @@ func processGitLinkedRetag(ctx context.Context, githubClient *github.Client, pf 
 // generateImageAPKOsForGitLinkedVersion generates image APKOs for a git-linked package version.
 // If the image is linked to git, it pulls the APKO spec from the repo. Otherwise, it uses
 // the existing clone logic.
-func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, gitTag, gitRemote, packageID string) ([]*ImageAPKOInfo, error) {
-	melangeVersion, err := gitspec.VersionFromTag(gitTag)
-	if err != nil {
-		return nil, fmt.Errorf("derive package pin from git tag: %w", err)
-	}
-
+func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *github.Client, pf *package_family.PackageFamily, gitTag, gitRemote string) ([]*ImageAPKOInfo, error) {
 	conn := persistence.MustGetPooledPostgresSession(ctx)
 	defer conn.Release()
 
@@ -1094,8 +1089,8 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 	rows, err := conn.Query(ctx, `
 		SELECT i.id, i.git_remote, i.apko_file_path, i.image_tag_template
 		FROM image i
-		WHERE i.git_remote = $1
-	`, gitRemote)
+		WHERE i.git_remote = ANY($1)
+	`, gitspec.GitRemoteVariants(gitRemote))
 	if err != nil {
 		return nil, fmt.Errorf("query linked images: %w", err)
 	}
@@ -1156,7 +1151,7 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 		}
 
 		// Pin the core package to the correct version in the APKO YAML
-		pinnedApkoYAML, _, _, err := pinCorePackageForImage(ctx, conn, gitRemote, apkoSpec.Content, gitTag)
+		pinnedApkoYAML, corePackageID, pinnedVersion, err := pinCorePackageForImage(ctx, conn, gitRemote, apkoSpec.Content, gitTag)
 		if err != nil {
 			return nil, fmt.Errorf("pin core package for image %s: %w", img.ImageID, err)
 		}
@@ -1169,7 +1164,7 @@ func generateImageAPKOsForGitLinkedVersion(ctx context.Context, githubClient *gi
 		ociTag := package_family.GenerateImageTag(template, gitTag)
 
 		// Create the image_apko and image_apko_version
-		apkoID, err := createLinkedImageAPKO(ctx, img.ImageID, img.GitRemote, img.ApkoFilePath.String, gitTag, apkoSpec.CommitSHA, []string{ociTag}, pinnedApkoYAML, packageID, melangeVersion)
+		apkoID, err := createLinkedImageAPKO(ctx, img.ImageID, img.GitRemote, img.ApkoFilePath.String, gitTag, apkoSpec.CommitSHA, []string{ociTag}, pinnedApkoYAML, corePackageID, pinnedVersion)
 		if err != nil {
 			logger.Error(fmt.Errorf("failed to create linked image APKO for image %s: %w", img.ImageID, err))
 			continue
