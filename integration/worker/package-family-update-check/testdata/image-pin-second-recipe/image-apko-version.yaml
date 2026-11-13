@@ -1,0 +1,29 @@
+database: securebuild
+name: image_apko_version
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "apkov-second-test"
+        - column: image_apko_id
+          value:
+            str: "apko-second-test"
+        - column: apko_yaml
+          value:
+            str: "contents: {packages: [unknown-package]}"
+        - column: created_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2025-01-01T00:00:00Z"
+        - column: git_remote
+          value:
+            str: "https://github.com/test-org/test-repo.git"
+        - column: apko_file_path
+          value:
+            str: "securebuild/image/apko-test.yaml"
+        - column: git_commit_sha
+          value:
+            str: "abc123initialcommit00000000000000000abc"

@@ -261,8 +261,7 @@ func performImageUpdateCheck(ctx context.Context, githubClient *github.Client, i
 
 // pinCorePackageForImage finds the core package for an image by looking up package families
 // with the same git_remote, then pins the package version in the APKO YAML.
-// The package record is looked up by the full semantic version from the tag, while
-// the APK pin uses only major.minor.patch to match the version emitted by Melange.
+// Both the package lookup and APK pin use the normalized version stored by Melange.
 // Returns the pinned YAML, package ID, and Melange package version string.
 func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, apkoYAML, tag string) (string, string, string, error) {
 	// Find package families with the same git_remote
@@ -334,7 +333,7 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 			  AND p.parent_id IS NULL
 			ORDER BY pv.apk_release DESC
 			LIMIT 1
-		`, packageName, version.String()).Scan(&pkgID, &pkgName, &pkgVersionID)
+		`, packageName, melangeVersion).Scan(&pkgID, &pkgName, &pkgVersionID)
 
 		if err != nil {
 			if err == pgx.ErrNoRows {
