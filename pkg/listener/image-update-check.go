@@ -268,8 +268,8 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 	rows, err := conn.Query(ctx, `
 		SELECT id, name, package_name_template, image_tag_template
 		FROM package_family
-		WHERE git_remote = $1
-	`, gitRemote)
+		WHERE git_remote = ANY($1)
+	`, gitspec.GitRemoteVariants(gitRemote))
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to query package families: %w", err)
 	}
@@ -308,6 +308,10 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 	if err != nil {
 		return apkoYAML, "", "", fmt.Errorf("derive package pin from git tag: %w", err)
 	}
+	var imageConfig apkotypes.ImageConfiguration
+	if err := yaml.Unmarshal([]byte(apkoYAML), &imageConfig); err != nil {
+		return "", "", "", fmt.Errorf("parse linked APKO: %w", err)
+	}
 
 	// For each family, find the package version matching the tag
 	// and collect possible package names for pinning
@@ -342,8 +346,7 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 			return "", "", "", fmt.Errorf("find package for tag %s: %w", tag, err)
 		}
 
-		possibleNames[fi.Name] = struct{}{}
-		possibleNames[pkgName] = struct{}{}
+		familyNames := map[string]struct{}{fi.Name: {}, pkgName: {}}
 
 		providesRows, err := conn.Query(ctx, `
 			SELECT package_name, provides_name FROM package_version_provides WHERE package_version_id = $1
@@ -357,8 +360,8 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 				providesRows.Close()
 				return "", "", "", fmt.Errorf("read package provides: %w", err)
 			}
-			possibleNames[pn] = struct{}{}
-			possibleNames[providesName] = struct{}{}
+			familyNames[pn] = struct{}{}
+			familyNames[providesName] = struct{}{}
 		}
 		if err := providesRows.Err(); err != nil {
 			providesRows.Close()
@@ -366,27 +369,26 @@ func pinCorePackageForImage(ctx context.Context, conn *pgxpool.Conn, gitRemote, 
 		}
 		providesRows.Close()
 
+		// A repository may contain several families. Link only a package used by this recipe.
+		matched := false
+		for _, pkg := range imageConfig.Contents.Packages {
+			if _, ok := familyNames[apkopackage.ResolvePackageNameVersionPin(pkg).Name]; ok {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		for name := range familyNames {
+			possibleNames[name] = struct{}{}
+		}
 		packageID = pkgID
 		pinnedVersion = melangeVersion
 	}
 
 	if packageID == "" {
 		return apkoYAML, "", "", fmt.Errorf("no matching package found for tag %s in families with git_remote %s", tag, gitRemote)
-	}
-
-	var imageConfig apkotypes.ImageConfiguration
-	if err := yaml.Unmarshal([]byte(apkoYAML), &imageConfig); err != nil {
-		return "", "", "", fmt.Errorf("parse linked APKO: %w", err)
-	}
-	matched := false
-	for _, pkg := range imageConfig.Contents.Packages {
-		if _, ok := possibleNames[apkopackage.ResolvePackageNameVersionPin(pkg).Name]; ok {
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		return "", "", "", fmt.Errorf("no core package found in linked APKO for tag %s", tag)
 	}
 
 	pinnedYAML, err := pinCorePackageInApkoYAML(apkoYAML, possibleNames, pinnedVersion, true)
