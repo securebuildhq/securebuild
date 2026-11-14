@@ -28,13 +28,12 @@ import { updateImageGitLinkAction } from "@/lib/image/actions/update-image-git-l
 import { setImagePublic } from "@/lib/image/actions/set-image-public";
 import { getImageAction } from "@/lib/image/actions/get-image";
 import { getImageBuildsAction } from "@/lib/image/actions/get-image-builds";
-import { getAPKOPackagesAction } from "@/lib/image/actions/get-apko-packages";
 import { sortAPKOsByVersion } from "@/lib/utils/apko-sort";
 import { sortTagsForDisplay } from "@/lib/utils/tag-sort";
 import { ImageScanSummary } from "@/lib/image/scan";
 import { Image, ImageBuild, ImageExternalRegistry } from "@/lib/types/image";
 import { Session } from "@/lib/types/session";
-import { APKOPackage } from "@/lib/image/actions/get-apko-packages";
+import type { APKOPackage } from "@/lib/image/actions/get-apko-packages";
 import { BuildsTable } from "@/components/builds-table";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
@@ -302,7 +301,23 @@ const fetchFixableCVEs = async (force = false) => {
 
     setApkoPackagesLoading(prev => ({ ...prev, [apkoId]: true }));
     try {
-      const packages = await getAPKOPackagesAction(apkoId);
+      // Read through HTTP so package requests cannot race with navigation in
+      // Next.js's server-action queue, including when leaving this tab.
+      const response = await fetch(`/api/apko-packages?apkoId=${encodeURIComponent(apkoId)}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error("Failed to fetch APKO packages");
+      }
+      const data = await response.json();
+      const packages: APKOPackage[] = data.map((pkg: Omit<APKOPackage, "createdAt" | "updatedAt"> & {
+        createdAt: string;
+        updatedAt: string;
+      }) => ({
+        ...pkg,
+        createdAt: new Date(pkg.createdAt),
+        updatedAt: new Date(pkg.updatedAt),
+      }));
       setApkoPackages(prev => ({ ...prev, [apkoId]: packages }));
     } catch (error) {
       console.error("Failed to fetch APKO packages:", error);
@@ -331,22 +346,6 @@ const fetchFixableCVEs = async (force = false) => {
     // Update local state immediately to prevent flicker
     setActiveTab(value);
 
-    // Lazy load data for the selected tab if not already loaded
-    if (value === "security" && scanResults.length === 0) {
-      fetchScanResults();
-    } else if (value === "fixable-cves" && fixableCVEs.length === 0) {
-      fetchFixableCVEs();
-    } else if (value === "builds" && builds.length === 0) {
-      fetchBuilds();
-    } else if (value === "apkos" && image.apkos) {
-      // Load packages for APKOs that don't have them yet
-      image.apkos.forEach(apko => {
-        if (!apkoPackages[apko.id]) {
-          fetchApkoPackages(apko.id);
-        }
-      });
-    }
-
     if (value === "general") {
       router.push(`/images/${image.id}`, { scroll: false });
     } else {
@@ -354,10 +353,32 @@ const fetchFixableCVEs = async (force = false) => {
     }
   };
 
-  // Load data when navigating directly to a tab via URL
+  // Wait for the route to commit before loading tab data. Starting server
+  // actions in handleTabChange can restore the old route after router.push.
   useEffect(() => {
-    if (currentTab === "fixable-cves" && fixableCVEs.length === 0 && !fixableCVEsLoading) {
+    // Lazy load data for the selected tab if not already loaded
+    if (currentTab === "security") {
+      if (initialScanResults.length > 0) {
+        setScanResults(initialScanResults);
+      } else {
+        fetchScanResults();
+      }
+    } else if (currentTab === "fixable-cves" && fixableCVEs.length === 0) {
       fetchFixableCVEs();
+    } else if (currentTab === "builds") {
+      if (initialBuilds.length > 0) {
+        setBuilds(initialBuilds);
+      } else {
+        fetchBuilds();
+      }
+    } else if (currentTab === "apkos" && image.apkos) {
+      setApkoPackages(prev => ({ ...prev, ...initialApkoPackages }));
+      // Load packages for APKOs that don't have them yet
+      image.apkos.forEach(apko => {
+        if (!apkoPackages[apko.id] && !initialApkoPackages[apko.id]) {
+          fetchApkoPackages(apko.id);
+        }
+      });
     }
   }, [currentTab]);
 
