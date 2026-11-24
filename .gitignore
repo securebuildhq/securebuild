@@ -11,3 +11,4 @@ yarn.lock
 /data/
 .grype-dev/
 dev-pipelines/
+/builder-cmd/builder-cmd
