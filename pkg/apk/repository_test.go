@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -112,4 +113,37 @@ func testAPKIndexArchive(t *testing.T, packages ...string) []byte {
 	require.NoError(t, gzipWriter.Close())
 
 	return archive.Bytes()
+}
+
+func TestRepositoryContainsAllPackagesInBothIndexes(t *testing.T) {
+	t.Parallel()
+	var full atomic.Bool
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		content := "P:first\nV:1-r0\n\nP:first\nV:1-r1\n\n"
+		if full.Load() || r.URL.Path == "/aarch64/APKINDEX.tar.gz" {
+			content += "P:second\nV:2-r3\n\n"
+		}
+		var b bytes.Buffer
+		gz := gzip.NewWriter(&b)
+		tw := tar.NewWriter(gz)
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: "APKINDEX", Mode: 0644, Size: int64(len(content))}))
+		_, err := tw.Write([]byte(content))
+		require.NoError(t, err)
+		require.NoError(t, tw.Close())
+		require.NoError(t, gz.Close())
+		_, _ = w.Write(b.Bytes())
+	}))
+	t.Cleanup(server.Close)
+	wanted := []RepositoryPackage{{Name: "first", Version: "1", Release: 0}, {Name: "first", Version: "1", Release: 1}, {Name: "second", Version: "2", Release: 3}}
+	ok, err := RepositoryContainsPackages(context.Background(), server.URL, wanted)
+	require.NoError(t, err)
+	require.False(t, ok)
+	full.Store(true)
+	requests.Store(0)
+	ok, err = RepositoryContainsPackages(context.Background(), server.URL, wanted)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.EqualValues(t, 2, requests.Load(), "fetch each index once for the whole requirement set")
 }

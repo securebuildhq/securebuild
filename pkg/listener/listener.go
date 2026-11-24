@@ -122,6 +122,8 @@ type RetryAfterError struct {
 	Err    error
 	Delay  time.Duration
 	MaxAge time.Duration
+	// StartedAt overrides the queue creation time for a new generation of work.
+	StartedAt time.Time
 }
 
 func (e *RetryAfterError) Error() string {
@@ -150,6 +152,8 @@ type Listener struct {
 	maxReconnectRetry int
 	processors        map[string]*queueProcessor
 	pgURI             string // Store the connection string for pooled connections
+	stopNotifications context.CancelFunc
+	notificationsDone chan struct{}
 }
 
 const (
@@ -227,7 +231,13 @@ func (l *Listener) Start(ctx context.Context) error {
 	}
 
 	// Start processing notifications
-	go l.processNotifications(ctx)
+	notificationCtx, cancel := context.WithCancel(ctx)
+	l.stopNotifications = cancel
+	l.notificationsDone = make(chan struct{})
+	go func() {
+		defer close(l.notificationsDone)
+		l.processNotifications(notificationCtx)
+	}()
 	go l.processScheduledWork(ctx)
 
 	return nil
@@ -527,14 +537,13 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 
 			updateConn, err := persistence.GetPooledPostgresSessionWithTimeout(ctx, 10*time.Second)
 			if err == nil {
-				_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
-				UPDATE %s
-				SET completed_at = NOW(),
-				    dedupe_key = NULL,
-				    last_error = $2
-				WHERE id = $1`, WorkQueueTable), msg.id, "max retry attempts exceeded")
+				updater, finish, changed, updateErr := beginAPKOQueueUpdate(ctx, updateConn, processor.channel, msg.id, msg.payload)
+				if updateErr == nil && !changed {
+					_, updateErr = updater.Exec(ctx, fmt.Sprintf(`UPDATE %s SET completed_at=NOW(),dedupe_key=NULL,last_error=$2 WHERE id=$1`, WorkQueueTable), msg.id, "max retry attempts exceeded")
+					finish()
+				}
 				updateConn.Release()
-				if updateErr == nil {
+				if updateErr == nil && !changed {
 					deleteTerminalQueuePullCredential(ctx, processor.channel, msg.payload)
 				}
 			}
@@ -587,17 +596,30 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 				return
 			}
 			defer updateConn.Release()
+			updater, finish, changed, err := beginAPKOQueueUpdate(ctx, updateConn, processor.channel, messageID, messagePayload)
+			if err != nil {
+				logger.Error(fmt.Errorf("prepare queue update: %w", err))
+				return
+			}
+			if changed {
+				return
+			}
+			defer finish()
 
 			if handlerErr != nil {
 				if retryAfter, ok := AsRetryAfterError(handlerErr); ok {
-					if retryAfter.MaxAge > 0 && time.Since(messageCreatedAt) >= retryAfter.MaxAge {
+					startedAt := messageCreatedAt
+					if !retryAfter.StartedAt.IsZero() {
+						startedAt = retryAfter.StartedAt
+					}
+					if retryAfter.MaxAge > 0 && time.Since(startedAt) >= retryAfter.MaxAge {
 						logger.Warn("scheduled retry exceeded its maximum age, marking as completed with error",
 							zap.String("id", messageID),
 							zap.String("channel", processor.channel),
 							zap.Duration("max_age", retryAfter.MaxAge),
 							zap.Error(handlerErr))
 
-						_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
+						_, updateErr := updater.Exec(ctx, fmt.Sprintf(`
 							UPDATE %s
 							SET completed_at = NOW(),
 							    dedupe_key = NULL,
@@ -612,7 +634,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 						return
 					}
 
-					_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
+					_, updateErr := updater.Exec(ctx, fmt.Sprintf(`
 						UPDATE %s
 						SET processing_started_at = NULL,
 						    next_attempt_at = NOW() + $3::interval,
@@ -634,7 +656,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 						zap.Error(handlerErr))
 
 					// Mark as completed with error (don't retry)
-					_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
+					_, updateErr := updater.Exec(ctx, fmt.Sprintf(`
 						UPDATE %s
 						SET completed_at = NOW(),
 						    dedupe_key = NULL,
@@ -650,7 +672,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 				}
 
 				// If processing failed, mark it as available for retry
-				_, updateErr := updateConn.Exec(ctx, fmt.Sprintf(`
+				_, updateErr := updater.Exec(ctx, fmt.Sprintf(`
 					UPDATE %s
 					SET processing_started_at = NULL,
 						next_attempt_at = NOW(),
@@ -666,7 +688,7 @@ func (l *Listener) processMessagesForQueue(ctx context.Context, processor *queue
 
 			// Mark completed message in queue (preserve row for status queries)
 			result := GetResult(handlerCtx)
-			_, err = updateConn.Exec(ctx, fmt.Sprintf(`
+			_, err = updater.Exec(ctx, fmt.Sprintf(`
 				UPDATE %s
 				SET completed_at = NOW(),
 				    dedupe_key = NULL,
@@ -720,8 +742,15 @@ func (l *Listener) reconnect(ctx context.Context) error {
 
 // Stop gracefully shuts down the listener
 func (l *Listener) Stop(ctx context.Context) error {
+	// pgx connections cannot be released while WaitForNotification (or its
+	// reconnect path) is still using them, even after the context is canceled.
+	if l.stopNotifications != nil {
+		l.stopNotifications()
+		<-l.notificationsDone
+	}
 	if l.conn != nil {
 		l.conn.Release()
+		l.conn = nil
 	}
 	return nil
 }

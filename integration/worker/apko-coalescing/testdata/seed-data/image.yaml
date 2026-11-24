@@ -1,0 +1,17 @@
+database: securebuild
+name: image
+seedData:
+  rows:
+    - columns:
+        - column: id
+          value:
+            str: "image"
+        - column: name
+          value:
+            str: "coalescing-test"
+        - column: created_at
+          value:
+            str: "2026-01-01T00:00:00Z"
+        - column: updated_at
+          value:
+            str: "2026-01-01T00:00:00Z"

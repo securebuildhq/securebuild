@@ -653,15 +653,8 @@ func queueBuildApkoEventsForPackage(ctx context.Context, pkgVersion *sbpackagety
 				APKRelease: pkgVersion.APKRelease,
 			},
 		}
-		payloadJSON, err := json.Marshal(payload)
+		queueID, err := EnqueueBuildAPKO(ctx, payload)
 		if err != nil {
-			logger.Warn("failed to marshal build_apko payload",
-				zap.String("apkoID", apkoID),
-				zap.Error(err))
-			continue
-		}
-
-		if err := persistence.EnqueueWork(ctx, "build_apko", string(payloadJSON)); err != nil {
 			logger.Warn("failed to enqueue build_apko event",
 				zap.String("packageID", packageID),
 				zap.String("apkoID", apkoID),
@@ -669,7 +662,8 @@ func queueBuildApkoEventsForPackage(ctx context.Context, pkgVersion *sbpackagety
 			continue
 		}
 
-		logger.Info("queued build_apko event for dependent APKO",
+		logger.Info("queued or merged dependent APKO rebuild",
+			zap.String("queueID", queueID),
 			zap.String("packageID", packageID),
 			zap.String("apkoID", apkoID))
 	}
